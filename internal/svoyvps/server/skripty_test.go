@@ -218,6 +218,28 @@ func sneseno(t *testing.T, k koren) {
 	}
 }
 
+// Встроенное уходит на Linux как есть: CR после checkout с autocrlf
+// ломает bash и systemd (.gitattributes держит их в LF). Обходится весь
+// каталог: новый файл попадает под проверку сам.
+func TestSkriptyBezCR(t *testing.T) {
+	faily, err := os.ReadDir("skripty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(faily) == 0 {
+		t.Fatal("каталог skripty пуст")
+	}
+	for _, f := range faily {
+		tekst, err := os.ReadFile(filepath.Join("skripty", f.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(tekst, '\r') {
+			t.Errorf("%s: в тексте CR", f.Name())
+		}
+	}
+}
+
 func TestSnosSkript(t *testing.T) {
 	gotovo := []string{"parol vernulsya", "otmetka snyata", "klyuchi snyaty", "gotovo da"}
 

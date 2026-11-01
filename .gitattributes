@@ -7,6 +7,10 @@ go.sum text eol=lf
 *.json text eol=lf
 *.css  text eol=lf
 *.md   text eol=lf
+# Скрипты и юнит своего VPN встраиваются в службу и исполняются на Linux:
+# CRLF после checkout на Windows сломал бы bash на сервере.
+*.sh      text eol=lf
+*.service text eol=lf
 *.ps1  text eol=crlf
 *.nsi  text eol=crlf
 *.patch text eol=lf -whitespace
