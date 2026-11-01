@@ -1,0 +1,24 @@
+[Unit]
+Description=vpn-uzel: VPN-сервер, sing-box библиотекой, состав на лету
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Последнее принятое состояние лежит в /var/lib/vpn-uzel, программа поднимает
+# ядро из него сама: компьютер выключен или сервер перезагрузился, VPN работает.
+ExecStart=/usr/local/sbin/vpn-uzel rabotat
+Restart=always
+RestartSec=3
+# Сокет пульта /run/vpn-uzel/pult.sock, каталог только для root.
+RuntimeDirectory=vpn-uzel
+RuntimeDirectoryMode=0700
+StateDirectory=vpn-uzel
+StateDirectoryMode=0700
+LimitNOFILE=1048576
+# При остановке программа шлёт клиентам hy2 закрытие и дописывает трафик.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

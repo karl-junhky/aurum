@@ -201,6 +201,23 @@ func (s *Sluzhba) obrabotat(ctx context.Context, k protokol.Kadr) protokol.Kadr 
 	case "cancelSpeedTest":
 		return s.cancelSpeedTest(k)
 
+	case "svoyVpsOsmotret":
+		return s.svoyVpsOsmotret(k)
+	case "svoyVpsUstanovit":
+		return s.svoyVpsUstanovit(k)
+	case "svoyVpsHod":
+		return s.svoyVpsHod(k)
+	case "svoyVpsOtmenit":
+		return s.svoyVpsOtmenit(k)
+	case "svoyVpsSpisok":
+		return s.svoyVpsSpisok(k)
+	case "svoyVpsSnesti":
+		return s.svoyVpsSnesti(k)
+	case "svoyVpsVzyat":
+		return s.svoyVpsVzyat(k)
+	case "svoyVpsZabyt":
+		return s.svoyVpsZabyt(k)
+
 	case "checkExitIp":
 		return s.checkExitIp(ctx, k)
 
@@ -550,6 +567,8 @@ func imenaKomand() []string {
 		"installUpdate", "getServerHealth", "checkUpdate", "downloadUpdate",
 		"measureDelays", "measureBandwidth",
 		"startSpeedTest", "speedTestStatus", "cancelSpeedTest",
+		"svoyVpsOsmotret", "svoyVpsUstanovit", "svoyVpsHod", "svoyVpsOtmenit", "svoyVpsSpisok",
+		"svoyVpsSnesti", "svoyVpsVzyat", "svoyVpsZabyt",
 	}
 }
 

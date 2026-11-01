@@ -430,6 +430,10 @@ func (s *Sluzhba) checkUpdate(ctx context.Context, k protokol.Kadr) protokol.Kad
 // downloadUpdate качает архив последнего выпуска в каталог данных, кладёт
 // рядом .sha256 из выпуска и ставит его тем же путём, что installUpdate.
 func (s *Sluzhba) downloadUpdate(ctx context.Context, k protokol.Kadr) protokol.Kadr {
+	// Скачанное сразу ставится, поэтому отказ до загрузки, а не после неё.
+	if s.svoyVpsIdyot() {
+		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, otkazZanyatoVps)
+	}
 	do, otm := context.WithTimeout(ctx, srokZagruzki)
 	defer otm()
 	// Описание выпуска читается теми же повторами, что и при проверке: «скачать»

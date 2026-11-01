@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/netip"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -24,6 +26,8 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/yadra"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/zhurnaly"
 )
@@ -527,6 +531,26 @@ type Sluzhba struct {
 	// режима «весь трафик». Живёт под тем же замком, что и killSwitch.
 	podRezhim bool
 
+	// Свой сервер (svoy_vps.go): одно задание на службу под muVps. muVps не
+	// держится через izvestit и не берётся под mu. Швы: настоящие ходят на
+	// сервер, в сеть машины и за программой сервера. vpsStaging берёт
+	// тестовый выпуск Let's Encrypt (AFFORY_LE_STAGING).
+	muVps sync.Mutex
+	vps   *zadanieVps
+	// vpsZaporDo: до этого срока задания своего сервера не заводятся, отказ
+	// несёт vpsZaporTekst. Запирают установка обновления и «забыть»,
+	// vpsZaporNomer отличает один запор от следующего.
+	vpsZaporDo         time.Time
+	vpsZaporTekst      string
+	vpsZaporNomer      uint64
+	vpsStaging         bool
+	vpsOsmotret        func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.Otchet, error)
+	vpsUstanovit       func(context.Context, upravlenie.Ustanovka) (upravlenie.Itog, error)
+	vpsSnesti          func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.SnosItog, error)
+	vpsVzyat           func(context.Context, upravlenie.Vzyatie) (upravlenie.Itog, error)
+	programmaUzla      func(context.Context) (io.ReadSeekCloser, error)
+	fizicheskiyAdapter func() (set.Adapter, error)
+
 	seychas   func() time.Time
 	zhdat     func(ctx context.Context, d time.Duration) bool
 	prochitat func() (sostoyanie.SostoyanieFayla, error)
@@ -607,6 +631,13 @@ func NovayaSluzhba() *Sluzhba {
 	s.pauzaPaniki = pauzaPoslePaniki
 	s.periodProksi = periodProksiPoUmolchaniyu
 	s.proveritKonfig = func(put string) error { return yadra.Proverit(imyaYadraTun, put) }
+	s.vpsStaging = os.Getenv("AFFORY_LE_STAGING") == "1"
+	s.vpsOsmotret = upravlenie.Osmotret
+	s.vpsUstanovit = upravlenie.Ustanovit
+	s.vpsSnesti = upravlenie.Snesti
+	s.vpsVzyat = upravlenie.Vzyat
+	s.programmaUzla = s.programmaIzKataloga
+	s.fizicheskiyAdapter = ssh.FizicheskiyAdapter
 	s.fonCtx, s.fonOtmena = context.WithCancel(context.Background())
 	s.speedRunner = runSpeed
 	s.glushitIPv6 = set.ZakrytIPv6

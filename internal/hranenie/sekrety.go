@@ -272,6 +272,15 @@ func dpapiRasshifrovat(blob []byte) ([]byte, error) {
 	return dpapi(blob, false)
 }
 
+// ZashifrovatDlyaMashiny шифрует тем же DPAPI с привязкой к машине, что и
+// sekrety.dat. Так служба хранит секреты, которым не место в наборе: ключи
+// управления своих серверов (план «Свой VPN» §3.6) не должны уезжать в
+// экспорт профиля.
+func ZashifrovatDlyaMashiny(telo []byte) ([]byte, error) { return dpapiZashifrovat(telo) }
+
+// RasshifrovatDlyaMashiny обратна ZashifrovatDlyaMashiny.
+func RasshifrovatDlyaMashiny(blob []byte) ([]byte, error) { return dpapiRasshifrovat(blob) }
+
 func dpapi(telo []byte, shifrovat bool) ([]byte, error) {
 	// Пустой срез нельзя отдавать как указатель на первый элемент: его нет.
 	if len(telo) == 0 {

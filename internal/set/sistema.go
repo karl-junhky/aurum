@@ -114,6 +114,16 @@ func vesAdaptera(a Adapter) uint64 {
 	return uint64(a.MetrikaMarshruta) + uint64(a.Metrika)
 }
 
+// Kandidaty отдаёт снимок kandidaty: свой VPN ищет среди них физический
+// адаптер для SSH мимо туннеля.
+func Kandidaty() ([]Adapter, error) {
+	spisok, err := perechislit()
+	if err != nil {
+		return nil, err
+	}
+	return kandidaty(spisok), nil
+}
+
 func vybrat(spisok []Adapter, krome ...uint32) (Adapter, error) {
 	g := kandidaty(spisok, krome...)
 	if len(g) == 0 {

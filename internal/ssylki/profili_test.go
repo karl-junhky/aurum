@@ -55,6 +55,24 @@ func TestNeodnoznachnayaRotatsiyaNeUgadaetVybor(t *testing.T) {
 	}
 }
 
+// Пометка своего сервера это происхождение, а не профиль: та же ссылка,
+// вставленная руками раньше, остаётся одной записью.
+func TestSvoyTotZheProfil(t *testing.T) {
+	a, err := ssylki.Razobrat("trojan://first@node.example:443#One")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := a
+	b.Svoy = true
+	if !ssylki.TotZheProfil(a, b) {
+		t.Fatal("пометка своего сервера разделила одну ссылку на два профиля")
+	}
+	all, _ := ssylki.DobavitProfil(nil, a)
+	if all, _ = ssylki.DobavitProfil(all, b); len(all) != 1 {
+		t.Fatalf("записей %d, ссылка одна", len(all))
+	}
+}
+
 func TestRuchnyeProfiliNeZamenyayutDrugieKlyuchi(t *testing.T) {
 	a, err := ssylki.Razobrat("trojan://first@node.example:443#One")
 	if err != nil {

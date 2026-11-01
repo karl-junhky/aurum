@@ -52,20 +52,31 @@ const potolokOtveta = 64 << 10
 // ErrNetImeni значит, что публичный DNS ответил честным «такого имени нет».
 var ErrNetImeni = errors.New("публичный DNS ответил, что такого имени нет")
 
-var klient = &http.Client{Transport: &http.Transport{
-	// Прокси из окружения не берётся: обход заменяет DNS системы и идёт
-	// прямо, как шёл бы он.
-	Proxy:               nil,
-	DialContext:         (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
-	TLSHandshakeTimeout: 3 * time.Second,
-	// Обход случается редко, и держать открытыми четыре соединения к чужим
-	// сервисам ради следующего раза незачем. HTTP/1.1 оба сервиса принимают.
-	DisableKeepAlives: true,
-}}
+var klient = klientCherez((&net.Dialer{Timeout: 3 * time.Second}).DialContext)
+
+func klientCherez(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		// Прокси из окружения не берётся: обход заменяет DNS системы и идёт
+		// прямо, как шёл бы он.
+		Proxy:               nil,
+		DialContext:         dial,
+		TLSHandshakeTimeout: 3 * time.Second,
+		// Обход случается редко, и держать открытыми четыре соединения к
+		// чужим сервисам ради следующего раза незачем. HTTP/1.1 оба сервиса
+		// принимают.
+		DisableKeepAlives: true,
+	}}
+}
 
 // Sprosit отдаёт адреса IPv4 имени по ответу первого из публичных DNS.
 func Sprosit(ctx context.Context, host string) ([]netip.Addr, error) {
 	return sprositVse(ctx, klient, Adresa, host)
+}
+
+// SprositCherez это Sprosit со своим путём соединения: детектор блокировки
+// спрашивает мимо туннеля, через физический адаптер.
+func SprositCherez(ctx context.Context, dial func(ctx context.Context, network, addr string) (net.Conn, error), host string) ([]netip.Addr, error) {
+	return sprositVse(ctx, klientCherez(dial), Adresa, host)
 }
 
 func sprositVse(ctx context.Context, k *http.Client, adresa []string, host string) ([]netip.Addr, error) {

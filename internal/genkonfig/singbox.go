@@ -424,6 +424,13 @@ func setiKandidatov(a []netip.Addr) []string {
 	return s
 }
 
+// Ishodyashchiy это исходящий одного сервера, тот же, что в боевом конфиге,
+// без полосы канала человека. Им ядро проверки своего VPN проверяет ключи до
+// записи в набор: проверяется ровно то, что потом повезёт трафик.
+func Ishodyashchiy(s protokol.Server, teg string) (map[string]any, error) {
+	return ishodyashchiy(Vhod{}, s, teg)
+}
+
 // ishodyashchiy строит исходящий под транспорт КОНКРЕТНОГО сервера.
 //
 // Тег передаётся снаружи, а не берётся из константы: один тег на всех означал
@@ -713,9 +720,21 @@ func tlsReality(s protokol.Server, sni string) map[string]any {
 		"reality": map[string]any{
 			"enabled": true, "public_key": s.PublicKey, "short_id": s.ShortId,
 		},
-		"utls": map[string]any{"enabled": true, "fingerprint": otpechatokReality},
+		"utls": map[string]any{"enabled": true, "fingerprint": otpechatokRealityDlya(s)},
 	}
 }
+
+// otpechatokRealityDlya: своему серверу firefox, с которым его ключ проверен
+// при установке (proverka собирает исходящий этой же функцией), остальным
+// chrome.
+func otpechatokRealityDlya(s protokol.Server) string {
+	if s.Svoy {
+		return otpechatokSvoegoReality
+	}
+	return otpechatokReality
+}
+
+const otpechatokSvoegoReality = "firefox"
 
 // У reality отпечаток всегда chrome, что бы ни просила ссылка.
 //

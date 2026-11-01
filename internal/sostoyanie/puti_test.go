@@ -1,16 +1,35 @@
 package sostoyanie
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+// propustitVlozhennyy уводит обход из каталога со своим go.mod: это uzel,
+// программа для Linux, ни каталога данных, ни путей Windows у неё нет. Копия
+// vlozhennyyModul из internal/kachestvo: пакеты тестов друг друга не видят.
+func propustitVlozhennyy(katalog, koren string) error {
+	if filepath.Clean(katalog) == filepath.Clean(koren) {
+		return nil
+	}
+	_, err := os.Stat(filepath.Join(katalog, "go.mod"))
+	switch {
+	case err == nil:
+		return filepath.SkipDir
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	}
+	return err
+}
 
 // Подмена каталога данных существует ради тестов и обязана оставаться их
 // привилегией.
@@ -35,7 +54,7 @@ func TestPodmenaKatalogaZovyotsyaTolkoIzTestov(t *testing.T) {
 			if d.Name() == "node_modules" || d.Name() == ".git" || d.Name() == "dist" {
 				return filepath.SkipDir
 			}
-			return nil
+			return propustitVlozhennyy(put, koren)
 		}
 		if !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
 			return nil
@@ -165,7 +184,7 @@ func TestPostoyannyyPutNeZashitVKode(t *testing.T) {
 			if d.Name() == "node_modules" || d.Name() == ".git" || d.Name() == "dist" {
 				return filepath.SkipDir
 			}
-			return nil
+			return propustitVlozhennyy(put, koren)
 		}
 		if !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
 			return nil

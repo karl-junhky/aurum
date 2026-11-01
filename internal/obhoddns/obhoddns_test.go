@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -140,6 +141,33 @@ func TestOtsutstvieImeniVazhneeSboevSoseda(t *testing.T) {
 	_, err = sprositVse(context.Background(), plohoy.Client(), []string{plohoy.URL}, "vpn.example.net")
 	if err == nil || !strings.Contains(err.Error(), "502") {
 		t.Fatalf("ошибка %v, ждали код ответа сервиса", err)
+	}
+}
+
+// Свой путь получает все соединения обхода, ко всем адресам сервисов.
+func TestSprositCherezIdyotSvoimPutyom(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		kuda   []string
+		zakryt = errors.New("путь закрыт")
+	)
+	dial := func(_ context.Context, network, addr string) (net.Conn, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		kuda = append(kuda, network+" "+addr)
+		return nil, zakryt
+	}
+	if _, err := SprositCherez(context.Background(), dial, "vpn.example.net"); !errors.Is(err, zakryt) {
+		t.Fatalf("ошибка %v, ждали отказ своего пути", err)
+	}
+	var zhdali []string
+	for _, a := range Adresa {
+		zhdali = append(zhdali, "tcp "+strings.TrimSuffix(strings.TrimPrefix(a, "https://"), "/dns-query")+":443")
+	}
+	slices.Sort(kuda)
+	slices.Sort(zhdali)
+	if !slices.Equal(kuda, zhdali) {
+		t.Fatalf("соединения %q, ждали %q", kuda, zhdali)
 	}
 }
 

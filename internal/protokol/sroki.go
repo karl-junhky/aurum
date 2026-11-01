@@ -144,6 +144,15 @@ var dolgie = map[string]time.Duration{
 	// «служба не ответила» вместо secrets-unreadable и идёт чинить канал.
 	"listServers": srokHranilishcha,
 	"listRules":   srokHranilishcha,
+	// Свой сервер (01.11.2026): список читает набор и по файлу ключа
+	// управления на каждый сервер, установка читает набор до запуска
+	// задания. Остальные команды своего сервера сразу отдают снимок.
+	"svoyVpsSpisok":    srokHranilishcha,
+	"svoyVpsUstanovit": srokHranilishcha,
+	"svoyVpsSnesti":    srokHranilishcha,
+	"svoyVpsVzyat":     srokHranilishcha,
+	// Убирает ключи из набора, то есть пересобирает правила, как removeServer.
+	"svoyVpsZabyt": SrokDolgoy,
 
 	// Замеры. Длительность заказывает человек, и она перекрывает всё остальное
 	// в этом списке: полоса меряется до 30 секунд в каждую сторону, пинг

@@ -19,6 +19,9 @@ var telaNeLogiruem = map[string]bool{
 	"addSubscription":    true, // и здесь он же
 	"addServers":         true, // пачка ключей, 26.09.2026
 	"exportServers":      true, // ответ это все ключи машины
+	"svoyVpsOsmotret":    true, // пароль и ключ входа на свой сервер, 01.11.2026
+	"svoyVpsUstanovit":   true, // и здесь они же
+	"svoyVpsVzyat":       true, // и при захвате
 }
 
 // TeloMozhnoLogirovat отвечает, можно ли печатать тело кадра.

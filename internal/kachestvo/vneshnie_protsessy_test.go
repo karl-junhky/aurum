@@ -1,10 +1,12 @@
 package kachestvo
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +51,22 @@ var vneshnieProtsessy = map[string]string{
 	filepath.Join("internal", "yadra", "zapusk.go"): "sing-box run: жалобы ядра уже UTF-8",
 }
 
+// VlozhennyyModul: каталог со своим go.mod внутри модуля клиента. Это uzel,
+// программа для Linux со своими правилами: судьи клиента её не обходят.
+func VlozhennyyModul(katalog, koren string) (bool, error) {
+	if filepath.Clean(katalog) == filepath.Clean(koren) {
+		return false, nil
+	}
+	_, err := os.Stat(filepath.Join(katalog, "go.mod"))
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	}
+	return false, err
+}
+
 func TestVneshnieProtsessyPodUchyotom(t *testing.T) {
 	koren, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -62,6 +80,13 @@ func TestVneshnieProtsessyPodUchyotom(t *testing.T) {
 		}
 		if d.IsDir() {
 			if d.Name() == "node_modules" || d.Name() == ".git" || d.Name() == "dist" {
+				return filepath.SkipDir
+			}
+			vlozhen, err := VlozhennyyModul(put, koren)
+			if err != nil {
+				return err
+			}
+			if vlozhen {
 				return filepath.SkipDir
 			}
 			return nil

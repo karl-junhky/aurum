@@ -219,6 +219,10 @@ func pohozhNaTunnel(a set.Adapter) bool {
 	return false
 }
 
+// PohozhNaTunnel отдаёт то же правило своему VPN: SSH к серверу человека
+// идёт через физический адаптер, а не через какой-либо туннель.
+func PohozhNaTunnel(a set.Adapter) bool { return pohozhNaTunnel(a) }
+
 // imyaTunnelya называет чужой VPN по описанию адаптера. Wintun возят многие
 // клиенты сразу, и по нему одному не сказать чей: тогда название берётся у
 // единственного запущенного VPN-клиента, а если их нет или несколько,

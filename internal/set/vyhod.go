@@ -28,6 +28,17 @@ const srokProverkiVyhoda = 15 * time.Second
 // запрос идёт тем же путём, что и трафик приложений. Ноль означает
 // «напрямую», и это тоже законный замер: контрольная половина сравнения.
 func AdresVyhoda(ctx context.Context, endpoint string, portProksi int) (string, error) {
+	var proksi *url.URL
+	if portProksi > 0 {
+		proksi = &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", portProksi)}
+	}
+	return AdresVyhodaCherez(ctx, endpoint, proksi)
+}
+
+// AdresVyhodaCherez это тот же вопрос через заданный прокси, nil значит
+// напрямую. Проверка ключей своего VPN ходит через вход ядра проверки, и
+// логин в адресе прокси называет ключ.
+func AdresVyhodaCherez(ctx context.Context, endpoint string, proksi *url.URL) (string, error) {
 	do, otm := context.WithTimeout(ctx, srokProverkiVyhoda)
 	defer otm()
 	z, err := http.NewRequestWithContext(do, http.MethodGet, endpoint, nil)
@@ -40,9 +51,8 @@ func AdresVyhoda(ctx context.Context, endpoint string, portProksi int) (string, 
 	// klientKlash в internal/yadra). Держать пул нечему: адрес выхода
 	// спрашивают на подъёме и при смене несущего, а не в цикле.
 	tr := &http.Transport{Proxy: nil, DisableKeepAlives: true}
-	if portProksi > 0 {
-		u := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", portProksi)}
-		tr.Proxy = http.ProxyURL(u)
+	if proksi != nil {
+		tr.Proxy = http.ProxyURL(proksi)
 	}
 	kl := &http.Client{Transport: tr}
 	o, err := kl.Do(z)

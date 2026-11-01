@@ -78,6 +78,14 @@ var resheniyeOPravah = map[string]bool{
 	// и без подтверждения любая программа ставила бы свою сборку с правами
 	// SYSTEM.
 	"installUpdate": true,
+	// Свой VPN (§3.6 плана «Свой VPN в клиенте», 01.11.2026) без админа, как
+	// и весь собственный набор. Цена одна: любой процесс сеанса может
+	// заставить службу SYSTEM открыть SSH на любой адрес мимо туннеля и
+	// защиты (канал INTERACTIVE, internal/kanal/server.go), то есть узнать
+	// настоящий IP машины.
+	"svoyVpsOsmotret": false, "svoyVpsUstanovit": false,
+	"svoyVpsHod": false, "svoyVpsOtmenit": false, "svoyVpsSpisok": false,
+	"svoyVpsSnesti": false, "svoyVpsVzyat": false, "svoyVpsZabyt": false,
 }
 
 // Команда без прав администратора обязана получить отказ, а не выполниться.

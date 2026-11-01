@@ -73,6 +73,12 @@ func NovyySertifikat(t *testing.T, imya string) Sertifikat {
 		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
 		BasicConstraintsValid: true,
 	}
+	// Сертификат на адрес, как у Let's Encrypt на IP: адрес идёт в SAN адресом,
+	// а не именем, иначе проверка его не узнает.
+	if ip := net.ParseIP(imya); ip != nil {
+		list.DNSNames = nil
+		list.IPAddresses = append(list.IPAddresses, ip)
+	}
 	listovoyDER := podpisat(t, list, kornevoyRazobran, &listovoyKlyuch.PublicKey, kornevoyKlyuch)
 	listRazobran, err := x509.ParseCertificate(listovoyDER)
 	if err != nil {

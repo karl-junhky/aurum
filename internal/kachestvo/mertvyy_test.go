@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/kachestvo"
 )
 
 // Ш1 ворот приёмки, класс дефекта B: механизм написан, покрыт тестами и
@@ -223,7 +225,17 @@ func proveritIsklyucheniya(t *testing.T, obyavleno map[string]*types.Func) {
 	upominaniya := map[string]bool{}
 	koren := filepath.Join("..", "..")
 	err := filepath.WalkDir(koren, func(put string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(put, "_test.go") {
+		if err == nil && d.IsDir() {
+			vlozhen, err := kachestvo.VlozhennyyModul(put, koren)
+			if err != nil {
+				return err
+			}
+			if vlozhen {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if err != nil || !strings.HasSuffix(put, "_test.go") {
 			return err
 		}
 		telo, err := os.ReadFile(put)
@@ -253,8 +265,10 @@ func proveritIsklyucheniya(t *testing.T, obyavleno map[string]*types.Func) {
 	}
 }
 
-// kontraktyOshibok собирает три интерфейса, которых НЕТ ни в одном нашем типе и
-// быть не может: пакет `errors` объявляет их у себя неэкспортированными.
+// kontraktyOshibok собирает четыре интерфейса, которых НЕТ ни в одном нашем
+// типе и быть не может: пакет `errors` объявляет их у себя
+// неэкспортированными. `Unwrap() []error` это обёртка нескольких ошибок
+// (Go 1.20), её разворачивают те же `errors.Is` и `errors.As`.
 // `errors.As` зовётся из нашего прода 32 раза, то есть `Unwrap` и `Is` на наших
 // типах ошибок достижимы по-настоящему, просто не по имени.
 //
@@ -282,6 +296,7 @@ func kontraktyOshibok() []*types.Interface {
 
 	return []*types.Interface{
 		odin("Unwrap", nil, oshibka),
+		odin("Unwrap", nil, types.NewSlice(oshibka)),
 		odin("Is", oshibka, types.Typ[types.Bool]),
 		odin("As", lyuboy, types.Typ[types.Bool]),
 	}

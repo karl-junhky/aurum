@@ -21,6 +21,14 @@ var katalogiSluzhby = []string{
 	filepath.Join("cmd", "affory-svc"),
 	filepath.Join("internal", "yadra"),
 	filepath.Join("internal", "skorost"),
+	// Свой VPN: каждый пакет internal/svoyvps своей строкой, обход не
+	// рекурсивный.
+	filepath.Join("internal", "svoyvps", "ssh"),
+	filepath.Join("internal", "svoyvps", "server"),
+	filepath.Join("internal", "svoyvps", "konfig"),
+	filepath.Join("internal", "svoyvps", "proverka"),
+	filepath.Join("internal", "svoyvps", "porty"),
+	filepath.Join("internal", "svoyvps", "blok"),
 }
 
 func TestGorutinySluzhbyCherezFon(t *testing.T) {

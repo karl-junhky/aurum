@@ -15,6 +15,11 @@ export type Deystvie =
   | "proverit-set"
   | "pokazat-vinovnika"
   | "nastroit-vremya"
+  | "prinyat-klyuch-hosta"
+  | "pereustanovit-os"
+  | "vzyat-pod-upravlenie"
+  | "otkryt-port-u-hostera"
+  | "poprosit-drugoy-adres"
   | "nichego";
 
 export interface ZapisOtkaza {
@@ -72,6 +77,20 @@ export const tekstOtkaza: Record<string, ZapisOtkaza> = {
   "update-check-failed": { deystvie: "povtorit", tekst: "сервер обновлений не ответил, проверить позже" },
   "update-download-failed": { deystvie: "povtorit", tekst: "обновление не скачалось или пришло повреждённым, работает прежняя версия" },
   "internal-error": { deystvie: "povtorit", tekst: "команда не выполнена: внутренняя ошибка службы" },
+  "vps-unreachable": { deystvie: "povtorit", tekst: "сервер не отвечает на вход" },
+  "vps-login-failed": { deystvie: "nichego", tekst: "сервер не пустил с этими данными входа" },
+  "vps-host-key-changed": { deystvie: "prinyat-klyuch-hosta", tekst: "ключ сервера сменился" },
+  "vps-tunnel-via-server": { deystvie: "otkryt-servery", tekst: "VPN сейчас идёт через этот же сервер, переключись на другой" },
+  "vps-unsuitable": { deystvie: "nichego", tekst: "этот сервер не подходит" },
+  "vps-not-empty": { deystvie: "pereustanovit-os", tekst: "сервер не пустой, ставь на чистую систему" },
+  "vps-take-control": { deystvie: "vzyat-pod-upravlenie", tekst: "сервер уже под Affory, возьми его под управление" },
+  "vps-install-failed": { deystvie: "povtorit", tekst: "установка на сервер не прошла" },
+  "vps-cert-blocked": { deystvie: "otkryt-port-u-hostera", tekst: "сертификат не выпущен, поставлен только ключ reality" },
+  "vps-address-blocked": { deystvie: "poprosit-drugoy-adres", tekst: "твоя сеть не пускает к адресу сервера" },
+  "vps-hoster-firewall": { deystvie: "otkryt-port-u-hostera", tekst: "порт закрыт у хостера" },
+  "vps-ports-failed": { deystvie: "povtorit", tekst: "порты не подобрались" },
+  "vps-network-limited": { deystvie: "proverit-set", tekst: "твоя сеть сейчас пускает не всё" },
+  "vps-busy": { deystvie: "nichego", tekst: "со своим сервером уже идёт другое дело" },
 };
 
 /** Button label per action; null means the screen only informs. */
@@ -86,6 +105,11 @@ export const podpisDeystviya: Record<Deystvie, string | null> = {
   "proverit-set": "Проверить сеть",
   "pokazat-vinovnika": null,
   "nastroit-vremya": "Настроить время",
+  "prinyat-klyuch-hosta": "Я переустановил систему",
+  "pereustanovit-os": null,
+  "vzyat-pod-upravlenie": "Взять под управление",
+  "otkryt-port-u-hostera": null,
+  "poprosit-drugoy-adres": null,
   nichego: null,
 };
 

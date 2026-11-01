@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/kachestvo"
 )
 
 // Один голос на всё, что видит человек. Разбор 13.09.2026 нашёл в окне два
@@ -29,6 +31,13 @@ func TestTekstySluzhbyGovoryatNaTy(t *testing.T) {
 		}
 		if info.IsDir() {
 			if info.Name() == ".git" || info.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			vlozhen, err := kachestvo.VlozhennyyModul(put, koren)
+			if err != nil {
+				return err
+			}
+			if vlozhen {
 				return filepath.SkipDir
 			}
 			return nil

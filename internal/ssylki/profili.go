@@ -15,7 +15,7 @@ func profil(s protokol.Server) protokol.Server {
 	}
 	s.Imya = ""
 	s.IzPodpiski, s.Uderzhan, s.SPinom, s.NebezopasnyyIgnorirovan = false, false, false, false
-	s.OtpechatokNeProveryaetsya = false
+	s.OtpechatokNeProveryaetsya, s.Svoy = false, false
 	s.Host = strings.ToLower(s.Host)
 	return s
 }

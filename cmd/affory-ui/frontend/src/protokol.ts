@@ -169,6 +169,8 @@ export interface Server {
   iz_podpiski: boolean;
   /** Пропал из подписки, но ядро ещё держит его кандидатом: уйдёт сам после переподключения. */
   uderzhan?: boolean;
+  /** Ключ своего сервера из раздела «Свой VPN». */
+  svoy?: boolean;
   nebezopasnyy_ignorirovan?: boolean;
   /** В ссылке был отпечаток сертификата, а ядро сверяет только ключ (П4 аудита 1.6.1). */
   otpechatok_ne_proveryaetsya?: boolean;

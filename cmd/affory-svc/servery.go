@@ -46,6 +46,9 @@ type Nabor struct {
 	// полем у сервера: записи из подписки пересобираются каждым обходом, и флаг
 	// на них не пережил бы ни одного обновления.
 	VneAvto []string `json:"vne_avto,omitempty"`
+	// Свои серверы (svoy_vps.go): как войти и что стоит. Ключи VPN лежат в
+	// Servery, запись ссылается на них по id.
+	SvoiServery []SvoyServer `json:"svoi_servery,omitempty"`
 }
 
 // rezhimNabora отвечает, каким режимом маршрута жить набору.
@@ -230,6 +233,7 @@ func dlyaEkrana(s protokol.Server) protokol.Server {
 		Host: s.Host, Port: s.Port,
 		IzPodpiski:                s.IzPodpiski,
 		Uderzhan:                  s.Uderzhan,
+		Svoy:                      s.Svoy,
 		NebezopasnyyIgnorirovan:   s.NebezopasnyyIgnorirovan,
 		OtpechatokNeProveryaetsya: s.OtpechatokNeProveryaetsya,
 		SPinom:                    s.Pin != "",

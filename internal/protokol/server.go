@@ -29,6 +29,12 @@ type Server struct {
 	// только ядро её отпустит).
 	Uderzhan bool `json:"uderzhan,omitempty"`
 
+	// Svoy: ключ своего сервера, поставленного разделом «Свой VPN» (1.11.0).
+	// По нему ядро ставит своему reality отпечаток firefox, тот же, с которым
+	// ключ проверяли при установке. Чужой ссылке firefox не годится (см.
+	// otpechatokReality в genkonfig), а свой сервер на sing-box его принимает.
+	Svoy bool `json:"svoy,omitempty"`
+
 	// Добавлено волной 3.
 	//
 	// NebezopasnyyIgnorirovan это пометка «в ссылке стоял insecure=1 либо

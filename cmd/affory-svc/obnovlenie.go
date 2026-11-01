@@ -84,6 +84,21 @@ func (s *Sluzhba) ustanovitArhiv(k protokol.Kadr, put string) protokol.Kadr {
 // ustanovitArhivSVersiey знает номер выпуска, когда архив приехал из сети.
 // Архив с диска номера не несёт, и окно тогда подписывает полосу без него.
 func (s *Sluzhba) ustanovitArhivSVersiey(k protokol.Kadr, put, versiya string) protokol.Kadr {
+	// Подмена опускает службу, а с ней дело со своим сервером: установка
+	// оборвалась бы между шагами на чужой машине. Поэтому идущее дело
+	// отказывает обновлению, а обновление запирает новые дела. Запуск
+	// подменщика запор не снимает: служба вот-вот остановится, а не
+	// остановилась - запор кончится сам.
+	otperet, tekst := s.zaperetVps(time.Now().Add(zaporNaObnovlenie), otkazObnovlenieIdyot)
+	if otperet == nil {
+		return s.otkazObnovleniya(k, protokol.KodVpsZanyato, tekst)
+	}
+	podmenshchikZapushchen := false
+	defer func() {
+		if !podmenshchikZapushchen {
+			otperet()
+		}
+	}()
 	if err := obnovlenie.Sverit(put); err != nil {
 		return s.otkazObnovleniya(k, protokol.KodArhivNegoden, err.Error())
 	}
@@ -117,8 +132,16 @@ func (s *Sluzhba) ustanovitArhivSVersiey(k protokol.Kadr, put, versiya string) p
 	if err := s.zapustitPodmenshchika(s.dirProgrammy, novaya, bylPodnyat); err != nil {
 		return s.otkazObnovleniya(k, protokol.KodUpdateRollback, "подменщик не запущен: "+err.Error())
 	}
+	podmenshchikZapushchen = true
 	return otvet(k.Id, k.Imya, map[string]any{"zapushchena": true, "srok_s": int(obnovlenie.SrokPodyoma.Seconds())})
 }
+
+// zaporNaObnovlenie держит задания своего сервера от проверки архива до
+// остановки службы подменщиком: распаковка, опускание туннеля и запуск
+// подменщика укладываются в него с запасом.
+const zaporNaObnovlenie = 5 * time.Minute
+
+const otkazObnovlenieIdyot = "ставится обновление клиента: со своим сервером можно будет работать после него"
 
 // Шов для тестов: номер сборки из ресурсов exe.
 var versiyaSborki = versiyaIzResursov

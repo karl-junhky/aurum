@@ -52,6 +52,26 @@ func TestRealityVsegdaSChrome(t *testing.T) {
 	}
 }
 
+// Свой сервер (раздел «Свой VPN») это sing-box, а не Xray: его reality идёт с
+// firefox, с которым ключ проверялся при установке. Пометка, а не отпечаток
+// ссылки: в ссылке своего ключа стоит edge для телефона.
+func TestSvoyRealitySFirefox(t *testing.T) {
+	for _, transport := range []string{"reality-tcp", "reality-grpc"} {
+		t.Run(transport, func(t *testing.T) {
+			s := protokol.Server{
+				Id: "p", Transport: transport, Host: "203.0.113.20", Port: 443,
+				Uuid:      "11111111-2222-3333-4444-555555555555",
+				PublicKey: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", ShortId: "01ab",
+				Sni: "www.example.com", Fp: "edge", Svoy: true,
+			}
+			utls := ishodyashchiyProby(t, s)["tls"].(map[string]any)["utls"].(map[string]any)
+			if utls["fingerprint"] != "firefox" {
+				t.Fatalf("отпечаток своего reality %v, проверялся firefox", utls["fingerprint"])
+			}
+		})
+	}
+}
+
 // Обычный TLS без проверенного fp в ссылке ходит с firefox.
 //
 // Приветствие chrome в ядре 1757 байт, двумя TCP-сегментами, и залп из шести

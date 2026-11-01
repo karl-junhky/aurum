@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/netip"
 	"strconv"
@@ -23,6 +24,8 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/yadra"
 )
 
@@ -85,6 +88,24 @@ func podstavnaya(t *testing.T, zamerOtvet error) *Sluzhba {
 	// проверки не доходил, а проверка кандидата зовётся уже из перезапуска.
 	// Тесты, которым судья нужен, ставят свой сами (см. kandidat_test.go).
 	s.proveritKonfig = nil
+	// Свой сервер: настоящие швы читают адаптеры машины, ходят по SSH и за
+	// программой сервера. Тесты своего сервера ставят свои.
+	s.fizicheskiyAdapter = func() (set.Adapter, error) { return set.Adapter{Indeks: 7, Imya: "Ethernet"}, nil }
+	s.vpsOsmotret = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.Otchet, error) {
+		return upravlenie.Otchet{}, errors.New("ssh disabled in service fixture")
+	}
+	s.vpsUstanovit = func(context.Context, upravlenie.Ustanovka) (upravlenie.Itog, error) {
+		return upravlenie.Itog{}, errors.New("ssh disabled in service fixture")
+	}
+	s.programmaUzla = func(context.Context) (io.ReadSeekCloser, error) {
+		return nil, errors.New("server program disabled in service fixture")
+	}
+	s.vpsSnesti = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.SnosItog, error) {
+		return upravlenie.SnosItog{}, errors.New("ssh disabled in service fixture")
+	}
+	s.vpsVzyat = func(context.Context, upravlenie.Vzyatie) (upravlenie.Itog, error) {
+		return upravlenie.Itog{}, errors.New("ssh disabled in service fixture")
+	}
 	// Настоящий замер пинга поднимает sing-box. Тесты пинга ставят своё ядро.
 	s.yadroZamera = func(context.Context) (vremennoeYadro, error) {
 		return vremennoeYadro{}, errors.New("core disabled in service fixture")
