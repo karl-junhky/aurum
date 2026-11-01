@@ -262,6 +262,14 @@ func (o *Osmotr) Zanyat(proto string, port int) string {
 	return ""
 }
 
+// SlushaetSvoy: порт proto держит наша программа. Слушатель без имени
+// процесса не в счёт: подтвердить нечем.
+func (o *Osmotr) SlushaetSvoy(proto string, port int) bool {
+	return slices.ContainsFunc(o.Slushayut, func(s Slushatel) bool {
+		return s.Proto == proto && s.Port == port && s.Process == svoyProcess
+	})
+}
+
 // Kod различает замечания осмотра: каждому свой текст и совет в службе.
 type Kod string
 

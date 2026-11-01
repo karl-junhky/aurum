@@ -110,9 +110,10 @@ func (s *Sluzhba) DochitatKhranilishche() {
 				log.Printf("хранилище по-прежнему не читается: %v", err)
 				continue
 			}
+			serty := sertySvoih(n, s.estKlyuchUpravleniya)
 			s.mu.Lock()
 			if s.rezhimNeProchitan {
-				s.rezhim, s.rezhimNeProchitan = rezhimNabora(n), false
+				s.rezhim, s.rezhimNeProchitan, s.svoiSerty = rezhimNabora(n), false, serty
 			}
 			s.mu.Unlock()
 			log.Printf("хранилище прочитано после отказа при старте")

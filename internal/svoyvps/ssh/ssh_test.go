@@ -628,6 +628,17 @@ func TestTunnelCherezEtotZheServer(t *testing.T) {
 	z.Put.Tunnel = true
 	_, err = Podklyuchit(kontekst(t), z)
 	zhdatPrichinu(t, err, PrichinaTunnelCherezNego)
+
+	// Вход, который только смотрит, через этот же сервер пускают.
+	n.sshClient = "203.0.113.10"
+	p = zapustitPodstavnoy(t, n)
+	z = p.zapros(Vhod{Polzovatel: "root", Parol: "verno"})
+	z.Put.Tunnel, z.TolkoSmotrit = true, true
+	s, err = Podklyuchit(kontekst(t), z)
+	if err != nil {
+		t.Fatalf("проверка через этот же сервер: %v", err)
+	}
+	s.Zakryt()
 }
 
 func TestKlyuchCheloveka(t *testing.T) {

@@ -47,6 +47,10 @@ type Zapros struct {
 	// кнопкой «Я переустановил систему».
 	Odobren string
 	Put     Put
+	// TolkoSmotrit: вход ничего не перезапускает, и туннелю через этот же
+	// сервер он не опасен. Без этого сервер, до которого прямой SSH режут,
+	// а VPN идёт через него же, нельзя было бы даже проверить.
+	TolkoSmotrit bool
 }
 
 // Пределы. Переменные, а не константы: тесты сжимают паузы до миллисекунд.
@@ -200,7 +204,7 @@ func Podklyuchit(ctx context.Context, z Zapros) (s *Soedinenie, err error) {
 	if err := s.uznatPrava(pctx, z.Vhod.Parol); err != nil {
 		return nil, err
 	}
-	if z.Put.Tunnel {
+	if z.Put.Tunnel && !z.TolkoSmotrit {
 		if err := s.proveritTunnel(); err != nil {
 			return nil, err
 		}

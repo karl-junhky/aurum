@@ -455,6 +455,9 @@ type Sluzhba struct {
 	// rezhimNeProchitan: хранилище не прочиталось при создании службы, и режим
 	// в статусе стоит умолчанием, а не из набора.
 	rezhimNeProchitan bool
+	// svoiSerty это сертификаты своих серверов из набора для Status(): под
+	// mu, идёт за хранилищем, как rezhim.
+	svoiSerty []sertSvoego
 
 	// pauzaPaniki: отступ перед повтором наблюдателя после паники. Полем, а не
 	// константой на месте вызова, ради теста второй паники (Г6).
@@ -548,6 +551,7 @@ type Sluzhba struct {
 	vpsUstanovit       func(context.Context, upravlenie.Ustanovka) (upravlenie.Itog, error)
 	vpsSnesti          func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.SnosItog, error)
 	vpsVzyat           func(context.Context, upravlenie.Vzyatie) (upravlenie.Itog, error)
+	vpsProverit        func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error)
 	programmaUzla      func(context.Context) (io.ReadSeekCloser, error)
 	fizicheskiyAdapter func() (set.Adapter, error)
 
@@ -636,6 +640,7 @@ func NovayaSluzhba() *Sluzhba {
 	s.vpsUstanovit = upravlenie.Ustanovit
 	s.vpsSnesti = upravlenie.Snesti
 	s.vpsVzyat = upravlenie.Vzyat
+	s.vpsProverit = upravlenie.ProveritServer
 	s.programmaUzla = s.programmaIzKataloga
 	s.fizicheskiyAdapter = ssh.FizicheskiyAdapter
 	s.fonCtx, s.fonOtmena = context.WithCancel(context.Background())
@@ -673,7 +678,7 @@ func NovayaSluzhba() *Sluzhba {
 	// умолчание тут честнее пустоты.
 	s.rezhim = rezhimPoUmolchaniyu
 	if n, err := s.naborIzHranilishcha(); err == nil {
-		s.rezhim = rezhimNabora(n)
+		s.rezhim, s.svoiSerty = rezhimNabora(n), sertySvoih(n, s.estKlyuchUpravleniya)
 	} else {
 		// Дочитает DochitatKhranilishche, когда служба запустит фон (M4).
 		s.rezhimNeProchitan = true
@@ -856,6 +861,7 @@ func (s *Sluzhba) Status() protokol.StatusOtvet {
 		ObnovlenieOtkaz:      s.obnovlenieOtkaz,
 		Pomehi:               s.pomehiDlyaStatusa(),
 		ChasyRashozhdenie:    s.chasyDlyaStatusa(),
+		SvoiTrevogi:          s.svoiTrevogiDlyaStatusa(),
 	}
 }
 

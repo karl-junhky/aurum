@@ -53,6 +53,8 @@ func (s *Sluzhba) zapisSvoego(k protokol.Kadr) (SvoyServer, *protokol.Kadr) {
 	return n.SvoiServery[i], nil
 }
 
+var errNetKlyuchaUpravleniya = errors.New("ключа управления этим сервером на компьютере нет: сначала возьми сервер под управление")
+
 // vhodKlyuchom это вход на свой сервер root по ключу управления, с ключом
 // хоста из записи.
 func vhodKlyuchom(z SvoyServer, podpis gossh.Signer) (ssh.Zapros, error) {
@@ -71,16 +73,9 @@ func (s *Sluzhba) svoyVpsSnesti(k protokol.Kadr) protokol.Kadr {
 	if o != nil {
 		return *o
 	}
-	podpis, ok, err := s.klyuchUpravleniya(z.Id)
+	zapros, kod, err := s.vhodUpravleniya(z)
 	if err != nil {
-		return otkazIz(k, protokol.KodSecretsUnreadable, err)
-	}
-	if !ok {
-		return otkaz(k.Id, k.Imya, protokol.KodVpsVzyat, "ключа управления этим сервером на компьютере нет: сначала возьми сервер под управление")
-	}
-	zapros, err := vhodKlyuchom(z, podpis)
-	if err != nil {
-		return otkazIz(k, protokol.KodSecretsUnreadable, err)
+		return otkazIz(k, kod, err)
 	}
 	return s.zapustitVps(k, vidSnos, func(ctx context.Context, zad *zadanieVps) error {
 		s.pravitHod(zad, func(h *HodVps) { h.Shag = string(upravlenie.ShagVhod) })

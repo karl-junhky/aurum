@@ -431,8 +431,8 @@ func (s *Sluzhba) checkUpdate(ctx context.Context, k protokol.Kadr) protokol.Kad
 // рядом .sha256 из выпуска и ставит его тем же путём, что installUpdate.
 func (s *Sluzhba) downloadUpdate(ctx context.Context, k protokol.Kadr) protokol.Kadr {
 	// Скачанное сразу ставится, поэтому отказ до загрузки, а не после неё.
-	if s.svoyVpsIdyot() {
-		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, otkazZanyatoVps)
+	if tekst := s.svoyVpsIdyot(); tekst != "" {
+		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
 	}
 	do, otm := context.WithTimeout(ctx, srokZagruzki)
 	defer otm()

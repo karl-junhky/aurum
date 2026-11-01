@@ -40,8 +40,12 @@ func otkazVps(err error) OtkazVps {
 	case errors.As(err, &ostatok):
 		return OtkazVps{Kod: protokol.KodVpsUstanovka,
 			Tekst: "после сноса на сервере осталось: " + strings.Join(ostatok.Chto, ", ") + ". Ключи остались в списке, снос можно повторить"}
+	case errors.Is(err, errProverkaDolgo):
+		return OtkazVps{Kod: protokol.KodVpsNeOtvechaet, Tekst: err.Error()}
 	case errors.Is(err, server.ErrNetUstanovki):
 		return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "на сервере нет установки Affory: его можно поставить заново"}
+	case errors.Is(err, upravlenie.ErrChuzhayaUstanovka):
+		return OtkazVps{Kod: protokol.KodVpsVzyat, Tekst: "сервер переставлен с другого компьютера, и ключи VPN этого компьютера к нему не подходят: возьми его под управление заново"}
 	case errors.Is(err, upravlenie.ErrNeDoshla):
 		return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "установка на сервере не дошла до ключей: поставь сервер заново, она продолжится"}
 	case errors.As(err, &molch):

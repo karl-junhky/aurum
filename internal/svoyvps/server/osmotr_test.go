@@ -142,6 +142,12 @@ func TestZanyat(t *testing.T) {
 		if got := o.Zanyat(s.proto, s.port); got != s.zhdu {
 			t.Errorf("%s/%d: %q, ждали %q", s.proto, s.port, got, s.zhdu)
 		}
+		// Своя программа слушает там, где порт не занят чужим, но не везде:
+		// свободный порт не её.
+		svoy := s.port == 8443
+		if got := o.SlushaetSvoy(s.proto, s.port); got != svoy {
+			t.Errorf("%s/%d слушает своя: %v, ждали %v", s.proto, s.port, got, svoy)
+		}
 	}
 }
 

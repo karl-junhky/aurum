@@ -221,6 +221,13 @@ func (s *Sluzhba) ZapustitRaspisanie() {
 			s.raspisanieChasov(s.fonCtx)
 		})
 	})
+	s.fon.Add(1)
+	fon.Zapustit("проверке своих серверов", func() {
+		defer s.fon.Done()
+		fon.SPovtorom(s.fonCtx, "проверка своих серверов", pauzaPoslePaniki, func() {
+			s.raspisanieSvoih(s.fonCtx)
+		})
+	})
 }
 
 // raspisaniePodpiski тянет подписку при старте и дальше раз в период.

@@ -124,6 +124,18 @@ type StatusOtvet struct {
 	// отрицательное значит «отстают». Есть только при расхождении больше двух
 	// минут: меньшее подключению не мешает, и строка о нём была бы шумом.
 	ChasyRashozhdenie int `json:"chasy_rashozhdenie,omitempty"`
+	// SvoiTrevogi это беды сертификатов своих серверов (1.11.0, §3.4 плана
+	// «Свой VPN»): продление не выходит или срок кончается. Здесь, а не
+	// только во вкладке «Свой VPN»: её месяцами не открывают.
+	SvoiTrevogi []SvoyaTrevoga `json:"svoi_trevogi,omitempty"`
+}
+
+// SvoyaTrevoga это тревога о своём сервере. Tekst готов целиком, Imya для
+// заголовка строки, Id - чтобы окно открыло карточку.
+type SvoyaTrevoga struct {
+	Id    string `json:"id"`
+	Imya  string `json:"imya"`
+	Tekst string `json:"tekst"`
 }
 
 // Pomeha это одна программа из группы «ломает». Vid выбирает фразу окна:

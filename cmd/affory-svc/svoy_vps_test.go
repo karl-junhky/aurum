@@ -102,12 +102,15 @@ func osmotrChistyy() *server.Osmotr {
 func TestKlyuchUpravleniya(t *testing.T) {
 	s := podstavnaya(t, nil)
 	id := idSvoego(netip.MustParseAddr(adresSvoego))
-	if _, ok, err := s.klyuchUpravleniya(id); err != nil || ok {
+	if _, ok, err := s.klyuchUpravleniya(id); err != nil || ok || s.estKlyuchUpravleniya(id) {
 		t.Fatalf("ключа ещё нет, а ответ ok=%v err=%v", ok, err)
 	}
 	k1, err := s.zavestiKlyuchUpravleniya(id)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !s.estKlyuchUpravleniya(id) {
+		t.Fatal("заведённого ключа статус не видит")
 	}
 	put, err := s.putKlyuchaUpravleniya(id)
 	if err != nil {
@@ -137,7 +140,7 @@ func TestKlyuchUpravleniya(t *testing.T) {
 	if err := s.ubratKlyuchUpravleniya(id); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := s.klyuchUpravleniya(id); err != nil || ok {
+	if _, ok, err := s.klyuchUpravleniya(id); err != nil || ok || s.estKlyuchUpravleniya(id) {
 		t.Fatalf("стёртый ключ читается: ok=%v err=%v", ok, err)
 	}
 	if err := s.ubratKlyuchUpravleniya(id); err != nil {

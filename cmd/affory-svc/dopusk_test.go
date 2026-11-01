@@ -85,7 +85,7 @@ var resheniyeOPravah = map[string]bool{
 	// настоящий IP машины.
 	"svoyVpsOsmotret": false, "svoyVpsUstanovit": false,
 	"svoyVpsHod": false, "svoyVpsOtmenit": false, "svoyVpsSpisok": false,
-	"svoyVpsSnesti": false, "svoyVpsVzyat": false, "svoyVpsZabyt": false,
+	"svoyVpsSnesti": false, "svoyVpsVzyat": false, "svoyVpsZabyt": false, "svoyVpsProverit": false,
 }
 
 // Команда без прав администратора обязана получить отказ, а не выполниться.

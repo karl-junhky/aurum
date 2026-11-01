@@ -96,6 +96,16 @@ export interface StatusOtvet {
    *  значит «отстают» (kadr.go ChasyRashozhdenie, 1.10.0). Поле есть только
    *  при расхождении больше двух минут. */
   chasy_rashozhdenie?: number;
+  /** Беды сертификатов своих серверов (kadr.go SvoiTrevogi, 1.11.0):
+   *  продление не выходит или срок кончается. Пусто значит «бед нет». */
+  svoi_trevogi?: SvoyaTrevoga[];
+}
+
+/** protokol.SvoyaTrevoga: tekst готов целиком, id открывает карточку. */
+export interface SvoyaTrevoga {
+  id: string;
+  imya: string;
+  tekst: string;
 }
 
 /** protokol.Pomeha. vid выбирает фразу: obhod просят выключить, vpn

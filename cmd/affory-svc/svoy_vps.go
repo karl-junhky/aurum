@@ -69,6 +69,18 @@ type SvoyServer struct {
 	// SertDo это конец срока сертификата hy2 (Unix-секунды), как его видела
 	// программа сервера при последнем визите.
 	SertDo int64 `json:"sert_do,omitempty"`
+	// SertTrevoga и SertOtkaz: тревога программы о сертификате и последний
+	// отказ продления. SertProveren - когда эти сведения пришли от программы
+	// сервера: проверка, где она не ответила, их не обновляет.
+	SertTrevoga  bool      `json:"sert_trevoga,omitempty"`
+	SertOtkaz    string    `json:"sert_otkaz,omitempty"`
+	SertProveren time.Time `json:"sert_proveren,omitzero"`
+	// Proveren это последний визит службы: установка, захват или проверка,
+	// удачная или нет. ProverkaOtkaz говорит, почему последняя проверка не
+	// прошла или прошла без программы сервера и сведений о сертификате не
+	// обновила.
+	Proveren      time.Time `json:"proveren,omitzero"`
+	ProverkaOtkaz string    `json:"proverka_otkaz,omitempty"`
 }
 
 // idSvoego выводит id своего сервера из адреса: та же машина после
@@ -167,6 +179,10 @@ type HodVps struct {
 	Vid  string `json:"vid"`
 	Faza string `json:"faza"`
 	Shag string `json:"shag,omitempty"`
+	// Server - id своего сервера, который проверяется; Planovaya - проверку
+	// начала сама служба, а не человек.
+	Server    string `json:"server,omitempty"`
+	Planovaya bool   `json:"planovaya,omitempty"`
 	// Put: напрямую или через VPN, после входа.
 	Put              string        `json:"put,omitempty"`
 	Klyuch           *KlyuchHoda   `json:"klyuch,omitempty"`
@@ -177,26 +193,46 @@ type HodVps struct {
 	Osmotr           *OsmotrVps    `json:"osmotr,omitempty"`
 	Ustanovlen       *UstanovkaVps `json:"ustanovlen,omitempty"`
 	Snyat            *SnosVps      `json:"snyat,omitempty"`
+	Proverka         *ProverkaVps  `json:"proverka,omitempty"`
 	Otkaz            *OtkazVps     `json:"otkaz,omitempty"`
 	Preduprezhdeniya []OtkazVps    `json:"preduprezhdeniya,omitempty"`
 	Nachalo          time.Time     `json:"nachalo"`
 	Konec            *time.Time    `json:"konec,omitempty"`
 }
 
-const otkazZanyatoVps = "со своим сервером уже идёт дело: дождись его конца или отмени"
+const (
+	otkazZanyatoVps    = "со своим сервером уже идёт дело: дождись его конца или отмени"
+	otkazIdyotProverka = "служба как раз сама проверяет свой сервер: дождись конца проверки или отмени её"
+)
 
 type zadanieVps struct {
 	snimok HodVps
 	otmena context.CancelFunc
 	gotovo bool
+	// fonovoe: плановая проверка. Итог прошлого дела человека она не
+	// заслоняет: по её концу svoyVpsHod снова отдаёт prezhnee.
+	fonovoe  bool
+	prezhnee *zadanieVps
 }
 
-// svoyVpsIdyot: задание своего сервера идёт. Установка обновления посреди
-// него опустила бы службу вместе с заданием.
-func (s *Sluzhba) svoyVpsIdyot() bool {
+// deloVpsIdyot говорит, какое задание своего сервера идёт; пусто - никакое.
+// Под muVps.
+func (s *Sluzhba) deloVpsIdyot() string {
+	switch {
+	case s.vps == nil || s.vps.gotovo:
+		return ""
+	case s.vps.fonovoe:
+		return otkazIdyotProverka
+	}
+	return otkazZanyatoVps
+}
+
+// svoyVpsIdyot: задание своего сервера идёт, текст - какое. Установка
+// обновления посреди него опустила бы службу вместе с заданием.
+func (s *Sluzhba) svoyVpsIdyot() string {
 	s.muVps.Lock()
 	defer s.muVps.Unlock()
-	return s.vps != nil && !s.vps.gotovo
+	return s.deloVpsIdyot()
 }
 
 // zaperetVps запирает задания своего сервера до срока do одним взятием
@@ -206,8 +242,8 @@ func (s *Sluzhba) svoyVpsIdyot() bool {
 func (s *Sluzhba) zaperetVps(do time.Time, tekst string) (otperet func(), otkaz string) {
 	s.muVps.Lock()
 	defer s.muVps.Unlock()
-	if s.vps != nil && !s.vps.gotovo {
-		return nil, otkazZanyatoVps
+	if tekst := s.deloVpsIdyot(); tekst != "" {
+		return nil, tekst
 	}
 	if time.Now().Before(s.vpsZaporDo) {
 		return nil, s.vpsZaporTekst
@@ -228,7 +264,8 @@ func (s *Sluzhba) zaperetVps(do time.Time, tekst string) (otperet func(), otkaz 
 func (s *Sluzhba) pravitHod(z *zadanieVps, fn func(*HodVps)) {
 	s.muVps.Lock()
 	fn(&z.snimok)
-	sobytie := map[string]any{"id": z.snimok.Id, "vid": z.snimok.Vid, "faza": z.snimok.Faza, "shag": z.snimok.Shag}
+	sobytie := map[string]any{"id": z.snimok.Id, "vid": z.snimok.Vid, "faza": z.snimok.Faza, "shag": z.snimok.Shag,
+		"server": z.snimok.Server, "planovaya": z.snimok.Planovaya}
 	s.muVps.Unlock()
 	s.izvestit("svoy-vps-hod", sobytie)
 }
@@ -237,22 +274,39 @@ func (s *Sluzhba) pravitHod(z *zadanieVps, fn func(*HodVps)) {
 // службу: два входа на сервер разом мешали бы друг другу, а заслон SSH-слоя
 // посчитал бы их неудачи вместе.
 func (s *Sluzhba) zapustitVps(k protokol.Kadr, vid string, delo func(ctx context.Context, z *zadanieVps) error) protokol.Kadr {
+	nachalo, tekst := s.nachatVps(vid, false, delo)
+	if tekst != "" {
+		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
+	}
+	return otvet(k.Id, k.Imya, nachalo)
+}
+
+// nachatVps заводит задание без кадра: его зовут и команды, и плановая
+// проверка (fonovoe). Отказ - непустой текст, почему занято.
+func (s *Sluzhba) nachatVps(vid string, fonovoe bool, delo func(ctx context.Context, z *zadanieVps) error) (HodVps, string) {
 	s.muVps.Lock()
-	if s.vps != nil && !s.vps.gotovo {
+	if tekst := s.deloVpsIdyot(); tekst != "" {
 		s.muVps.Unlock()
-		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, otkazZanyatoVps)
+		return HodVps{}, tekst
 	}
 	if time.Now().Before(s.vpsZaporDo) {
 		tekst := s.vpsZaporTekst
 		s.muVps.Unlock()
-		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
+		return HodVps{}, tekst
 	}
 	if !s.zavestiFonovuyu() {
 		s.muVps.Unlock()
-		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, "служба останавливается")
+		return HodVps{}, "служба останавливается"
 	}
 	ctx, otmena := context.WithCancel(s.fonCtx)
 	z := &zadanieVps{snimok: HodVps{Id: time.Now().UnixMilli(), Vid: vid, Faza: fazaIdyot, Nachalo: time.Now()}, otmena: otmena}
+	if fonovoe {
+		z.fonovoe, z.prezhnee, z.snimok.Planovaya = true, s.vps, true
+		// Прошлая плановая могла не успеть вернуть своё прежнее.
+		if s.vps != nil && s.vps.fonovoe {
+			z.prezhnee = s.vps.prezhnee
+		}
+	}
 	s.vps = z
 	nachalo := z.snimok
 	s.muVps.Unlock()
@@ -285,8 +339,15 @@ func (s *Sluzhba) zapustitVps(k protokol.Kadr, vid string, delo func(ctx context
 			}
 			z.gotovo = true
 		})
+		if fonovoe {
+			s.muVps.Lock()
+			if s.vps == z {
+				s.vps = z.prezhnee
+			}
+			s.muVps.Unlock()
+		}
 	})
-	return otvet(k.Id, k.Imya, nachalo)
+	return nachalo, ""
 }
 
 func (s *Sluzhba) svoyVpsHod(k protokol.Kadr) protokol.Kadr {
@@ -607,9 +668,13 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 	if len(it.Vhody.Hy2) > 0 {
 		zapis.Hy2 = it.Vhody.Hy2[0]
 	}
-	if it.Sert != nil && it.Sert.Est {
-		zapis.SertDo = it.Sert.Do
+	if it.Sert != nil {
+		if it.Sert.Est {
+			zapis.SertDo = it.Sert.Do
+		}
+		zapis.SertTrevoga, zapis.SertOtkaz = it.Sert.Trevoga, it.Sert.Otkaz
 	}
+	zapis.Proveren, zapis.SertProveren = zapis.Postavlen, zapis.Postavlen
 	err = s.pravitNabor(func(n *Nabor) error {
 		ids = nil
 		for _, k := range it.Klyuchi {
