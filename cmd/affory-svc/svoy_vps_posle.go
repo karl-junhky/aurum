@@ -18,17 +18,24 @@ import (
 )
 
 // Управление своим сервером после установки (блок З плана): снос, захват,
-// «забыть».
+// «забыть», «забыть и снять ключ».
 
 const (
-	vidSnos  = "snos"
-	vidVzyat = "vzyat"
+	vidSnos   = "snos"
+	vidVzyat  = "vzyat"
+	vidOtpusk = "otpusk"
 )
 
 // SnosVps это итог сноса для окна.
 type SnosVps struct {
 	// ParolVernulsya: вход по паролю снова такой, каким был до выключения.
 	ParolVernulsya bool `json:"parol_vernulsya,omitempty"`
+}
+
+// OtpuskVps это итог «забыть и снять ключ» для окна.
+type OtpuskVps struct {
+	// KlyuchaNeBylo: строки ключа этого компьютера на сервере уже не было.
+	KlyuchaNeBylo bool `json:"klyucha_ne_bylo,omitempty"`
 }
 
 // zapisSvoego находит запись о своём сервере по id.
@@ -78,23 +85,14 @@ func (s *Sluzhba) svoyVpsSnesti(k protokol.Kadr) protokol.Kadr {
 		return otkazIz(k, kod, err)
 	}
 	return s.zapustitVps(k, vidSnos, func(ctx context.Context, zad *zadanieVps) error {
-		s.pravitHod(zad, func(h *HodVps) { h.Shag = string(upravlenie.ShagVhod) })
+		s.pravitHod(zad, func(h *HodVps) { h.Shag, h.Server = string(upravlenie.ShagVhod), z.Id })
 		it, err := s.vpsSnesti(ctx, s.putiVps(), zapros)
 		if err != nil {
 			return err
 		}
-		var otstali *OtkazVps
-		switch err := s.ubratZapisSvoego(z.Id); {
-		case errors.Is(err, errPravilaOtstali):
-			log.Printf("свой сервер %s: %v", z.Id, err)
-			otstali = &OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
-		case err != nil:
-			return &oshibkaZapisi{err}
-		}
-		// Строку ключа на сервере снос уже снял: оставшийся файл ничего не
-		// открывает, и проваливать из-за него снос незачем.
-		if err := s.ubratKlyuchUpravleniya(z.Id); err != nil {
-			log.Printf("свой сервер %s: %v", z.Id, err)
+		otstali, err := s.zabytOtpushchennyy(z.Id)
+		if err != nil {
+			return err
 		}
 		s.pravitHod(zad, func(h *HodVps) {
 			h.Put, h.Snyat = it.Vhod.Put, &SnosVps{ParolVernulsya: it.Snos.ParolVernulsya}
@@ -154,7 +152,7 @@ func (s *Sluzhba) svoyVpsVzyat(k protokol.Kadr) protokol.Kadr {
 		z.Imya = imyaSvoegoPoUmolchaniyu
 	}
 	return s.zapustitVps(k, vidVzyat, func(ctx context.Context, zad *zadanieVps) error {
-		s.pravitHod(zad, func(h *HodVps) { h.Shag = string(upravlenie.ShagVhod) })
+		s.pravitHod(zad, func(h *HodVps) { h.Shag, h.Server = string(upravlenie.ShagVhod), id })
 		podpis, err := s.zavestiKlyuchUpravleniya(id)
 		if err != nil {
 			return err
@@ -175,8 +173,60 @@ func (s *Sluzhba) svoyVpsVzyat(k protokol.Kadr) protokol.Kadr {
 	})
 }
 
+// zabytOtpushchennyy убирает запись о сервере с её ключами и ключ
+// управления, когда строки ключа на сервере уже нет (снос, снятие ключа).
+// Правила, отставшие от набора, это предупреждение: запись уже убрана.
+// Оставшийся файл ключа ничего не открывает, и проваливать из-за него дело
+// незачем.
+func (s *Sluzhba) zabytOtpushchennyy(id string) (otstali *OtkazVps, err error) {
+	switch err := s.ubratZapisSvoego(id); {
+	case errors.Is(err, errPravilaOtstali):
+		log.Printf("свой сервер %s: %v", id, err)
+		otstali = &OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
+	case err != nil:
+		return nil, &oshibkaZapisi{err}
+	}
+	if err := s.ubratKlyuchUpravleniya(id); err != nil {
+		log.Printf("свой сервер %s: %v", id, err)
+	}
+	return otstali, nil
+}
+
+// svoyVpsOtpustit снимает с сервера строку ключа управления этого компьютера
+// и забывает сервер (З5). Сервер не пустил или ключ - последний вход: не
+// изменилось ничего, и окно предлагает забыть без снятия (svoyVpsZabyt). VPN
+// на сервере работает дальше, ключи на других устройствах тоже.
+func (s *Sluzhba) svoyVpsOtpustit(k protokol.Kadr) protokol.Kadr {
+	z, o := s.zapisSvoego(k)
+	if o != nil {
+		return *o
+	}
+	zapros, kod, err := s.vhodUpravleniya(z)
+	if err != nil {
+		return otkazIz(k, kod, err)
+	}
+	return s.zapustitVps(k, vidOtpusk, func(ctx context.Context, zad *zadanieVps) error {
+		s.pravitHod(zad, func(h *HodVps) { h.Shag, h.Server = string(upravlenie.ShagVhod), z.Id })
+		it, err := s.vpsOtpustit(ctx, s.putiVps(), zapros)
+		if err != nil {
+			return err
+		}
+		otstali, err := s.zabytOtpushchennyy(z.Id)
+		if err != nil {
+			return err
+		}
+		s.pravitHod(zad, func(h *HodVps) {
+			h.Put, h.Otpushchen = it.Vhod.Put, &OtpuskVps{KlyuchaNeBylo: !it.Snyat}
+			if otstali != nil {
+				h.Preduprezhdeniya = append(h.Preduprezhdeniya, *otstali)
+			}
+		})
+		return nil
+	})
+}
+
 // svoyVpsZabyt убирает из клиента ключи группы, запись и ключ управления
-// (З5). На сервере не меняется ничего.
+// (З5). На сервере не меняется ничего: снять с него ключ - svoyVpsOtpustit.
 func (s *Sluzhba) svoyVpsZabyt(k protokol.Kadr) protokol.Kadr {
 	// Запор, а не проверка: захват того же сервера, начатый посреди правки,
 	// завёл бы ключ управления, который она тут же сотрёт. Срок запора лишь

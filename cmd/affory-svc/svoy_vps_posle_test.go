@@ -73,7 +73,7 @@ func TestSvoyVpsSnesti(t *testing.T) {
 		t.Fatal(otv.Oshib)
 	}
 	h := dozhdatsyaVps(t, s)
-	if h.Faza != fazaGotovo || h.Snyat == nil || !h.Snyat.ParolVernulsya {
+	if h.Faza != fazaGotovo || h.Snyat == nil || !h.Snyat.ParolVernulsya || h.Server != id {
 		t.Fatalf("снос: %+v", h)
 	}
 	if zapros.Adres != adresSvoego || zapros.Port != 2222 || zapros.Vhod.Polzovatel != "root" ||
@@ -179,6 +179,89 @@ func TestSvoyVpsSnestiBezKlyucha(t *testing.T) {
 	}
 }
 
+func TestSvoyVpsOtpustit(t *testing.T) {
+	for _, snyat := range []bool{true, false} {
+		s := sPustymNaborom(t)
+		kh := klyuchHostaDlyaTesta(t)
+		id, _ := postavitSvoy(t, s, kh, true)
+		nash, _, err := s.klyuchUpravleniya(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var zapros ssh.Zapros
+		s.vpsOtpustit = func(_ context.Context, _ upravlenie.Puti, z ssh.Zapros) (upravlenie.OtpuskItog, error) {
+			zapros = z
+			return upravlenie.OtpuskItog{Snyat: snyat, Vhod: upravlenie.Svedeniya{Put: "напрямую"}}, nil
+		}
+		if otv := s.svoyVpsOtpustit(kadrVps(t, "svoyVpsOtpustit", map[string]string{"id": id})); otv.Oshib != nil {
+			t.Fatal(otv.Oshib)
+		}
+		h := dozhdatsyaVps(t, s)
+		if h.Vid != vidOtpusk || h.Faza != fazaGotovo || h.Otpushchen == nil || h.Otpushchen.KlyuchaNeBylo == snyat ||
+			h.Server != id || h.Put != "напрямую" || len(h.Preduprezhdeniya) != 0 {
+			t.Fatalf("снят %v: %+v %+v", snyat, h, h.Otpushchen)
+		}
+		if zapros.Adres != adresSvoego || zapros.Port != 2222 || zapros.Vhod.Podpis == nil ||
+			!bytes.Equal(zapros.Vhod.Podpis.PublicKey().Marshal(), nash.PublicKey().Marshal()) ||
+			zapros.Izvesten == nil || !bytes.Equal(zapros.Izvesten.Telo, kh.Telo) {
+			t.Fatalf("вход: %+v", zapros)
+		}
+		n, err := s.nabor()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(n.Servery) != 0 || len(n.SvoiServery) != 0 {
+			t.Fatalf("после «забыть и снять ключ» в наборе: %+v", n)
+		}
+		if _, ok, _ := s.klyuchUpravleniya(id); ok {
+			t.Fatal("ключ управления остался")
+		}
+	}
+}
+
+// Сервер не пустил или ключ - последний вход: в клиенте не меняется ничего.
+func TestSvoyVpsOtpustitOtkaz(t *testing.T) {
+	for _, c := range []struct {
+		imya  string
+		err   error
+		kod   string
+		tekst string
+	}{
+		{"последний вход", server.ErrPosledniyVhod, protokol.KodVpsPosledniyVhod, "последний вход root"},
+		// Проверить не вышло: текст не утверждает, что других входов нет.
+		{"входы не проверены", server.ErrVhodyNeProvereny, protokol.KodVpsPosledniyVhod, "не вышло проверить"},
+		{"сервер молчит", &upravlenie.Molchanie{Pryamo: errors.New("тишина")}, protokol.KodVpsNeOtvechaet, ""},
+	} {
+		t.Run(c.imya, func(t *testing.T) {
+			s := sPustymNaborom(t)
+			id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+			s.vpsOtpustit = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.OtpuskItog, error) {
+				return upravlenie.OtpuskItog{}, c.err
+			}
+			s.svoyVpsOtpustit(kadrVps(t, "svoyVpsOtpustit", map[string]string{"id": id}))
+			if h := dozhdatsyaVps(t, s); h.Otkaz == nil || h.Otkaz.Kod != c.kod || !strings.Contains(h.Otkaz.Tekst, c.tekst) || h.Otpushchen != nil {
+				t.Fatalf("отказ: %+v %+v", h, h.Otkaz)
+			}
+			n, err := s.nabor()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(n.Servery) != 2 || len(n.SvoiServery) != 1 {
+				t.Fatal("неудача убрала ключи из клиента")
+			}
+			if _, ok, _ := s.klyuchUpravleniya(id); !ok {
+				t.Fatal("неудача стёрла ключ управления")
+			}
+		})
+	}
+	// Без ключа управления снимать нечем: окно ведёт к «забыть».
+	s := sPustymNaborom(t)
+	id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), false)
+	if kod := kodOtkaza(s.svoyVpsOtpustit(kadrVps(t, "svoyVpsOtpustit", map[string]string{"id": id}))); kod != protokol.KodVpsVzyat {
+		t.Fatalf("без ключа управления: %q", kod)
+	}
+}
+
 // Запись пришла импортом без ключа управления; на сервере hy2 уже на другом
 // порту. Захват берёт ключи с сервера, прежние уходят.
 func TestSvoyVpsVzyat(t *testing.T) {
@@ -196,7 +279,7 @@ func TestSvoyVpsVzyat(t *testing.T) {
 		t.Fatal(otv.Oshib)
 	}
 	h := dozhdatsyaVps(t, s)
-	if h.Faza != fazaGotovo || h.Ustanovlen == nil || len(h.Ustanovlen.Ids) != 2 {
+	if h.Faza != fazaGotovo || h.Ustanovlen == nil || len(h.Ustanovlen.Ids) != 2 || h.Server != idSvoego(netip.MustParseAddr(adresSvoego)) {
 		t.Fatalf("захват: %+v", h)
 	}
 	if v.Vhod.Izvesten == nil || !bytes.Equal(v.Vhod.Izvesten.Telo, kh.Telo) || v.Imya != "Дача" ||

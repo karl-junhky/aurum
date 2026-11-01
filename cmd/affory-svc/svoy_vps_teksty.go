@@ -46,6 +46,12 @@ func otkazVps(err error) OtkazVps {
 		return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "на сервере нет установки Affory: его можно поставить заново"}
 	case errors.Is(err, upravlenie.ErrChuzhayaUstanovka):
 		return OtkazVps{Kod: protokol.KodVpsVzyat, Tekst: "сервер переставлен с другого компьютера, и ключи VPN этого компьютера к нему не подходят: возьми его под управление заново"}
+	case errors.Is(err, server.ErrVhodyNeProvereny):
+		return OtkazVps{Kod: protokol.KodVpsPosledniyVhod,
+			Tekst: "не вышло проверить, какие входы root останутся без ключа этого компьютера: sshd на сервере не ответил на проверку настроек, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
+	case errors.Is(err, server.ErrPosledniyVhod):
+		return OtkazVps{Kod: protokol.KodVpsPosledniyVhod,
+			Tekst: "ключ этого компьютера - последний вход root: других ключей, которыми root пустят снаружи, нет, а паролем root не пускают. Без него root не войти, разве что под другим пользователем с sudo или через консоль хостера, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
 	case errors.Is(err, upravlenie.ErrNeDoshla):
 		return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "установка на сервере не дошла до ключей: поставь сервер заново, она продолжится"}
 	case errors.As(err, &molch):

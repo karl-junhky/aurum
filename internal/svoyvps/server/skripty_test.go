@@ -85,8 +85,12 @@ func est(put string) bool {
 
 // podstavaSistemy заменяет утилиты, которые трогают систему: правки пишутся
 // в $LOG, sysctl живёт в файле $SYSCTL, показ tc берётся из $TC, показ
-// iptables и ip6tables - из $IPT. Служба vpn-uzel работает, если задана
-// AKTIVNA. Сбои задаются переменными SSHD_T_SBOY, SSHD_RELOAD_SBOY,
+// iptables и ip6tables - из $IPT, ответ sshd -T - из $SSHD_T (строки через
+// точку с запятой), состояние пароля root в passwd -S - из $PASSWD_S (по
+// умолчанию P, задан; другие вызовы passwd отказывают). Служба vpn-uzel
+// работает, если задана AKTIVNA. Сбои
+// задаются переменными SSHD_T_SBOY, SSHD_T_OBORVAN (ответ напечатан, а код
+// отказа), SSHD_RELOAD_SBOY, PASSWD_SBOY,
 // SYSCTL_SBOY (имя ключа, запись которого падает) и TC_SBOY (replace или
 // del).
 const podstavaSistemy = `id() { echo 0; }
@@ -126,7 +130,18 @@ ipt() {
     shift
     if [ "$3" = -S ]; then cat "$IPT"; else echo "$imya $*" >> "$LOG"; fi
 }
-sshd() { echo "sshd $*" >> "$LOG"; [ -z "${SSHD_T_SBOY:-}" ]; }
+sshd() {
+    echo "sshd $*" >> "$LOG"
+    [ -z "${SSHD_T_SBOY:-}" ] || return 1
+    [ "$1" != -T ] || printf '%s\n' "${SSHD_T:-}" | tr ';' '\n'
+    [ -z "${SSHD_T_OBORVAN:-}" ]
+}
+passwd() {
+    echo "passwd $*" >> "$LOG"
+    [ "$*" = "-S root" ] || return 2
+    [ -z "${PASSWD_SBOY:-}" ] || return 1
+    echo "root ${PASSWD_S:-P} 11/02/2026 0 99999 7 -1"
+}
 `
 
 // koren это машина в каталоге: пути скриптов переносятся в put.
@@ -628,6 +643,248 @@ func TestUstanovkaSkript(t *testing.T) {
 		if p := preduprezhdeniya(vyvod); kod != 0 || !doKonca(vyvod) || !slices.Equal(p, []string{"fq на eth0 не встал"}) ||
 			est(k.f("/etc/affory/peresadka")) {
 			t.Fatalf("код %d %q", kod, vyvod)
+		}
+	})
+}
+
+func TestOtpuskSkript(t *testing.T) {
+	const (
+		nash     = "ssh-ed25519 AAAAnash1 affory-PC"
+		chelovek = "ssh-ed25519 AAAAchelovek me@pc"
+		// Строки sshd -T, одинаковые во всех случаях. Строка, повторённая
+		// дальше, заменяет прежнюю.
+		osnova    = "pubkeyauthentication yes;authenticationmethods any;authorizedkeysfile .ssh/authorized_keys .ssh/authorized_keys2;usepam yes"
+		parolNet  = osnova + ";permitrootlogin yes;passwordauthentication no;kbdinteractiveauthentication no"
+		parolDa   = osnova + ";permitrootlogin yes;passwordauthentication yes;kbdinteractiveauthentication no"
+		staryyKbd = osnova + ";permitrootlogin yes;passwordauthentication no;kbdinteractiveauthentication yes"
+		// Пароль включён, а root паролем не пускают (умолчание Ubuntu).
+		rootBezParolya = osnova + ";permitrootlogin prohibit-password;passwordauthentication yes;kbdinteractiveauthentication yes"
+	)
+	ak := "/root/.ssh/authorized_keys"
+	prognat := func(t *testing.T, k koren, telo string, env ...string) ([]string, int) {
+		t.Helper()
+		return k.prognat(t, skriptOtpuska, env, telo)
+	}
+	type sluchay struct {
+		imya  string
+		env   []string
+		fayly map[string][]string
+	}
+	podgotovit := func(t *testing.T, s sluchay) koren {
+		t.Helper()
+		k := pustoyKoren(t)
+		for put, stroki := range s.fayly {
+			zapisat(t, k.f(put), stroki...)
+		}
+		return k
+	}
+	t.Run("рядом ключ человека", func(t *testing.T) {
+		k := pustoyKoren(t)
+		zapisat(t, k.f(ak), chelovek, nash, "ssh-ed25519 AAAAnash2 affory-PC2")
+		vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T="+parolNet)
+		if kod != 0 || !slices.Equal(vyvod, []string{"klyuch snyat"}) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+		// Пароль выключен: состояние пароля root не спрашивается.
+		if zhurnal := chitat(t, k.log); slices.ContainsFunc(zhurnal, func(s string) bool { return strings.HasPrefix(s, "passwd") }) {
+			t.Fatalf("passwd звали: %q", zhurnal)
+		}
+		if s := chitat(t, k.f(ak)); !slices.Equal(s, []string{chelovek, "ssh-ed25519 AAAAnash2 affory-PC2"}) || est(k.f(ak+".affory-chast")) {
+			t.Fatalf("authorized_keys %q", s)
+		}
+		// Повтор: строки уже нет.
+		if vyvod, kod := prognat(t, k, "AAAAnash1"); kod != 0 || !slices.Equal(vyvod, []string{"klyucha net"}) {
+			t.Fatalf("повтор: код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("последний вход", func(t *testing.T) {
+		for _, s := range []sluchay{
+			{imya: "пароль выключен", env: []string{"SSHD_T=" + parolNet}},
+			{imya: "старый OpenSSH без challengeresponse", env: []string{"SSHD_T=" + staryyKbd + ";challengeresponseauthentication no"}},
+			{imya: "root паролем не пускают", env: []string{"SSHD_T=" + rootBezParolya}},
+			{imya: "keyboard-interactive без PAM", env: []string{"SSHD_T=" + staryyKbd + ";usepam no"}},
+			{imya: "пароль root заблокирован", env: []string{"SSHD_T=" + parolDa, "PASSWD_S=L"}},
+			{imya: "у root нет пароля", env: []string{"SSHD_T=" + parolDa, "PASSWD_S=NP"}},
+			{imya: "passwd -S не ответил", env: []string{"SSHD_T=" + parolDa, "PASSWD_SBOY=1"}},
+			{imya: "пароль только вместе с ключом", env: []string{"SSHD_T=" + parolDa + ";authenticationmethods publickey,password"}},
+			{imya: "keyboard-interactive не отдельным способом", env: []string{"SSHD_T=" + staryyKbd + ";authenticationmethods publickey password"}},
+		} {
+			k := pustoyKoren(t)
+			// Комментарии, пустые строки и мусор входом не считаются.
+			zapisat(t, k.f(ak), "# от хостера", "", "не ключ вовсе", nash)
+			vyvod, kod := prognat(t, k, "AAAAnash1", s.env...)
+			if kod != 3 || !slices.Equal(vyvod, []string{"posledniy_vhod da"}) {
+				t.Fatalf("%s: код %d %q", s.imya, kod, vyvod)
+			}
+			if f := chitat(t, k.f(ak)); !slices.Equal(f, []string{"# от хостера", "не ключ вовсе", nash}) {
+				t.Fatalf("%s: authorized_keys тронут: %q", s.imya, f)
+			}
+		}
+	})
+	t.Run("данные входа для sshd -T", func(t *testing.T) {
+		// Входы root судятся с данными входа root снаружи и со своим адресом
+		// и портом sshd из SSH_CONNECTION: так sshd применяет блоки Match.
+		const snaruzhi = "sshd -T -C user=root,host=192.0.2.1,addr=192.0.2.1"
+		for ssh, zhdu := range map[string]string{
+			"198.51.100.7 50000 203.0.113.10 2222": snaruzhi + ",laddr=203.0.113.10,lport=2222",
+			"2001:db8::7 50000 2001:db8::10 22":    snaruzhi + ",laddr=2001:db8::10,lport=22",
+			"":                                     snaruzhi,
+			"198.51.100.7 50000 203.0.113.10":      snaruzhi,
+			"1 2 3;rm 4":                           snaruzhi,
+		} {
+			k := pustoyKoren(t)
+			zapisat(t, k.f(ak), nash)
+			prognat(t, k, "AAAAnash1", "SSHD_T="+parolDa, "SSH_CONNECTION="+ssh)
+			if zhurnal := chitat(t, k.log); !slices.Contains(zhurnal, zhdu) || !slices.Contains(zhurnal, "passwd -S root") {
+				t.Fatalf("%q: звали так: %q", ssh, zhurnal)
+			}
+		}
+	})
+	t.Run("не вход", func(t *testing.T) {
+		for _, s := range []sluchay{
+			// Файл правили в Windows: пустая строка - один CR.
+			{"пустая строка с CR", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {nash + "\r", "\r"}}},
+			{"принудительная команда", []string{"SSHD_T=" + parolNet},
+				map[string][]string{ak: {`command="rsync --server -logDtpre.iLsfxC . /backup",no-pty ssh-ed25519 AAAAbackup backup@hoster`, nash}}},
+			{"ключ в комментарии", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {"# ssh-ed25519 AAAAstaryy old@pc", nash}}},
+			{"тип без тела", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {"ssh-ed25519 сюда-вставить-ключ", nash}}},
+			{"ключ со сроком", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {`expiry-time="20260101" ` + chelovek, nash}}},
+			// Дальше ключ человека настоящий, но root им снаружи не войти.
+			{"root ключом не пускают", []string{"SSHD_T=" + parolNet + ";permitrootlogin no"}, map[string][]string{ak: {chelovek, nash}}},
+			{"root только с командой", []string{"SSHD_T=" + parolNet + ";permitrootlogin forced-commands-only"}, map[string][]string{ak: {chelovek, nash}}},
+			{"ключи выключены", []string{"SSHD_T=" + parolNet + ";pubkeyauthentication no"}, map[string][]string{ak: {chelovek, nash}}},
+			{"ключ только вместе с паролем", []string{"SSHD_T=" + parolNet + ";authenticationmethods publickey,password"}, map[string][]string{ak: {chelovek, nash}}},
+			{"authorized_keys2 не читается", []string{"SSHD_T=" + parolNet + ";authorizedkeysfile .ssh/authorized_keys"},
+				map[string][]string{ak: {nash}, ak + "2": {chelovek}}},
+			{"файлов ключей нет", []string{"SSHD_T=" + parolNet + ";authorizedkeysfile none"},
+				map[string][]string{ak: {chelovek, nash}, "/root/none": {chelovek}}},
+			// %% это сам знак процента: sshd читает /root/%u/klyuchi.
+			{"подстановка %%", []string{"SSHD_T=" + parolNet + ";authorizedkeysfile .ssh/authorized_keys %%u/klyuchi"},
+				map[string][]string{ak: {nash}, "/root/%root/klyuchi": {chelovek}}},
+		} {
+			k := podgotovit(t, s)
+			if vyvod, kod := prognat(t, k, "AAAAnash1", s.env...); kod != 3 || !slices.Equal(vyvod, []string{"posledniy_vhod da"}) {
+				t.Fatalf("%s: код %d %q", s.imya, kod, vyvod)
+			}
+		}
+	})
+	t.Run("проверить не вышло", func(t *testing.T) {
+		// sshd -T молчит или оборвался: ключ человека рядом, но пустит ли он
+		// root, не узнать.
+		for imya, env := range map[string][]string{
+			"не ответил": {"SSHD_T_SBOY=1"},
+			"оборвался":  {"SSHD_T=" + parolDa, "SSHD_T_OBORVAN=1"},
+		} {
+			k := pustoyKoren(t)
+			zapisat(t, k.f(ak), chelovek, nash)
+			if vyvod, kod := prognat(t, k, "AAAAnash1", env...); kod != 3 || !slices.Equal(vyvod, []string{"posledniy_vhod neizvestno"}) {
+				t.Fatalf("%s: код %d %q", imya, kod, vyvod)
+			}
+			if f := chitat(t, k.f(ak)); !slices.Equal(f, []string{chelovek, nash}) {
+				t.Fatalf("%s: authorized_keys тронут: %q", imya, f)
+			}
+		}
+		// Строки нет - ответ «не было», проверять входы незачем.
+		k := pustoyKoren(t)
+		zapisat(t, k.f(ak), chelovek)
+		if vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T_SBOY=1"); kod != 0 || !slices.Equal(vyvod, []string{"klyucha net"}) {
+			t.Fatalf("строки нет: код %d %q", kod, vyvod)
+		}
+		// Строка только в authorized_keys2: «не было» тут неправда.
+		k = pustoyKoren(t)
+		zapisat(t, k.f(ak), chelovek)
+		zapisat(t, k.f(ak+"2"), nash)
+		if vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T_SBOY=1"); kod != 3 || !slices.Equal(vyvod, []string{"posledniy_vhod neizvestno"}) ||
+			!slices.Equal(chitat(t, k.f(ak+"2")), []string{nash}) {
+			t.Fatalf("строка во втором файле: код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("копии нашей строки", func(t *testing.T) {
+		// Человек скопировал строку в authorized_keys2: она снимается и там,
+		// а копия входом не считается.
+		k := pustoyKoren(t)
+		zapisat(t, k.f(ak), chelovek, nash)
+		zapisat(t, k.f(ak+"2"), nash, "ssh-ed25519 AAAAvtoroy me@laptop")
+		if vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T="+parolNet); kod != 0 || !slices.Equal(vyvod, []string{"klyuch snyat"}) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+		if a, b := chitat(t, k.f(ak)), chitat(t, k.f(ak+"2")); !slices.Equal(a, []string{chelovek}) || !slices.Equal(b, []string{"ssh-ed25519 AAAAvtoroy me@laptop"}) ||
+			est(k.f(ak+".affory-chast")) || est(k.f(ak+"2.affory-chast")) {
+			t.Fatalf("authorized_keys %q, authorized_keys2 %q", a, b)
+		}
+		// Строка только в authorized_keys2, а других входов нет: отказ.
+		k = pustoyKoren(t)
+		zapisat(t, k.f(ak+"2"), nash)
+		if vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T="+parolNet); kod != 3 || !slices.Equal(vyvod, []string{"posledniy_vhod da"}) {
+			t.Fatalf("только во втором файле: код %d %q", kod, vyvod)
+		}
+		// Файл, который sshd не читает, не трогается.
+		k = pustoyKoren(t)
+		zapisat(t, k.f(ak), chelovek, nash)
+		zapisat(t, k.f(ak+"2"), nash)
+		if vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T="+parolNet+";authorizedkeysfile .ssh/authorized_keys"); kod != 0 || !slices.Equal(vyvod, []string{"klyuch snyat"}) ||
+			!slices.Equal(chitat(t, k.f(ak+"2")), []string{nash}) {
+			t.Fatalf("нечитаемый файл: код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("вход останется", func(t *testing.T) {
+		for _, s := range []sluchay{
+			{"паролем", []string{"SSHD_T=" + parolDa}, map[string][]string{ak: {nash}}},
+			{"паролем через keyboard-interactive отдельным способом", []string{"SSHD_T=" + staryyKbd + ";authenticationmethods publickey keyboard-interactive"},
+				map[string][]string{ak: {nash}}},
+			{"ключом при without-password", []string{"SSHD_T=" + parolNet + ";permitrootlogin without-password"}, map[string][]string{ak: {chelovek, nash}}},
+			{"паролем отдельным способом", []string{"SSHD_T=" + parolDa + ";authenticationmethods publickey,password password"}, map[string][]string{ak: {nash}}},
+			{"keyboard-interactive", []string{"SSHD_T=" + staryyKbd}, map[string][]string{ak: {nash}}},
+			{"keyboard-interactive:pam отдельным способом", []string{"SSHD_T=" + staryyKbd + ";authenticationmethods publickey keyboard-interactive:pam"},
+				map[string][]string{ak: {nash}}},
+			{"ключом в authorized_keys2", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {nash}, ak + "2": {chelovek}}},
+			{"ключом при prohibit-password", []string{"SSHD_T=" + rootBezParolya}, map[string][]string{ak: {chelovek, nash}}},
+			{"ключом отдельным способом", []string{"SSHD_T=" + parolNet + ";authenticationmethods publickey,password publickey"}, map[string][]string{ak: {chelovek, nash}}},
+			// Путь без корня отсчитывается от домашнего каталога, %h, %u и %U
+			// подставляются.
+			{"ключом из файла без корня", []string{"SSHD_T=" + parolNet + ";authorizedkeysfile .ssh/drugie"},
+				map[string][]string{ak: {nash}, "/root/.ssh/drugie": {chelovek}}},
+			{"ключом из файла по %h", []string{"SSHD_T=" + parolNet + ";authorizedkeysfile %h/.ssh/k-%u-%U"},
+				map[string][]string{ak: {nash}, "/root/.ssh/k-root-0": {chelovek}}},
+			// Ограничение адреса оболочку не отнимает; ключи других видов
+			// тоже ключи.
+			{"ключом с from=", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {nash}, ak + "2": {`from="198.51.100.0/24" ` + chelovek}}},
+			{"ключом ecdsa", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {nash}, ak + "2": {"ecdsa-sha2-nistp256 AAAAE2Vj me@pc"}}},
+			{"ключом sk", []string{"SSHD_T=" + parolNet}, map[string][]string{ak: {nash}, ak + "2": {"sk-ssh-ed25519@openssh.com AAAAGnNr me@yubikey"}}},
+		} {
+			k := podgotovit(t, s)
+			vyvod, kod := prognat(t, k, "AAAAnash1", s.env...)
+			ostalos := slices.DeleteFunc(slices.Clone(s.fayly[ak]), func(x string) bool { return x == nash })
+			if kod != 0 || !slices.Equal(vyvod, []string{"klyuch snyat"}) || !slices.Equal(chitat(t, k.f(ak)), ostalos) {
+				t.Fatalf("%s: код %d %q, authorized_keys %q", s.imya, kod, vyvod, chitat(t, k.f(ak)))
+			}
+		}
+	})
+	t.Run("файл ключей с корнем", func(t *testing.T) {
+		k := pustoyKoren(t)
+		zapisat(t, k.f(ak), nash)
+		zapisat(t, k.f("/etc/ssh/klyuchi/root"), chelovek)
+		// Путь с корнем для bash: в Git Bash C:/x это /c/x.
+		put := k.f("/etc/ssh/klyuchi/%u")
+		if len(put) > 1 && put[1] == ':' {
+			put = "/" + strings.ToLower(put[:1]) + put[2:]
+		}
+		if vyvod, kod := prognat(t, k, "AAAAnash1", "SSHD_T="+parolNet+";authorizedkeysfile "+put); kod != 0 || !slices.Equal(vyvod, []string{"klyuch snyat"}) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("нет файла", func(t *testing.T) {
+		if vyvod, kod := prognat(t, pustoyKoren(t), "AAAAnash1"); kod != 0 || !slices.Equal(vyvod, []string{"klyucha net"}) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("негодное тело", func(t *testing.T) {
+		for _, telo := range []string{"", "AAAA nash", "AAAA;rm"} {
+			k := pustoyKoren(t)
+			zapisat(t, k.f(ak), chelovek, nash)
+			if vyvod, kod := prognat(t, k, telo); kod != 1 || len(vyvod) != 0 || len(chitat(t, k.f(ak))) != 2 {
+				t.Fatalf("%q: код %d %q", telo, kod, vyvod)
+			}
 		}
 	})
 }

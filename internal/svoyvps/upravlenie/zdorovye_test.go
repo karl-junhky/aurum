@@ -90,7 +90,7 @@ func TestProveritServer(t *testing.T) {
 			if root.zakryt != 1 {
 				t.Fatalf("вход закрыт %d раз", root.zakryt)
 			}
-			if len(v.zaprosy) != 1 || !v.zaprosy[0].TolkoSmotrit {
+			if len(v.zaprosy) != 1 || !v.zaprosy[0].BezPerezapuska {
 				t.Fatalf("проверка входила не как смотрящая: %+v", v.zaprosy)
 			}
 			if c.zhdyom != nil {

@@ -42,6 +42,8 @@ func imyaSkripta(tekst string) string {
 		return "porty"
 	case skriptSnosa:
 		return "snos"
+	case skriptOtpuska:
+		return "otpusk"
 	}
 	return "?"
 }
@@ -347,6 +349,44 @@ func TestPanikaNeRonyaet(t *testing.T) {
 	proverit("Snesti", err)
 	_, _, err = ProchitatUstanovku(ctx, m)
 	proverit("ProchitatUstanovku", err)
+	_, err = SnyatKlyuch(ctx, m, pk)
+	proverit("SnyatKlyuch", err)
+}
+
+func TestSnyatKlyuch(t *testing.T) {
+	pk, telo := klyuchKompyutera(t)
+	ctx := context.Background()
+	m := novaya()
+	m.otvety["otpusk"] = ssh.Itog{Vyvod: []byte("klyuch\tsnyat\n")}
+	if snyat, err := SnyatKlyuch(ctx, m, pk); err != nil || !snyat || m.vyzovy[0] != "otpusk "+telo {
+		t.Fatalf("%v %v %q", snyat, err, m.vyzovy)
+	}
+	m.otvety["otpusk"] = ssh.Itog{Vyvod: []byte("klyucha\tnet\n")}
+	if snyat, err := SnyatKlyuch(ctx, m, pk); err != nil || snyat {
+		t.Fatalf("строки не было: %v %v", snyat, err)
+	}
+	m.otvety["otpusk"] = ssh.Itog{Kod: 3, Vyvod: []byte("posledniy_vhod\tda\n")}
+	if _, err := SnyatKlyuch(ctx, m, pk); !errors.Is(err, ErrPosledniyVhod) || errors.Is(err, ErrVhodyNeProvereny) {
+		t.Fatalf("последний вход: %v", err)
+	}
+	m.otvety["otpusk"] = ssh.Itog{Kod: 3, Vyvod: []byte("posledniy_vhod\tneizvestno\n")}
+	if _, err := SnyatKlyuch(ctx, m, pk); !errors.Is(err, ErrVhodyNeProvereny) || !errors.Is(err, ErrPosledniyVhod) {
+		t.Fatalf("входы не проверены: %v", err)
+	}
+	// Код 3 без строки о последнем входе или с незнакомым значением и успех
+	// без итоговой строки - сбой, а не «последний вход» и не «не было».
+	var o *Oshibka
+	for _, it := range []ssh.Itog{{Kod: 3}, {Kod: 3, Vyvod: []byte("posledniy_vhod\tmozhet\n")}, {}, {Kod: 1, Oshibki: "cp: No space left on device"}} {
+		m.otvety["otpusk"] = it
+		if _, err := SnyatKlyuch(ctx, m, pk); !errors.As(err, &o) || o.Shag != "otpusk" {
+			t.Fatalf("%+v: %v", it, err)
+		}
+	}
+	m = novaya()
+	m.oshibka = errors.New("обрыв")
+	if _, err := SnyatKlyuch(ctx, m, pk); err == nil {
+		t.Fatal("обрыв потерян")
+	}
 }
 
 func TestZapisatKlyuch(t *testing.T) {

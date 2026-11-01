@@ -522,7 +522,7 @@ func TestSvoyVpsUstanovit(t *testing.T) {
 		t.Fatal(otv.Oshib)
 	}
 	h := dozhdatsyaVps(t, s)
-	if h.Faza != fazaGotovo || h.Ustanovlen == nil {
+	if h.Faza != fazaGotovo || h.Ustanovlen == nil || h.Server != idSvoego(netip.MustParseAddr(adresSvoego)) {
 		t.Fatalf("установка: %+v", h)
 	}
 	if !prog.zakryta {

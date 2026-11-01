@@ -32,7 +32,7 @@ var ErrChuzhayaUstanovka = errors.New("в отметке установки не
 // меняется ничего, поэтому и туннель через этот же сервер годится.
 func ProveritServer(ctx context.Context, p Puti, z ssh.Zapros, maska string) (zd ZdorovyeServera, err error) {
 	defer zashchita("ProveritServer", &err)
-	z.TolkoSmotrit = true
+	z.BezPerezapuska = true
 	s, err := Voyti(ctx, p, z)
 	if err != nil {
 		return ZdorovyeServera{}, err

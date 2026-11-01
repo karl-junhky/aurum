@@ -179,8 +179,8 @@ type HodVps struct {
 	Vid  string `json:"vid"`
 	Faza string `json:"faza"`
 	Shag string `json:"shag,omitempty"`
-	// Server - id своего сервера, который проверяется; Planovaya - проверку
-	// начала сама служба, а не человек.
+	// Server - id своего сервера, над которым идёт дело (всё, кроме
+	// осмотра); Planovaya - проверку начала сама служба, а не человек.
 	Server    string `json:"server,omitempty"`
 	Planovaya bool   `json:"planovaya,omitempty"`
 	// Put: напрямую или через VPN, после входа.
@@ -193,6 +193,7 @@ type HodVps struct {
 	Osmotr           *OsmotrVps    `json:"osmotr,omitempty"`
 	Ustanovlen       *UstanovkaVps `json:"ustanovlen,omitempty"`
 	Snyat            *SnosVps      `json:"snyat,omitempty"`
+	Otpushchen       *OtpuskVps    `json:"otpushchen,omitempty"`
 	Proverka         *ProverkaVps  `json:"proverka,omitempty"`
 	Otkaz            *OtkazVps     `json:"otkaz,omitempty"`
 	Preduprezhdeniya []OtkazVps    `json:"preduprezhdeniya,omitempty"`
@@ -525,6 +526,7 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "этот сервер уже в разделе «Свой VPN»: действия в его карточке")
 	}
 	return s.zapustitVps(k, vidUstanovka, func(ctx context.Context, zad *zadanieVps) error {
+		s.pravitHod(zad, func(h *HodVps) { h.Server = id })
 		return s.ustanovitVps(ctx, zad, id, z, zapros)
 	})
 }

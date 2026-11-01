@@ -40,6 +40,8 @@ var (
 	skriptPortov string
 	//go:embed skripty/snos.sh
 	tekstSnosa string
+	//go:embed skripty/otpusk.sh
+	skriptOtpuska string
 	//go:embed skripty/vpn-uzel.service
 	yunit []byte
 
@@ -64,7 +66,7 @@ type Mashina interface {
 
 // Oshibka это отказ скрипта на сервере.
 type Oshibka struct {
-	// Shag: nastroyka, osmotr, ustanovka, porty, snos, chtenie.
+	// Shag: nastroyka, osmotr, ustanovka, porty, snos, otpusk, chtenie.
 	Shag string
 	Kod  int
 	// Tekst это последняя строка stderr, очищенная.
@@ -228,6 +230,58 @@ func ZapisatKlyuch(ctx context.Context, m Mashina, klyuch gossh.PublicKey) (err 
 		return oshibkaSkripta("ustanovka", it)
 	}
 	return nil
+}
+
+// ErrPosledniyVhod: ключ этого компьютера - последний вход root: других
+// ключей, которыми sshd пустит root снаружи, нет, а паролем root не пускают.
+// Других пользователей скрипт не смотрит: войти под ними и стать root
+// через sudo, может быть, и можно.
+var ErrPosledniyVhod = errors.New("ключ этого компьютера - последний вход root на сервер")
+
+// ErrVhodyNeProvereny: sshd -T на сервере не ответил, и другие входы root
+// проверить не вышло. Для окна это тот же последний вход (errors.Is), но
+// текст не утверждает, что других входов нет.
+var ErrVhodyNeProvereny error = vhodyNeProvereny{}
+
+type vhodyNeProvereny struct{}
+
+func (vhodyNeProvereny) Error() string {
+	return "другие входы root на сервере проверить не вышло: sshd -T не ответил"
+}
+
+func (vhodyNeProvereny) Is(cel error) bool { return cel == ErrPosledniyVhod }
+
+// SnyatKlyuch снимает строку ключа управления klyuch из файлов ключей root,
+// когда компьютер забывает сервер (З5). snyat false: строки уже не было.
+// Последний вход не снимается, отказ ErrPosledniyVhod или
+// ErrVhodyNeProvereny.
+func SnyatKlyuch(ctx context.Context, m Mashina, klyuch gossh.PublicKey) (snyat bool, err error) {
+	defer zashchita("SnyatKlyuch", &err)
+	it, err := m.Skript(ctx, skriptOtpuska, teloKlyucha(klyuch))
+	if err != nil {
+		return false, err
+	}
+	posledniy, nebylo := "", false
+	stroki(it.Vyvod, func(k, z string) {
+		switch {
+		case k == "klyuch" && z == "snyat":
+			snyat = true
+		case k == "klyucha" && z == "net":
+			nebylo = true
+		case k == "posledniy_vhod" && (z == "da" || z == "neizvestno"):
+			posledniy = z
+		}
+	})
+	switch {
+	case it.Kod == 3 && posledniy == "da":
+		return false, ErrPosledniyVhod
+	case it.Kod == 3 && posledniy == "neizvestno":
+		return false, ErrVhodyNeProvereny
+	// Без итоговой строки успех не доказан: «не было» тут не угадывается.
+	case it.Kod != 0 || snyat == nebylo:
+		return false, oshibkaSkripta("otpusk", it)
+	}
+	return snyat, nil
 }
 
 func teloKlyucha(k gossh.PublicKey) string {
