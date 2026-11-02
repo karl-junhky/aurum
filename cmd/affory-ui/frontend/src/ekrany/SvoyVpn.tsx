@@ -1200,7 +1200,18 @@ function ZadatPorty({ server, aktiven, naPodobrat, naOtmenu }: {
 
 type Vopros = { vid: "snesti" | "zabyt"; server: SvoyServer };
 
-function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naVopros, naSkryt, naOtchyot }: {
+/** Вход с адресом, портом и пользователем из записи о сервере. */
+function formaIzZapisi(s: SvoyServer): Forma {
+  return { ...PUSTAYA_FORMA, adres: s.adres, portSshPolya: s.port_ssh === 22 ? "" : String(s.port_ssh), polzovatel: s.polzovatel || "root" };
+}
+
+/** Мастер поверх записи о сервере. Пароль выключен этим или другим
+ *  компьютером: войти можно только ключом. */
+function formaPostavitZanovo(s: SvoyServer): Forma {
+  return { ...formaIzZapisi(s), poverhZapisi: s.adres, sposob: s.parol_vyklyuchen ? "klyuch" : "parol" };
+}
+
+function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot }: {
   s: SvoyServer;
   trevogi: SvoyaTrevoga[];
   hody: HodVps[];
@@ -1210,6 +1221,7 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   zanyato: boolean;
   naDelo: (imya: string, telo: Record<string, unknown>) => void;
   naVzyat: (s: SvoyServer) => void;
+  naPostavitZanovo: (s: SvoyServer) => void;
   naVopros: (v: Vopros) => void;
   naSkryt: (id: number) => void;
   naOtchyot: (s: SvoyServer) => void;
@@ -1236,6 +1248,7 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   const deystviya = {
     povtorit: delo ? povtor[delo.vid] : undefined,
     "vzyat-pod-upravlenie": () => naVzyat(s),
+    "postavit-zanovo": () => naPostavitZanovo(s),
   };
   // Ключ этого компьютера оказался последним входом root: забыть можно и без
   // снятия (спека, таблица отказов, vps-last-login).
@@ -1447,11 +1460,13 @@ export function SvoyVpn(p: SvoyVpnProps) {
   };
 
   const naVzyatIzKartochki = (s: SvoyServer) => {
-    zadatMaster({
-      shag: "dostup",
-      cel: "vzyat",
-      forma: { ...PUSTAYA_FORMA, adres: s.adres, portSshPolya: s.port_ssh === 22 ? "" : String(s.port_ssh), polzovatel: s.polzovatel || "root" },
-    });
+    zadatMaster({ shag: "dostup", cel: "vzyat", forma: formaIzZapisi(s) });
+  };
+
+  // Установки на сервере нет или она не дошла: мастер ставит поверх записи.
+  const naPostavitZanovo = (s: SvoyServer) => {
+    zadatOtkazKomandy(null);
+    zadatMaster({ shag: "dostup", cel: "postavit", forma: formaPostavitZanovo(s) });
   };
 
   const voprosOkno = vopros && (
@@ -1561,6 +1576,7 @@ export function SvoyVpn(p: SvoyVpnProps) {
           zanyato={idyotDelo}
           naDelo={(imya, telo) => void naDelo(imya, telo)}
           naVzyat={naVzyatIzKartochki}
+          naPostavitZanovo={naPostavitZanovo}
           naVopros={zadatVopros}
           naSkryt={svoy.skryt}
           naOtchyot={naOtchyot}
@@ -1647,6 +1663,7 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
       imya: "",
       reality: portIzPolya(forma.portReality),
       hy2: portIzPolya(forma.portHy2),
+      poverh: forma.poverhZapisi || undefined,
     });
     zadatZhdyom(null);
     if ("otkaz" in r) {
@@ -1785,7 +1802,12 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
             naPovtor={() => {
               zapomnitUvidennuyu(m.id);
               if (m.forma) void osmotret(m.forma);
-              else zadatMaster({ shag: "dostup", cel: "postavit", forma: { ...PUSTAYA_FORMA, adres: adres ?? "" } });
+              // Формы нет: окно открыто посреди установки. Сервер уже в разделе -
+              // значит, это была установка поверх записи, и повтор тоже.
+              else zadatMaster({
+                shag: "dostup", cel: "postavit",
+                forma: server ? formaPostavitZanovo(server) : { ...PUSTAYA_FORMA, adres: adres ?? "" },
+              });
             }}
             naZakryt={vyyti}
             naServery={p.naServery}

@@ -35,6 +35,7 @@ var razreshennyeDeystviya = map[string]string{
 	"prinyat-klyuch-hosta":  "«Систему переустановили»: принять новый ключ хоста своего сервера",
 	"pereustanovit-os":      "переустановить ОС в панели хостера и поставить на чистую",
 	"vzyat-pod-upravlenie":  "взять свой сервер под управление с этого компьютера",
+	"postavit-zanovo":       "поставить свой сервер заново поверх записи о нём",
 	"otkryt-port-u-hostera": "открыть порт в панели хостера",
 	"poprosit-drugoy-adres": "попросить у хостера другой адрес",
 }

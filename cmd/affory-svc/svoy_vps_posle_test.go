@@ -421,8 +421,11 @@ func TestOtkazVpsZapisi(t *testing.T) {
 	if o.Kod != protokol.KodKandidatZanyat {
 		t.Fatalf("отказ записи набора: %+v", o)
 	}
-	if o := otkazVps(server.ErrNetUstanovki); o.Kod != protokol.KodVpsUstanovka || o.Tekst == "" {
+	if o := otkazVps(server.ErrNetUstanovki); o.Kod != protokol.KodVpsPostavitZanovo || o.Tekst == "" {
 		t.Fatalf("нет установки: %+v", o)
+	}
+	if o := otkazVps(fmt.Errorf("подбор: %w", upravlenie.ErrNeDoshla)); o.Kod != protokol.KodVpsPostavitZanovo || o.Tekst == "" {
+		t.Fatalf("не дошла: %+v", o)
 	}
 	if !errors.Is(&oshibkaZapisi{err: ErrKandidatZanyat}, ErrKandidatZanyat) {
 		t.Fatal("отказ записи не разворачивается")

@@ -527,6 +527,10 @@ type zaprosUstanovkiVps struct {
 	// Reality и Hy2 это порты из «Дополнительно», 0 - подобрать.
 	Reality int `json:"reality,omitempty"`
 	Hy2     int `json:"hy2,omitempty"`
+	// Poverh это адрес сервера из раздела, на который мастер открыт кнопкой
+	// «Поставить заново». Без него запись не заменяется: адрес рабочего
+	// сервера, введённый в «Поставить ещё», сменил бы ключи на всех телефонах.
+	Poverh string `json:"poverh,omitempty"`
 }
 
 const imyaSvoegoPoUmolchaniyu = "Мой сервер"
@@ -548,16 +552,35 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "нет ключа сервера с проверки: проверь сервер ещё раз")
 	}
 	zapros.Izvesten = &kh
-	if z.Imya = obrezatImya(z.Imya); z.Imya == "" {
-		z.Imya = imyaSvoegoPoUmolchaniyu
-	}
 	id := idSvoego(adres)
 	n, err := s.nabor()
 	if err != nil {
 		return otkazIz(k, protokol.KodSecretsUnreadable, err)
 	}
-	if slices.ContainsFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id }) {
-		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "этот сервер уже в разделе «Свой VPN»: действия в его карточке")
+	// Сервер уже в разделе: установка идёт поверх записи только из «Поставить
+	// заново» в карточке, туда ведут отказы «нет установки» и «не дошла».
+	// Записанный ключ хоста главнее присланного с проверки, как у захвата:
+	// сменившийся принимает только «Систему переустановили». Запись и ключи
+	// заменяет zapisatSvoy.
+	z.Imya = obrezatImya(z.Imya)
+	if i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id }); i >= 0 {
+		if p, err := netip.ParseAddr(z.Poverh); err != nil || idSvoego(p) != id {
+			return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "этот сервер уже в разделе «Свой VPN»: действия в его карточке")
+		}
+		bylo := n.SvoiServery[i]
+		izv, err := bylo.izvestnyy()
+		if err != nil {
+			return otkazIz(k, protokol.KodSecretsUnreadable, err)
+		}
+		if izv != nil {
+			zapros.Izvesten = izv
+		}
+		if z.Imya == "" {
+			z.Imya = bylo.Imya
+		}
+	}
+	if z.Imya == "" {
+		z.Imya = imyaSvoegoPoUmolchaniyu
 	}
 	return s.zapustitVps(k, vidUstanovka, func(ctx context.Context, zad *zadanieVps) error {
 		s.pravitHod(zad, func(h *HodVps) { h.Server, h.Adres = id, adres.String() })

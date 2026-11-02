@@ -655,6 +655,7 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
       // и вход для захвата.
       case "prinyat-klyuch-hosta":
       case "vzyat-pod-upravlenie":
+      case "postavit-zanovo":
         zadatVkladku("svoy-vpn");
         ubratOtkaz();
         break;

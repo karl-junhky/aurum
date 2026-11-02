@@ -76,7 +76,7 @@ func otkazVps(err error) OtkazVps {
 	case errors.Is(err, errProverkaDolgo):
 		return OtkazVps{Kod: protokol.KodVpsNeOtvechaet, Tekst: err.Error()}
 	case errors.Is(err, server.ErrNetUstanovki):
-		return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "на сервере нет установки Affory: его можно поставить заново"}
+		return OtkazVps{Kod: protokol.KodVpsPostavitZanovo, Tekst: "на сервере нет установки Affory: поставь его заново, ключи VPN при этом сменятся"}
 	case errors.Is(err, upravlenie.ErrChuzhayaUstanovka):
 		return OtkazVps{Kod: protokol.KodVpsVzyat, Tekst: "сервер переставлен с другого компьютера, и ключи VPN этого компьютера к нему не подходят: возьми его под управление заново"}
 	case errors.Is(err, server.ErrVhodyNeProvereny):
@@ -86,7 +86,7 @@ func otkazVps(err error) OtkazVps {
 		return OtkazVps{Kod: protokol.KodVpsPosledniyVhod,
 			Tekst: "ключ этого компьютера - последний вход root: других ключей, которыми root пустят снаружи, нет, а паролем root не пускают. Без него root не войти, разве что под другим пользователем с sudo или через консоль хостера, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
 	case errors.Is(err, upravlenie.ErrNeDoshla):
-		return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "установка на сервере не дошла до ключей: поставь сервер заново, она продолжится"}
+		return OtkazVps{Kod: protokol.KodVpsPostavitZanovo, Tekst: "установка на сервере не дошла до ключей: поставь сервер заново"}
 	case errors.As(err, &molch):
 		return otkazMolchaniya(molch)
 	case errors.As(err, &stop):
@@ -272,6 +272,12 @@ func tekstZamechaniya(z server.Zamechanie) string {
 		// Ключа нет и тогда, когда сервер забыли на этом же компьютере.
 		if z.Stop {
 			return "на сервере уже стоит Affory, а ключа управления им на этом компьютере нет: возьми его под управление"
+		}
+		// Программа уже стоит, а пакета с ключами может и не быть: по отметке
+		// не видно. Сервер из раздела служба поверх записи ставит только из
+		// «Поставить заново» в карточке, поэтому обещания «пройдёт» тут нет.
+		if pervoe == "gotovo" {
+			return "на сервере уже стоит Affory с этого компьютера: новая установка сменит ключи VPN"
 		}
 		return "на сервере незаконченная установка с этого компьютера: она продолжится"
 	case server.KodChuzhoyBrandmauer:

@@ -221,6 +221,9 @@ const (
 	KodVpsVzyat = "vps-take-control"
 	// Шаг установки на сервере не прошёл.
 	KodVpsUstanovka = "vps-install-failed"
+	// Сервер в разделе, а установки на нём нет или она не дошла до ключей:
+	// лечится установкой заново поверх записи.
+	KodVpsPostavitZanovo = "vps-reinstall"
 	// Сертификат на адрес не выпущен (закрыты 80 и 443/tcp): поставлен один
 	// reality.
 	KodVpsNetSerta = "vps-cert-blocked"

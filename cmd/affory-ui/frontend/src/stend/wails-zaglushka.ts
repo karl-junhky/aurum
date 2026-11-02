@@ -291,6 +291,7 @@ function vybrat(vhod: Record<string, unknown>): unknown {
 //     ?svoy=klyuch-hosta     сервер предъявил другой ключ хоста
 //     ?svoy=ustanovka        установка идёт с запуска окна
 //     ?svoy=ustanovka-otkaz  установка встала на подборе портов
+//     ?svoy=net-ustanovki    сервер в разделе, а установки на нём нет до новой
 //
 // Адрес 203.0.113.66 в мастере даёт отказ входа. Пароль и ключ из тела
 // заглушка не читает и не хранит.
@@ -345,6 +346,8 @@ function ubratSvoego(id: string): void {
 
 let hodVps: Zapis | null = null;
 let shagiVps: ReturnType<typeof setTimeout>[] = [];
+let ustanovkaEst = SVOY !== "net-ustanovki";
+const OTKAZ_NET_USTANOVKI = { kod: "vps-reinstall", tekst: "на сервере нет установки Affory: поставь его заново, ключи VPN при этом сменятся" };
 
 function izvestitHod(): void {
   if (!hodVps) return;
@@ -442,6 +445,7 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     const adres = stroka(v.adres);
     const posle = (h: Zapis) => {
       zakonchit(h, "gotovo", { ustanovlen: ustanovlen() });
+      ustanovkaEst = true;
       svoi = [...svoi.filter((z) => z.id !== SVOY_ID), { ...svoyZapis(adres, 2087, 5443), proveren: new Date().toISOString(), klyuch_upravleniya: true }];
       servery = [...servery.filter((s) => !s.id.startsWith(`${SVOY_ID}-`)), ...klyuchiSvoego(adres, 2087, 5443)];
     };
@@ -462,6 +466,12 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     return nachatDelo("proverka", stroka(z.id), [
       (h) => { h.shag = "osmotr"; h.put = PUT_PRYAMO; },
       (h) => {
+        if (!ustanovkaEst) {
+          zakonchit(h, "oshibka", { otkaz: OTKAZ_NET_USTANOVKI });
+          // Служба пишет причину неудачи в запись (deloProverki).
+          Object.assign(z, { proveren: new Date().toISOString(), proverka_otkaz: OTKAZ_NET_USTANOVKI.tekst });
+          return;
+        }
         const zhivo = SVOY !== "slomano";
         zakonchit(h, "gotovo", {
           proverka: {
@@ -479,6 +489,7 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     const z = poId(v);
     const reality = typeof v.reality === "number" ? v.reality : 2087;
     const hy2 = typeof v.hy2 === "number" ? v.hy2 : 5443;
+    if (!ustanovkaEst) return nachatDelo("podbor", stroka(z.id), [(h) => zakonchit(h, "oshibka", { otkaz: OTKAZ_NET_USTANOVKI })]);
     return nachatDelo("podbor", stroka(z.id), [
       ...shagiPodbora(stroka(z.adres), false),
       (h) => {
@@ -517,6 +528,10 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     const z = svoi.find((x) => x.adres === stroka(v.adres));
     return nachatDelo("vzyat", z ? stroka(z.id) : SVOY_ID, [
       (h) => {
+        if (!ustanovkaEst) {
+          zakonchit(h, "oshibka", { otkaz: OTKAZ_NET_USTANOVKI });
+          return;
+        }
         zakonchit(h, "gotovo", { put: PUT_PRYAMO });
         if (z) z.klyuch_upravleniya = true;
       },

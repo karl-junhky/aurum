@@ -213,6 +213,18 @@ describe("шаг «Проверка»", () => {
     expect(imya).toBe("svoyVpsUstanovit");
     expect(telo).toMatchObject({ adres: "203.0.113.10", pustoy: true, klyuch_hosta_tip: "ssh-ed25519", klyuch_hosta: "S0g=", imya: "" });
     expect(telo).not.toHaveProperty("soobshchenie");
+    // Обычная установка запись не заменяет: служба откажет, если сервер уже в разделе.
+    expect(telo.poverh).toBeUndefined();
+  });
+
+  it("мастер из «Поставить заново» просит ставить поверх записи этого адреса", async () => {
+    const s = stend({
+      master: { shag: "proverka", forma: { ...forma, poverhZapisi: "203.0.113.10" }, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+      otvety: { svoyVpsUstanovit: () => ({ hod: hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "zagruzka" }) }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-postavit-vpn"));
+    await waitFor(() => expect(s.vyzovy[0]?.[1]).toMatchObject({ adres: "203.0.113.10", poverh: "203.0.113.10" }));
   });
 
   it("свой Affory без ключа этого компьютера: только взять под управление", async () => {
@@ -286,9 +298,22 @@ describe("шаг «Установка»", () => {
     });
     expect(screen.getByText(/Для повтора введи доступ к серверу заново/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ввести доступ" }));
-    expect(s.master()).toMatchObject({ shag: "dostup", forma: { adres: "203.0.113.40" } });
+    expect(s.master()).toMatchObject({ shag: "dostup", forma: { adres: "203.0.113.40", poverhZapisi: "" } });
     // Итог увиден: окно, открытое заново, к нему не вернётся.
     expect(localStorage.getItem("affory.svoy-vps.uvidennaya-ustanovka")).toBe("11");
+  });
+
+  it("упавшая установка поверх записи повторяется тоже поверх записи, с входом из записи", () => {
+    const s = stend({
+      servery: [server({ port_ssh: 2222, parol_vyklyuchen: true })],
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({ id: 11, vid: "ustanovka", faza: "oshibka", shag: "podbor", server: "svoy-1", otkaz: { kod: "vps-ports-failed", tekst: "ни один порт не прошёл" } })],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ввести доступ" }));
+    expect(s.master()).toMatchObject({
+      shag: "dostup",
+      forma: { adres: "203.0.113.40", portSshPolya: "2222", sposob: "klyuch", poverhZapisi: "203.0.113.40" },
+    });
   });
 
   it("готово: подключение к ключу, который провёз проверку, и ключи для телефона", async () => {
@@ -338,6 +363,30 @@ describe("карточка сервера", () => {
     fireEvent.click(within(screen.getByTestId("svoy-bez-klyucha")).getByRole("button", { name: "Взять под управление" }));
     expect(s.master()).toMatchObject({ shag: "dostup", cel: "vzyat", forma: { adres: "203.0.113.40", portSshPolya: "2222" } });
     expect(screen.getByTestId("svoy-dalshe")).toHaveTextContent("Взять под управление");
+  });
+
+  it("установки на сервере нет: «Поставить заново» ведёт в мастер с адресом из записи", () => {
+    const s = stend({
+      servery: [server({ port_ssh: 2222, polzovatel: "admin" })],
+      hody: [hod({ id: 3, vid: "podbor", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-reinstall", tekst: "на сервере нет установки Affory: поставь его заново" } })],
+    });
+    expect(screen.queryByRole("button", { name: "Повторить" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Поставить заново" }));
+    expect(s.master()).toMatchObject({
+      shag: "dostup", cel: "postavit",
+      forma: { adres: "203.0.113.40", portSshPolya: "2222", polzovatel: "admin", parol: "", sposob: "parol", poverhZapisi: "203.0.113.40" },
+    });
+    expect(screen.getByTestId("svoy-dalshe")).toHaveTextContent("Проверить сервер");
+    expect(s.vyzovy).toEqual([]);
+  });
+
+  it("«Поставить заново» на сервере с выключенным паролем сразу предлагает ключ", () => {
+    const s = stend({
+      servery: [server({ parol_vyklyuchen: true })],
+      hody: [hod({ id: 3, vid: "proverka", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-reinstall", tekst: "установка на сервере не дошла до ключей: поставь сервер заново" } })],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Поставить заново" }));
+    expect(s.master()).toMatchObject({ shag: "dostup", cel: "postavit", forma: { sposob: "klyuch", poverhZapisi: "203.0.113.40" } });
   });
 
   it("снос только после подтверждения", async () => {

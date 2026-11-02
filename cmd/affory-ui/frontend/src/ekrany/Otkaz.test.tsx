@@ -32,13 +32,13 @@ const VSE_DEYSTVIYA: Deystvie[] = [
   "povtorit", "perepodklyuchitsya", "otkryt-servery", "obnovit-podpisku",
   "obnovit-programmu", "postavit-sluzhbu", "zaprosit-prava", "proverit-set",
   "pokazat-vinovnika", "nastroit-vremya", "prinyat-klyuch-hosta", "pereustanovit-os",
-  "vzyat-pod-upravlenie", "otkryt-port-u-hostera", "poprosit-drugoy-adres", "nichego",
+  "vzyat-pod-upravlenie", "postavit-zanovo", "otkryt-port-u-hostera", "poprosit-drugoy-adres", "nichego",
 ];
 
 describe("экраны отказов", () => {
   const kody = kodyIzGo().filter((k) => !BEZ_EKRANA.has(k));
 
-  it("коды прочитаны из kody.go, и их шестьдесят шесть", () => {
+  it("коды прочитаны из kody.go, и их шестьдесят семь", () => {
     // Pinning the count is deliberate: a new code must fail here until the
     // screen for it exists, and an empty read must not pass as "all covered".
     // Тридцать восьмой это internal-error, заведён 04.09.2026 полосой З:
@@ -69,7 +69,9 @@ describe("экраны отказов", () => {
     // С пятидесятого по шестьдесят шестой заведены планом «Свой VPN»
     // (2026-11-01): семнадцать кодов vps-* про свой сервер. Чинятся они
     // по-разному: вход, ключ хоста, порты у хостера, занятость службы.
-    expect(kody.length).toBe(66);
+    // Шестьдесят седьмой заведён 02.11.2026: vps-reinstall. Советовал
+    // поставить сервер заново кнопкой «Повторить», которая повторяла отказ.
+    expect(kody.length).toBe(67);
   });
 
   it.each(kody)("у кода %s есть свой текст и действие из словаря", (kod) => {

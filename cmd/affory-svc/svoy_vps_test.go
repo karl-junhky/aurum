@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -578,11 +579,6 @@ func TestSvoyVpsUstanovit(t *testing.T) {
 		t.Errorf("запись: %+v", zap)
 	}
 
-	// Второй раз тот же сервер не ставится: действия в карточке.
-	if kod := kodOtkaza(s.svoyVpsUstanovit(kadrVps(t, "svoyVpsUstanovit", z))); kod != protokol.KodTeloNegodno {
-		t.Errorf("повтор установки: %q", kod)
-	}
-
 	// Список для карточки.
 	var spisok struct {
 		Servery []SvoyServerDlyaEkrana `json:"servery"`
@@ -594,6 +590,101 @@ func TestSvoyVpsUstanovit(t *testing.T) {
 	if len(spisok.Servery) != 1 || !spisok.Servery[0].KlyuchUpravleniya || spisok.Servery[0].Otpechatok != kh.Otpechatok() ||
 		spisok.Servery[0].KlyuchHosta != "" {
 		t.Errorf("список: %+v", spisok.Servery)
+	}
+}
+
+// Сервер уже в разделе: установка идёт поверх записи, сюда ведут отказы «нет
+// установки» и «не дошла». Ключ хоста и имя из записи, ключ управления
+// прежний, ключи группы заменяются, выбор переходит на новый ключ того же вида.
+func TestSvoyVpsUstanovitPoverhZapisi(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh := klyuchHostaDlyaTesta(t)
+	id, ids := postavitSvoy(t, s, kh, true)
+	if err := s.pravitNabor(func(n *Nabor) error { n.Vybran = ids[0]; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	nash, _, err := s.klyuchUpravleniya(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.programmaUzla = func(context.Context) (io.ReadSeekCloser, error) {
+		return &programmaDlyaTesta{Reader: bytes.NewReader(nil)}, nil
+	}
+	var u upravlenie.Ustanovka
+	s.vpsUstanovit = func(_ context.Context, x upravlenie.Ustanovka) (upravlenie.Itog, error) {
+		u = x
+		return itogSvoego(t, kh, 2087, 5443), nil
+	}
+	// С проверки пришёл другой ключ хоста и пустое имя.
+	drugoy := klyuchHostaDlyaTesta(t)
+	z := zaprosUstanovkiVps{dostupVps: dostupVps{Adres: adresSvoego, Port: 2222, Polzovatel: "root", Parol: "x"},
+		Pustoy: true, KlyuchHostaTip: drugoy.Tip, KlyuchHosta: drugoy.TeloBase64()}
+	// Без «Поставить заново» или с адресом другого сервера запись не
+	// заменяется: «Поставить ещё» с адресом рабочего сменило бы все ключи.
+	for _, poverh := range []string{"", "203.0.113.99", "не адрес"} {
+		z.Poverh = poverh
+		if kod := kodOtkaza(s.svoyVpsUstanovit(kadrVps(t, "svoyVpsUstanovit", z))); kod != protokol.KodTeloNegodno {
+			t.Errorf("поверх записи без пометки %q: %q", poverh, kod)
+		}
+	}
+	z.Poverh = adresSvoego
+	if otv := s.svoyVpsUstanovit(kadrVps(t, "svoyVpsUstanovit", z)); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	h := dozhdatsyaVps(t, s)
+	if h.Faza != fazaGotovo || h.Ustanovlen == nil || h.Server != id {
+		t.Fatalf("установка поверх записи: %+v", h)
+	}
+	if u.Vhod.Izvesten == nil || !bytes.Equal(u.Vhod.Izvesten.Telo, kh.Telo) {
+		t.Error("установка поверх записи входит не с записанным ключом хоста")
+	}
+	if u.Imya != "Дача" {
+		t.Errorf("имя %q, а не из записи", u.Imya)
+	}
+	if !bytes.Equal(u.Upravlenie.PublicKey().Marshal(), nash.PublicKey().Marshal()) {
+		t.Error("установка поверх записи завела новый ключ управления")
+	}
+	n, err := s.nabor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.SvoiServery) != 1 || len(n.Servery) != 2 || n.SvoiServery[0].Reality != 2087 || n.SvoiServery[0].Hy2 != 5443 {
+		t.Fatalf("набор: %d ключей, записи %+v", len(n.Servery), n.SvoiServery)
+	}
+	for _, srv := range n.Servery {
+		if slices.Contains(ids, srv.Id) {
+			t.Errorf("прежний ключ %s остался", srv.Id)
+		}
+	}
+	if !slices.Contains(n.SvoiServery[0].Servery, n.Vybran) {
+		t.Errorf("выбор %q не перешёл на новый ключ", n.Vybran)
+	}
+
+	// В записи нет ключа хоста: идёт ключ с проверки. Неразборный - порча
+	// хранилища, установка не начинается.
+	for imya, sluchay := range map[string]struct {
+		klyuch string
+		kod    string
+	}{
+		"без ключа":   {"", ""},
+		"неразборный": {"!!!", protokol.KodSecretsUnreadable},
+	} {
+		if err := s.pravitNabor(func(n *Nabor) error { n.SvoiServery[0].KlyuchHosta = sluchay.klyuch; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		u = upravlenie.Ustanovka{}
+		if kod := kodOtkaza(s.svoyVpsUstanovit(kadrVps(t, "svoyVpsUstanovit", z))); kod != sluchay.kod {
+			t.Fatalf("%s: %q", imya, kod)
+		}
+		if sluchay.kod != "" {
+			continue
+		}
+		if h := dozhdatsyaVps(t, s); h.Faza != fazaGotovo {
+			t.Fatalf("%s: %+v", imya, h)
+		}
+		if u.Vhod.Izvesten == nil || !bytes.Equal(u.Vhod.Izvesten.Telo, drugoy.Telo) {
+			t.Errorf("%s: установка не взяла ключ хоста с проверки", imya)
+		}
 	}
 }
 
@@ -810,5 +901,24 @@ func TestTekstZamechaniyaKazhdyyKod(t *testing.T) {
 	})
 	if kodov < 20 {
 		t.Fatalf("разбор нашёл %d кодов: разбор сломан", kodov)
+	}
+}
+
+// Своя отметка: законченная установка ставится поверх со сменой ключей,
+// незаконченная продолжается, чужая отправляет брать под управление.
+func TestTekstZamechaniyaUzheStoit(t *testing.T) {
+	for _, sluchay := range []struct {
+		chto []string
+		stop bool
+		est  string
+	}{
+		{[]string{"gotovo", "0.6.0"}, false, "сменит ключи VPN"},
+		{[]string{"ustanovka", ""}, false, "она продолжится"},
+		{[]string{"gotovo", "0.6.0"}, true, "возьми его под управление"},
+	} {
+		tekst := tekstZamechaniya(server.Zamechanie{Kod: server.KodUzheStoit, Chto: sluchay.chto, Stop: sluchay.stop})
+		if !strings.Contains(tekst, sluchay.est) {
+			t.Errorf("%v stop=%v: %q", sluchay.chto, sluchay.stop, tekst)
+		}
 	}
 }

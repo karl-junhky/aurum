@@ -453,6 +453,9 @@ export interface Forma {
   parolKlyucha: string;
   portReality: string;
   portHy2: string;
+  /** Адрес сервера из раздела, если мастер открыт его «Поставить заново»:
+   *  только так служба ставит поверх записи. */
+  poverhZapisi: string;
 }
 
 export const PUSTAYA_FORMA: Forma = {
@@ -466,6 +469,7 @@ export const PUSTAYA_FORMA: Forma = {
   parolKlyucha: "",
   portReality: "",
   portHy2: "",
+  poverhZapisi: "",
 };
 
 /** Шаг мастера. `cel` у доступа: поставить VPN или взять под управление

@@ -18,6 +18,7 @@ export type Deystvie =
   | "prinyat-klyuch-hosta"
   | "pereustanovit-os"
   | "vzyat-pod-upravlenie"
+  | "postavit-zanovo"
   | "otkryt-port-u-hostera"
   | "poprosit-drugoy-adres"
   | "nichego";
@@ -85,6 +86,7 @@ export const tekstOtkaza: Record<string, ZapisOtkaza> = {
   "vps-not-empty": { deystvie: "pereustanovit-os", tekst: "сервер не пустой, ставь на чистую систему" },
   "vps-take-control": { deystvie: "vzyat-pod-upravlenie", tekst: "сервер уже под Affory, возьми его под управление" },
   "vps-install-failed": { deystvie: "povtorit", tekst: "установка на сервер не прошла" },
+  "vps-reinstall": { deystvie: "postavit-zanovo", tekst: "на сервере нет рабочей установки, поставь его заново" },
   "vps-cert-blocked": { deystvie: "otkryt-port-u-hostera", tekst: "сертификат не выпущен, поставлен только ключ reality" },
   "vps-address-blocked": { deystvie: "poprosit-drugoy-adres", tekst: "твоя сеть не пускает к адресу сервера" },
   "vps-hoster-firewall": { deystvie: "otkryt-port-u-hostera", tekst: "порт закрыт у хостера" },
@@ -111,6 +113,7 @@ export const podpisDeystviya: Record<Deystvie, string | null> = {
   "prinyat-klyuch-hosta": "Систему переустановили",
   "pereustanovit-os": null,
   "vzyat-pod-upravlenie": "Взять под управление",
+  "postavit-zanovo": "Поставить заново",
   "otkryt-port-u-hostera": null,
   "poprosit-drugoy-adres": null,
   nichego: null,
