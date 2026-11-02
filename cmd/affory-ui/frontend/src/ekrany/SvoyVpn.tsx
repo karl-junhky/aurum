@@ -1062,7 +1062,7 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
           <Plashka
             testId="svoy-perepoverka"
             znachok={<Vertushka className="text-accent-ink h-4 w-4" />}
-            zagolovok={h.shag === "detektor" ? "Проверяю адрес из твоей сети ещё раз" : "Проверяю ключи из твоей сети"}
+            zagolovok={zagolovokPerepoverki(h)}
             tekst={[povtoryTekstom(h), "Итог появится в карточке сервера"].filter(Boolean).join(". ")}
           />
         </Panel>
@@ -1179,6 +1179,12 @@ export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlash
   return null;
 }
 
+/** Ключи уже записаны, и дело только перепроверяет их из сети (И7): повторы
+ *  детектора смотрят адрес, проверка ключей сами ключи. */
+function zagolovokPerepoverki(h: HodVps): string {
+  return h.shag === "detektor" ? "Проверяю адрес из твоей сети ещё раз" : "Проверяю ключи из твоей сети";
+}
+
 /** Ход и итог дела одной строкой. Отказ ставит своё действие, если окно его
  *  умеет. */
 function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtmenu, naSkryt, deystviya, dop }: {
@@ -1198,10 +1204,9 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtm
   dop?: ReactNode;
 }) {
   if (h.faza === "idyot") {
-    // Ключи уже записаны, и дело только перепроверяет их из сети (И7).
     const imya = h.planovaya
       ? "Плановая проверка сервера"
-      : h.ustanovlen ? "Проверяю ключи из твоей сети" : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
+      : h.ustanovlen ? zagolovokPerepoverki(h) : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
     const tekst = h.shag === "detektor" && h.povtory.length > 0
       ? [h.krug_tekst ? sPropisnoy(h.krug_tekst) : "", povtoryTekstom(h)].filter(Boolean).join(". ")
       : CHTO_IDYOT[h.shag ?? ""];

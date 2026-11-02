@@ -380,6 +380,17 @@ describe("шаг «Установка»", () => {
     });
     expect(screen.getByTestId("svoy-perepoverka")).toHaveTextContent("Проверяю ключи из твоей сети");
   });
+
+  it("строка дела в карточке называет перепроверку по шагу, как плашка мастера", () => {
+    const ustanovlen = { server: "svoy-1", klyuchi: [{ transport: "reality-tcp" as const, port: 2087 }], ids: ["k-r"], ne_iz_seti: ["reality-tcp"] };
+    const s = stend({
+      servery: [server({ ne_iz_seti: ["reality-tcp"] })],
+      hody: [hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "detektor", server: "svoy-1", povtory: [new Date(Date.now() + 60_000).toISOString()], ustanovlen })],
+    });
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Проверяю адрес из твоей сети ещё раз");
+    s.prishyol(hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "proverka", server: "svoy-1", ustanovlen }));
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Проверяю ключи из твоей сети");
+  });
 });
 
 describe("карточка сервера", () => {
