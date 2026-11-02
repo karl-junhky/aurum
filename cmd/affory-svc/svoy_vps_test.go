@@ -904,6 +904,73 @@ func TestTekstZamechaniyaKazhdyyKod(t *testing.T) {
 	}
 }
 
+// tekstNePustoy гонит находки через настоящий осмотр: метки портов и
+// vpn-uzel пишет Osmotr.chuzhoe, и смена их вида здесь покраснеет.
+func tekstNePustoy(t *testing.T, o *server.Osmotr) string {
+	t.Helper()
+	for _, z := range o.Zamechaniya(time.Now()) {
+		if z.Kod == server.KodNePustoy {
+			return tekstZamechaniya(z)
+		}
+	}
+	t.Fatal("осмотр не нашёл чужого")
+	return ""
+}
+
+// Чужое на сервере называется словами, а не метками осмотра; программа и её
+// служба называются один раз; слушатель без имени процесса не пишется «?».
+func TestTekstZamechaniyaNePustoy(t *testing.T) {
+	o := osmotrChistyy()
+	o.Chuzhoe = []string{"programma nginx", "yunit nginx.service", "yunit xray.service", "katalog /etc/xray"}
+	o.Slushayut = []server.Slushatel{
+		{Proto: "tcp", Adres: "0.0.0.0", Port: 80, Process: "nginx"},
+		{Proto: "tcp", Adres: "0.0.0.0", Port: 443},
+	}
+	o.VpnUzel = "vpn-uzel 0.6.0"
+	tekst := tekstNePustoy(t, o)
+	zhdu := "сервер не пустой: nginx, xray, папка /etc/xray, порт 80 занят nginx, порт 443 занят, " +
+		"остатки прежней установки Affory. Ставь на чистую систему"
+	if tekst != zhdu {
+		t.Fatalf("\nесть  %q\nждали %q", tekst, zhdu)
+	}
+	for _, metka := range []string{"programma", "yunit", "katalog", "port tcp", ".service", "?", "vpn-uzel"} {
+		if strings.Contains(tekst, metka) {
+			t.Errorf("в тексте осталась метка %q: %q", metka, tekst)
+		}
+	}
+	// TCP и UDP одного порта не склеиваются в один пункт.
+	if s := chuzhoeDlyaCheloveka([]string{"port tcp/443 x", "port udp/443 x"}); s != "порт 443 занят x, порт 443/udp занят x" {
+		t.Errorf("TCP и UDP одного порта: %q", s)
+	}
+}
+
+// Длинный список режется по целым пунктам с хвостом «и ещё N».
+func TestTekstZamechaniyaNePustoyDlinnyy(t *testing.T) {
+	o := osmotrChistyy()
+	for i := range 30 {
+		o.Chuzhoe = append(o.Chuzhoe, fmt.Sprintf("katalog /opt/chuzhaya-ustanovka-%02d", i))
+	}
+	tekst := tekstNePustoy(t, o)
+	spisok, ok := strings.CutPrefix(tekst, "сервер не пустой: ")
+	spisok, ok2 := strings.CutSuffix(spisok, ". Ставь на чистую систему")
+	if !ok || !ok2 {
+		t.Fatalf("текст не той формы: %q", tekst)
+	}
+	punkty, hvost, est := strings.Cut(spisok, " и ещё ")
+	if !est || strings.Contains(spisok, "...") {
+		t.Fatalf("список не обрезан по пунктам: %q", spisok)
+	}
+	vidno := strings.Split(punkty, ", ")
+	if n, err := strconv.Atoi(hvost); err != nil || len(vidno)+n != 30 || len([]rune(punkty)) > dlinaSoServera {
+		t.Fatalf("видно %d, в хвосте %q, длина %d: %q", len(vidno), hvost, len([]rune(punkty)), spisok)
+	}
+	for _, p := range vidno {
+		if !strings.HasPrefix(p, "папка /opt/chuzhaya-ustanovka-") || len(p) != len("папка /opt/chuzhaya-ustanovka-00") {
+			t.Fatalf("пункт разорван: %q", p)
+		}
+	}
+}
+
 // Своя отметка: законченная установка ставится поверх со сменой ключей,
 // незаконченная продолжается, чужая отправляет брать под управление.
 func TestTekstZamechaniyaUzheStoit(t *testing.T) {

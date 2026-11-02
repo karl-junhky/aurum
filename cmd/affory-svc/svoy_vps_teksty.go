@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
@@ -265,7 +268,7 @@ func tekstZamechaniya(z server.Zamechanie) string {
 	case server.KodNastraivaetsya:
 		return "машина ещё настраивается после создания: установка подождёт до 5 минут"
 	case server.KodNePustoy:
-		return "на машине уже есть чужое: " + chto + ". Ставь на чистую систему"
+		return "сервер не пустой: " + chuzhoeDlyaCheloveka(z.Chto) + ". Ставь на чистую систему"
 	case server.KodPodCentrom:
 		return "сервер уже раздаёт VPN под управлением центра: свой VPN на него не ставится"
 	case server.KodUzheStoit:
@@ -287,6 +290,58 @@ func tekstZamechaniya(z server.Zamechanie) string {
 	}
 	log.Printf("свой сервер: замечание без текста %q", z.Kod)
 	return string(z.Kod)
+}
+
+// chuzhoeDlyaCheloveka пишет словами окна находки осмотра, которые скрипт и
+// Osmotr.chuzhoe отдают метками: «programma nginx», «yunit nginx.service»,
+// «katalog /etc/xray», «port tcp/443 nginx», «programma vpn-uzel». Программа
+// и её служба называются одним именем один раз. Список режется по целым
+// пунктам: обрыв посреди слова читается как опечатка. Сам пункт режется,
+// только если он длиннее 60 знаков: так бывает разве что у службы с длинным
+// именем конфига вроде openvpn-server@….
+func chuzhoeDlyaCheloveka(chto []string) string {
+	var slova []string
+	for _, c := range chto {
+		vid, ostatok, _ := strings.Cut(c, " ")
+		switch vid {
+		case "programma", "yunit":
+			c = strings.TrimSuffix(ostatok, ".service")
+			// vpn-uzel без отметки: установку Affory оборвали или снесли не до конца.
+			if c == "vpn-uzel" {
+				c = "остатки прежней установки Affory"
+			}
+		case "katalog":
+			c = "папка " + ostatok
+		case "port":
+			adres, kto, _ := strings.Cut(ostatok, " ")
+			if proto, port, ok := strings.Cut(adres, "/"); ok {
+				// Протокол человеку нужен, только если это не обычный TCP.
+				if proto != "tcp" {
+					port += "/" + proto
+				}
+				c = "порт " + port + " занят"
+				// «?»: ss не назвал процесс.
+				if kto != "" && kto != "?" {
+					c += " " + kto
+				}
+			}
+		}
+		c = ssh.Obrezat(c, 60)
+		if c != "" && !slices.Contains(slova, c) {
+			slova = append(slova, c)
+		}
+	}
+	tekst := ""
+	for i, s := range slova {
+		if i > 0 && utf8.RuneCountInString(tekst)+2+utf8.RuneCountInString(s) > dlinaSoServera {
+			return tekst + " и ещё " + strconv.Itoa(len(slova)-i)
+		}
+		if i > 0 {
+			tekst += ", "
+		}
+		tekst += s
+	}
+	return tekst
 }
 
 // preduprezhdenieVps переводит «не так» установки, дошедшей до ключей.
