@@ -33,7 +33,7 @@ func novyyPostavlennyy(t *testing.T, vh konfig.Vhody) (*postavlennyy, Podbor) {
 	m := novayaMashina(t)
 	m.vhod.pryamo = m.root
 	k := klyuchUpravleniya(t)
-	m.osm.Otmetka = &server.Sostav{Format: 1, Sostoyanie: "gotovo", VpnUzel: "0.6.0",
+	m.osm.Otmetka = &server.Sostav{Format: 1, Sostoyanie: "gotovo", VpnUzel: "vpn-uzel 0.6.0, sing-box 1.14.2",
 		Klyuchi: []string{base64.StdEncoding.EncodeToString(k.PublicKey().Marshal())}}
 	m.serty = []*server.SertUzla{{IP: "203.0.113.10", Est: true, Sposob: "http-01", Staging: true}}
 	sek, err := konfig.NovyeSekrety("www.example.com")
@@ -177,6 +177,18 @@ func TestPodobratPortyNeProshyol(t *testing.T) {
 	m, p := novyyPostavlennyy(t, rabochiyServer)
 	m.vybor = porty.Vybor{Hy2: 8443}
 	m.det = blok.Itog{Vid: blok.NeDohodit}
+	// Ключ reality не провозит и окончательную проверку: адрес закрыт.
+	m.itogi = func(k []protokol.Server) []proverka.Itog {
+		it := []proverka.Itog{}
+		for _, s := range k {
+			v := proverka.Vezyot
+			if s.Transport == "reality-tcp" {
+				v = proverka.NetOtveta
+			}
+			it = append(it, proverka.Itog{Server: s, Vid: v})
+		}
+		return it
+	}
 	p.Vhod.Port = 2222
 	itog, err := PodobratPorty(context.Background(), p)
 	if err != nil {

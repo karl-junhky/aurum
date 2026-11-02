@@ -330,8 +330,8 @@ function svoyZapis(adres: string, reality: number, hy2: number): Zapis {
 /** Ключи группы в общем списке: имена и транспорты, как у konfig.go. */
 function klyuchiSvoego(adres: string, reality: number, hy2: number): Server[] {
   return [
-    { id: `${SVOY_ID}-reality`, imya: "Мой сервер reality", transport: "reality-tcp", host: adres, port: reality, iz_podpiski: false, svoy: true },
-    { id: `${SVOY_ID}-hy2`, imya: "Мой сервер hy2", transport: "hy2", host: adres, port: hy2, iz_podpiski: false, svoy: true },
+    { id: `${SVOY_ID}-reality`, imya: "Мой сервер, reality", transport: "reality-tcp", host: adres, port: reality, iz_podpiski: false, svoy: true },
+    { id: `${SVOY_ID}-hy2`, imya: "Мой сервер, hysteria2", transport: "hy2", host: adres, port: hy2, iz_podpiski: false, svoy: true },
   ];
 }
 
@@ -494,7 +494,8 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
       ...shagiPodbora(stroka(z.adres), false),
       (h) => {
         zakonchit(h, "gotovo", { ustanovlen: { ...ustanovlen(), klyuchi: [{ transport: "reality-tcp", port: reality, vid: "vezyot" }, { transport: "hy2", port: hy2, vid: "vezyot" }] } });
-        Object.assign(z, { reality, hy2, porty_ruchnye: typeof v.reality === "number" || typeof v.hy2 === "number" });
+        // Подбор, как и служба (zapisatSvoy), отмечает визит: прежняя проверка не в счёт.
+        Object.assign(z, { reality, hy2, porty_ruchnye: typeof v.reality === "number" || typeof v.hy2 === "number", proveren: new Date().toISOString() });
         servery = [...servery.filter((s) => !s.id.startsWith(`${z.id}-`)), ...klyuchiSvoego(stroka(z.adres), reality, hy2)];
       },
     ]);
@@ -533,7 +534,7 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
           return;
         }
         zakonchit(h, "gotovo", { put: PUT_PRYAMO });
-        if (z) z.klyuch_upravleniya = true;
+        if (z) Object.assign(z, { klyuch_upravleniya: true, proveren: new Date().toISOString() });
       },
     ], 1000);
   },
@@ -552,6 +553,10 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     if (stroka(v.otpechatok) !== stroka(z.novyy_otpechatok)) throw new OtkazStenda("vps-host-key-changed", "сервер предъявил уже другой ключ");
     z.otpechatok = z.novyy_otpechatok;
     delete z.novyy_otpechatok;
+    // Как служба: сервер могли переустановить, отметка визита и пароля сброшены.
+    z.parol_vyklyuchen = false;
+    delete z.proveren;
+    delete z.proverka_otkaz;
     return { id: z.id };
   },
 };

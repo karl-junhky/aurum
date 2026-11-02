@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
@@ -148,6 +149,151 @@ func TestSvoyVpsProveritNeudachi(t *testing.T) {
 	}
 	if z := zapisPoId(t, s, id); !prezhnyaya(z) || !z.Proveren.Equal(pozzhe) || z.ProverkaOtkaz != h.Otkaz.Tekst {
 		t.Fatalf("запись после неудачи: %+v", z)
+	}
+}
+
+// osmotrSoSlushatelyami это осмотр, где программа сервера слушает порты
+// postavitSvoy: reality на 443 и hysteria2 на 8443.
+func osmotrSoSlushatelyami(reality, hy2 bool) *server.Osmotr {
+	o := osmotrChistyy()
+	if reality {
+		o.Slushayut = append(o.Slushayut, server.Slushatel{Proto: "tcp", Port: 443, Process: "vpn-uzel"})
+	}
+	if hy2 {
+		o.Slushayut = append(o.Slushayut, server.Slushatel{Proto: "udp", Port: 8443, Process: "vpn-uzel"})
+	}
+	return o
+}
+
+// Ключи, что не проходили из сети, проверка гоняет заново: провёзший вид
+// уходит из отметки, а без провёзших отметка остаётся как была.
+func TestSvoyVpsProveritIzSeti(t *testing.T) {
+	s := sPustymNaborom(t)
+	id, ids := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+	poVidam := map[string]string{"reality-tcp": "открой у хостера порт 443 (TCP)", "hy2": "проверь hysteria2 с телефона"}
+	otmetit := func() {
+		t.Helper()
+		if err := s.otmetitProverku(id, func(x *SvoyServer) {
+			x.NeIzSeti, x.SetTekst, x.SetPoVidam = []string{"reality-tcp", "hy2"}, "открой у хостера порты 443 (TCP) и 8443 (UDP)", poVidam
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	otmetit()
+	slushaetReality := true
+	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+		return upravlenie.ZdorovyeServera{Osmotr: osmotrSoSlushatelyami(slushaetReality, true), Uzel: server.SostoyanieUzla{Versiya: "0.6.1", YadroZhivo: true}}, nil
+	}
+	var (
+		proverennye []string
+		adapter     string
+		otkaz       error
+	)
+	vezyot := "hy2"
+	s.vpsProveritKlyuchi = func(_ context.Context, k []protokol.Server, o *server.Osmotr, op proverka.Opcii, _ proverka.Zapusk) ([]proverka.Itog, error) {
+		proverennye, adapter = nil, op.Adapter
+		if o == nil {
+			t.Error("ключи проверялись без осмотра")
+		}
+		var itogi []proverka.Itog
+		for _, x := range k {
+			proverennye = append(proverennye, x.Id)
+			v := proverka.NetOtveta
+			if x.Transport == vezyot {
+				v = proverka.Vezyot
+			}
+			itogi = append(itogi, proverka.Itog{Server: x, Vid: v})
+		}
+		return itogi, otkaz
+	}
+	proverit := func(shag string) SvoyServer {
+		t.Helper()
+		if otv := s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id})); otv.Oshib != nil {
+			t.Fatal(otv.Oshib)
+		}
+		if h := dozhdatsyaVps(t, s); h.Faza != fazaGotovo || h.Shag != shag {
+			t.Fatalf("проверка: %+v", h)
+		}
+		return zapisPoId(t, s, id)
+	}
+	// Общая причина называла оба вида: оставшемуся остаётся своя.
+	if z := proverit(string(upravlenie.ShagProverka)); !slices.Equal(z.NeIzSeti, []string{"reality-tcp"}) ||
+		z.SetTekst != poVidam["reality-tcp"] || z.SetPoVidam != nil {
+		t.Fatalf("hysteria2 провёз: %+v", z)
+	}
+	if !slices.Equal(proverennye, ids) || adapter != "Ethernet" {
+		t.Fatalf("проверены %v через %q", proverennye, adapter)
+	}
+	// Не провёз никто или проверка ключей не состоялась: отметка как была.
+	vezyot = ""
+	if z := proverit(string(upravlenie.ShagProverka)); !slices.Equal(z.NeIzSeti, []string{"reality-tcp"}) || !slices.Equal(proverennye, ids[:1]) {
+		t.Fatalf("никто не провёз: %+v, проверены %v", z, proverennye)
+	}
+	vezyot, otkaz = "reality-tcp", errors.New("ядро проверки не поднялось")
+	if z := proverit(string(upravlenie.ShagProverka)); !slices.Equal(z.NeIzSeti, []string{"reality-tcp"}) {
+		t.Fatalf("проверка не состоялась: %+v", z)
+	}
+	// Порт reality на сервере не слушает: его ключ не гоняется.
+	otkaz, proverennye, slushaetReality = nil, nil, false
+	if z := proverit(string(upravlenie.ShagVhod)); !slices.Equal(z.NeIzSeti, []string{"reality-tcp"}) || proverennye != nil {
+		t.Fatalf("мёртвый порт: %+v, проверены %v", z, proverennye)
+	}
+	// Плановая проверка ключей не гоняет: команды человека ждали бы минутами.
+	slushaetReality = true
+	if _, tekst := s.nachatVps(vidProverka, true, s.deloProverki(zapisPoId(t, s, id), ssh.Zapros{})); tekst != "" {
+		t.Fatalf("плановая не началась: %s", tekst)
+	}
+	dozhdatsyaPlanovoy(t, s)
+	if z := zapisPoId(t, s, id); !slices.Equal(z.NeIzSeti, []string{"reality-tcp"}) || proverennye != nil {
+		t.Fatalf("плановая: %+v, проверены %v", z, proverennye)
+	}
+	// Ключа reality в списке больше нет: вид снимается без проверки, а
+	// hysteria2 гоняется и не провозит.
+	otmetit()
+	if err := s.pravitNabor(func(n *Nabor) error {
+		n.Servery = slices.DeleteFunc(n.Servery, func(k protokol.Server) bool { return k.Id == ids[0] })
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vezyot = ""
+	if z := proverit(string(upravlenie.ShagProverka)); !slices.Equal(z.NeIzSeti, []string{"hy2"}) ||
+		z.SetTekst != poVidam["hy2"] || !slices.Equal(proverennye, ids[1:]) {
+		t.Fatalf("ключа нет: %+v, проверены %v", z, proverennye)
+	}
+	// Отметки нет: ключи не гоняются.
+	proverennye = nil
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.NeIzSeti = nil }); err != nil {
+		t.Fatal(err)
+	}
+	if proverit(string(upravlenie.ShagVhod)); proverennye != nil {
+		t.Fatalf("ключи без отметки проверялись: %v", proverennye)
+	}
+}
+
+// Отмена посреди проверки ключей не пишет ничего, даже провёзший вид.
+func TestSvoyVpsProveritIzSetiOtmena(t *testing.T) {
+	s := sPustymNaborom(t)
+	id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.NeIzSeti = []string{"hy2"} }); err != nil {
+		t.Fatal(err)
+	}
+	bylo := zapisPoId(t, s, id)
+	s.seychas = func() time.Time { return chasyProverki }
+	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+		return upravlenie.ZdorovyeServera{Osmotr: osmotrSoSlushatelyami(true, true), Uzel: server.SostoyanieUzla{Versiya: "0.6.1"}}, nil
+	}
+	s.vpsProveritKlyuchi = func(ctx context.Context, k []protokol.Server, _ *server.Osmotr, _ proverka.Opcii, _ proverka.Zapusk) ([]proverka.Itog, error) {
+		s.svoyVpsOtmenit(kadrVps(t, "svoyVpsOtmenit", nil))
+		<-ctx.Done()
+		return []proverka.Itog{{Server: k[0], Vid: proverka.Vezyot}}, nil
+	}
+	s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+	if h := dozhdatsyaVps(t, s); h.Faza != fazaOtmeneno {
+		t.Fatalf("отмена: %+v", h)
+	}
+	if z := zapisPoId(t, s, id); !z.Proveren.Equal(bylo.Proveren) || !slices.Equal(z.NeIzSeti, []string{"hy2"}) {
+		t.Fatalf("отменённая проверка записала: %+v", z)
 	}
 }
 

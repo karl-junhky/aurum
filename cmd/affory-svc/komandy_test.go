@@ -24,6 +24,8 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/yadra"
@@ -108,6 +110,9 @@ func podstavnaya(t *testing.T, zamerOtvet error) *Sluzhba {
 	}
 	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
 		return upravlenie.ZdorovyeServera{}, errors.New("ssh disabled in service fixture")
+	}
+	s.vpsProveritKlyuchi = func(context.Context, []protokol.Server, *server.Osmotr, proverka.Opcii, proverka.Zapusk) ([]proverka.Itog, error) {
+		return nil, errors.New("core disabled in service fixture")
 	}
 	s.vpsOtpustit = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.OtpuskItog, error) {
 		return upravlenie.OtpuskItog{}, errors.New("ssh disabled in service fixture")

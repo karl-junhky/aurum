@@ -8,6 +8,23 @@ import (
 	"testing"
 )
 
+// Без .ssh выбор ключа открывается в папке пользователя, а не в папке
+// процесса (System32 у окна из автозапуска).
+func TestKatalogSsh(t *testing.T) {
+	dom := t.TempDir()
+	t.Setenv("USERPROFILE", dom)
+	t.Setenv("HOME", dom)
+	if k := katalogSsh(); k != dom {
+		t.Fatalf("без .ssh: %q", k)
+	}
+	if err := os.Mkdir(filepath.Join(dom, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if k := katalogSsh(); k != filepath.Join(dom, ".ssh") {
+		t.Fatalf("с .ssh: %q", k)
+	}
+}
+
 func TestProchitatKlyuchSsh(t *testing.T) {
 	kat := t.TempDir()
 	zapisat := func(imya string, data []byte) string {

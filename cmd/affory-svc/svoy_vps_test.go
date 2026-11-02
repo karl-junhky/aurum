@@ -593,6 +593,94 @@ func TestSvoyVpsUstanovit(t *testing.T) {
 	}
 }
 
+// Ключи ложатся в набор до перепроверки из сети (И7): человек может её не
+// ждать. Итог детектора и проверки дописывается в ту же запись после.
+func TestSvoyVpsUstanovitPoHodu(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh := klyuchHostaDlyaTesta(t)
+	s.programmaUzla = func(context.Context) (io.ReadSeekCloser, error) {
+		return &programmaDlyaTesta{Reader: bytes.NewReader([]byte("vpn-uzel"))}, nil
+	}
+	sek, err := konfig.NovyeSekrety("dl.google.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vhody := konfig.Vhody{Imya: "Мой сервер", Adres: adresSvoego, Reality: []int{443}, Hy2: []int{8443}}
+	klyuchi, err := konfig.Klyuchi(sek, vhody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := idSvoego(netip.MustParseAddr(adresSvoego))
+	snimok := func() HodVps {
+		s.muVps.Lock()
+		defer s.muVps.Unlock()
+		return s.vps.snimok
+	}
+	d := &blok.Itog{Vid: blok.NeDohodit}
+	s.vpsUstanovit = func(_ context.Context, x upravlenie.Ustanovka) (upravlenie.Itog, error) {
+		rannyy := upravlenie.Itog{
+			Adres: adresSvoego, Sekrety: sek, Vhody: vhody, Klyuchi: klyuchi, Prodlenie: porty.Cherez80,
+			Versiya: "0.6.0", Vhod: upravlenie.Svedeniya{KlyuchHosta: kh, Put: "напрямую"},
+			NeProshli: []string{"reality-tcp", "hy2"},
+		}
+		if err := x.Klyuchi(rannyy); err != nil {
+			return upravlenie.Itog{}, err
+		}
+		// Запись и ключи уже в наборе, а снимок их называет.
+		n, err := s.nabor()
+		if err != nil || len(n.Servery) != 2 || len(n.SvoiServery) != 1 ||
+			!slices.Equal(n.SvoiServery[0].NeIzSeti, []string{"reality-tcp", "hy2"}) || n.SvoiServery[0].Versiya != "0.6.0" {
+			t.Errorf("набор до детектора: %+v, %v", n.SvoiServery, err)
+		}
+		if h := snimok(); h.Faza != fazaIdyot || h.Ustanovlen == nil || len(h.Ustanovlen.Ids) != 2 || len(h.Ustanovlen.NeIzSeti) != 2 {
+			t.Errorf("снимок до детектора: %+v", h)
+		}
+		povtor := time.Now().Add(2 * time.Minute)
+		x.Hod(upravlenie.Hod{Shag: upravlenie.ShagDetektor, Krug: &blok.Krug{Nomer: 1, Vid: blok.NeDohodit, Povtory: []time.Time{povtor}}})
+		if h := snimok(); h.KrugTekst == "" || len(h.Povtory) != 1 || !h.Povtory[0].Equal(povtor) {
+			t.Errorf("снимок после круга: %+v", h)
+		}
+		x.Hod(upravlenie.Hod{Shag: upravlenie.ShagProverka})
+		if h := snimok(); h.KrugTekst != "" || h.Povtory != nil {
+			t.Errorf("повторы после детектора: %+v", h)
+		}
+		itog := rannyy
+		itog.Preduprezhdeniya = []upravlenie.Preduprezhdenie{
+			{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: d},
+			{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: d},
+		}
+		itog.Proverki = []proverka.Itog{{Server: klyuchi[0].Server, Vid: proverka.NetOtveta}, {Server: klyuchi[1].Server, Vid: proverka.NetOtveta}}
+		return itog, nil
+	}
+	z := zaprosUstanovkiVps{dostupVps: dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"},
+		Pustoy: true, KlyuchHostaTip: kh.Tip, KlyuchHosta: kh.TeloBase64()}
+	if otv := s.svoyVpsUstanovit(kadrVps(t, "svoyVpsUstanovit", z)); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	h := dozhdatsyaVps(t, s)
+	if h.Faza != fazaGotovo || h.Ustanovlen == nil || h.Ustanovlen.Server != id {
+		t.Fatalf("установка: %+v", h)
+	}
+	// Один вердикт на оба вида это одна строка, и проверки ключей в снимке.
+	if len(h.Preduprezhdeniya) != 1 || h.Preduprezhdeniya[0].Kod != protokol.KodVpsAdresZakryt || !h.Preduprezhdeniya[0].IzSeti {
+		t.Errorf("предупреждения: %+v", h.Preduprezhdeniya)
+	}
+	if h.Ustanovlen.Klyuchi[0].Vid != string(proverka.NetOtveta) {
+		t.Errorf("ключи: %+v", h.Ustanovlen.Klyuchi)
+	}
+	n, err := s.nabor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.Servery) != 2 || len(n.SvoiServery) != 1 {
+		t.Fatalf("набор: %d ключей, %d своих", len(n.Servery), len(n.SvoiServery))
+	}
+	if zap := n.SvoiServery[0]; !slices.Equal(zap.NeIzSeti, []string{"reality-tcp", "hy2"}) || !strings.Contains(zap.SetTekst, "Проверь их с телефона") ||
+		!strings.Contains(zap.SetPoVidam["hy2"], "Проверь hysteria2 с телефона") {
+		t.Errorf("запись: %+v", zap)
+	}
+}
+
 // Сервер уже в разделе: установка идёт поверх записи, сюда ведут отказы «нет
 // установки» и «не дошла». Ключ хоста и имя из записи, ключ управления
 // прежний, ключи группы заменяются, выбор переходит на новый ключ того же вида.
@@ -819,9 +907,89 @@ func TestPreduprezhdenieVps(t *testing.T) {
 		"глушат":        {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Detektor: s(blok.Glushat)}, protokol.KodVpsPorty, "глушат"},
 		"без детектора": {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443}, protokol.KodVpsPorty, "reality на порту 443"},
 	} {
-		o := preduprezhdenieVps(c.p)
-		if o.Kod != c.kod || !strings.Contains(o.Tekst, c.est) || o.Tekst == "" {
+		o := preduprezhdenieVps([]upravlenie.Preduprezhdenie{c.p})
+		iz := c.p.Vid == upravlenie.NeProshyol || c.p.Vid == upravlenie.NeVezyot
+		if o.Kod != c.kod || !strings.Contains(o.Tekst, c.est) || o.Tekst == "" || o.IzSeti != iz {
 			t.Errorf("%s: %+v", imya, o)
+		}
+	}
+}
+
+// Один вердикт детектора на два вида это одна строка с обоими ключами, а
+// причина для записи о сервере собирается только из того, что про сеть.
+func TestPreduprezhdeniyaVpsVmeste(t *testing.T) {
+	d := &blok.Itog{Vid: blok.OtvetNeVozvrashchaetsya}
+	drugoy := &blok.Itog{Vid: blok.Glushat}
+	pr := preduprezhdeniyaVps([]upravlenie.Preduprezhdenie{
+		{Vid: upravlenie.NetSerta},
+		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 50443, Detektor: d},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 40443, Detektor: d},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: drugoy},
+	})
+	if len(pr) != 3 || pr[0].Kod != protokol.KodVpsNetSerta || pr[0].IzSeti {
+		t.Fatalf("предупреждения %+v", pr)
+	}
+	if !pr[1].IzSeti || !strings.Contains(pr[1].Tekst, "порты 50443 (TCP) и 40443 (UDP)") {
+		t.Fatalf("общий вердикт %+v", pr[1])
+	}
+	if !strings.Contains(pr[2].Tekst, "hysteria2 на порту 8443 не прошёл") {
+		t.Fatalf("другой вердикт %+v", pr[2])
+	}
+	g := preduprezhdenieVps([]upravlenie.Preduprezhdenie{
+		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: drugoy},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: drugoy},
+	})
+	if !strings.HasSuffix(g.Tekst, "reality на порту 443 и hysteria2 на порту 8443 не прошли") {
+		t.Fatalf("два ключа: %q", g.Tekst)
+	}
+	// Адрес закрыт для одного вида: проверять с телефона только его.
+	zakryt := &blok.Itog{Vid: blok.NeDohodit}
+	odin := preduprezhdenieVps([]upravlenie.Preduprezhdenie{{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: zakryt}})
+	oba := preduprezhdenieVps([]upravlenie.Preduprezhdenie{
+		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: zakryt},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: zakryt},
+	})
+	if !strings.Contains(odin.Tekst, "Проверь hysteria2 с телефона") || !strings.Contains(odin.Tekst, "не откроется,") ||
+		!strings.Contains(oba.Tekst, "Проверь их с телефона") || !strings.Contains(oba.Tekst, "не откроются,") {
+		t.Fatalf("адрес закрыт: %q / %q", odin.Tekst, oba.Tekst)
+	}
+	tekst := tekstSeti(pr)
+	if strings.Contains(tekst, "сертификат") || !strings.Contains(tekst, ". По дороге") {
+		t.Fatalf("причина для записи %q", tekst)
+	}
+	if tekstSeti(pr[:1]) != "" {
+		t.Fatal("причина без предупреждений о сети")
+	}
+	// Своя причина вида называет только его ключи: она останется, когда
+	// проверка снимет другой вид.
+	obshchaya, poVidam := prichinySeti([]upravlenie.Preduprezhdenie{
+		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: d},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: d},
+	}, []string{"reality-tcp", "hy2"})
+	if !strings.Contains(obshchaya, "порты 443 (TCP) и 8443 (UDP)") || !strings.HasSuffix(poVidam["reality-tcp"], "порт 443 (TCP)") ||
+		!strings.HasSuffix(poVidam["hy2"], "порт 8443 (UDP)") {
+		t.Fatalf("причины %q %+v", obshchaya, poVidam)
+	}
+	if _, poVidam := prichinySeti(nil, []string{"hy2"}); poVidam != nil {
+		t.Fatalf("свои причины одного вида: %+v", poVidam)
+	}
+	if tekst := tekstVidov([]string{"reality-tcp", "hy2"}, map[string]string{"reality-tcp": "a", "hy2": "a"}); tekst != "a" {
+		t.Fatalf("одинаковые причины: %q", tekst)
+	}
+	if tekst := tekstVidov([]string{"reality-tcp", "hy2"}, map[string]string{"reality-tcp": "a", "hy2": "b"}); tekst != "a. B" {
+		t.Fatalf("две причины: %q", tekst)
+	}
+}
+
+func TestTekstKruga(t *testing.T) {
+	for _, v := range []blok.Vid{blok.NeDohodit, blok.ServerMolchit, blok.MolchitNapryamuyu, blok.Glushat, blok.Podmena, blok.OtvetNeVozvrashchaetsya} {
+		if tekstKruga(v) == "" {
+			t.Errorf("%s без текста", v)
+		}
+	}
+	for _, v := range []blok.Vid{blok.Dostupen, blok.BelyeSpiski, blok.NeSostoyalas} {
+		if tekstKruga(v) != "" {
+			t.Errorf("%s: круг не отрицательный, а текст есть", v)
 		}
 	}
 }

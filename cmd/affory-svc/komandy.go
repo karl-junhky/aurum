@@ -26,6 +26,8 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/yadra"
@@ -554,6 +556,7 @@ type Sluzhba struct {
 	vpsSnesti          func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.SnosItog, error)
 	vpsVzyat           func(context.Context, upravlenie.Vzyatie) (upravlenie.Itog, error)
 	vpsProverit        func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error)
+	vpsProveritKlyuchi func(context.Context, []protokol.Server, *server.Osmotr, proverka.Opcii, proverka.Zapusk) ([]proverka.Itog, error)
 	vpsOtpustit        func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.OtpuskItog, error)
 	vpsVyklyuchitParol func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error)
 	vpsVklyuchitParol  func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error)
@@ -649,6 +652,7 @@ func NovayaSluzhba() *Sluzhba {
 	s.vpsSnesti = upravlenie.Snesti
 	s.vpsVzyat = upravlenie.Vzyat
 	s.vpsProverit = upravlenie.ProveritServer
+	s.vpsProveritKlyuchi = upravlenie.ProveritKlyuchi
 	s.vpsOtpustit = upravlenie.Otpustit
 	s.vpsVyklyuchitParol = upravlenie.VyklyuchitParol
 	s.vpsVklyuchitParol = upravlenie.VklyuchitParol

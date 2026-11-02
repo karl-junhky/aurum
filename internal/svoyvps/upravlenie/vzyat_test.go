@@ -86,7 +86,7 @@ func novyyZahvat(t *testing.T, sek konfig.Sekrety, v konfig.Vhody) *zahvat {
 		t.Fatal(err)
 	}
 	z := &zahvat{osm: chistyyOsmotr(), paket: p, sert: &server.SertUzla{IP: "203.0.113.10", Est: true, Sposob: "http-01"}}
-	z.osm.Otmetka = &server.Sostav{Format: 1, Sostoyanie: "gotovo", VpnUzel: "0.6.0", Klyuchi: []string{"chuzhoy"}}
+	z.osm.Otmetka = &server.Sostav{Format: 1, Sostoyanie: "gotovo", VpnUzel: "vpn-uzel 0.6.0, sing-box 1.14.2", Klyuchi: []string{"chuzhoy"}}
 	z.root = &svyaz{imya: "root", sv: Svedeniya{Root: true}}
 	z.parol = &svyaz{imya: "parol", root: z.root, sv: Svedeniya{Put: "напрямую"}}
 	(&vhody{pryamo: z.parol}).podmenit(t)

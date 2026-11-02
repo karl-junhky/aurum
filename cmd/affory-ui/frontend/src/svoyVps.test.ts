@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Kadr } from "./most";
 import {
-  PUSTAYA_FORMA, hodIz, metkaRazdela, ocenitServer, posledneeDelo, sobytieHodaIz, spisokIz, useSvoyVps,
+  PUSTAYA_FORMA, hodIz, metkaRazdela, ocenitServer, posledneeDelo, sobytieHodaIz, spisokIz, svezhayaProverka, useSvoyVps,
   type HodVps, type SvoyServer,
 } from "./svoyVps";
 
@@ -12,12 +12,12 @@ function server(dop: Partial<SvoyServer> = {}): SvoyServer {
   return {
     id: "svoy-1", imya: "Мой сервер", adres: "203.0.113.40", port_ssh: 22, polzovatel: "root",
     parol_vyklyuchen: false, maska: "www.example.net", reality: 2087, hy2: 5443, porty_ruchnye: false,
-    prodlenie: "80", servery: ["a", "b"], sert_trevoga: false, klyuch_upravleniya: true, ...dop,
+    prodlenie: "80", servery: ["a", "b"], sert_trevoga: false, klyuch_upravleniya: true, ne_iz_seti: [], ...dop,
   };
 }
 
 function hod(dop: Partial<HodVps> = {}): HodVps {
-  return { id: 1, vid: "proverka", faza: "gotovo", server: "svoy-1", proverki: [], otseyany: [], preduprezhdeniya: [], ...dop };
+  return { id: 1, vid: "proverka", faza: "gotovo", server: "svoy-1", proverki: [], otseyany: [], preduprezhdeniya: [], povtory: [], ...dop };
 }
 
 describe("разбор ответов службы", () => {
@@ -40,6 +40,24 @@ describe("разбор ответов службы", () => {
     expect(h?.nachalo).toBe("2026-11-02T05:00:00Z");
     // Нулевое время Go значит «не было».
     expect(h?.konec).toBeUndefined();
+  });
+
+  it("перепроверка из сети: время повторов, ключи до её конца, предупреждение о сети", () => {
+    const h = hodIz({
+      id: 1, vid: "ustanovka", faza: "idyot", shag: "detektor", krug: 1,
+      krug_tekst: "из твоей сети адрес сервера сейчас не открывается", povtory: ["2026-11-02T20:16:00Z", "негодно", "2026-11-02T20:24:00Z"],
+      ustanovlen: { server: "svoy-1", klyuchi: [], ids: ["a"], ne_iz_seti: ["hy2", 5] },
+      preduprezhdeniya: [{ kod: "vps-address-blocked", tekst: "x", iz_seti: true }],
+    });
+    expect(h?.povtory).toEqual(["2026-11-02T20:16:00Z", "2026-11-02T20:24:00Z"]);
+    expect(h?.krug_tekst).toContain("не открывается");
+    expect(h?.ustanovlen?.ne_iz_seti).toEqual(["hy2"]);
+    expect(h?.preduprezhdeniya[0].iz_seti).toBe(true);
+    // Служба старее окна полей не шлёт: пусто, а не сбой.
+    expect(hodIz({ id: 2, vid: "proverka", faza: "gotovo" })?.povtory).toEqual([]);
+    const s = spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40", ne_iz_seti: ["reality-tcp"], set_tekst: "сервер жив" }] });
+    expect(s?.[0]).toMatchObject({ ne_iz_seti: ["reality-tcp"], set_tekst: "сервер жив" });
+    expect(spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40" }] })?.[0].ne_iz_seti).toEqual([]);
   });
 
   it("«заданий не было» и чужая фаза дают null", () => {
@@ -91,6 +109,33 @@ describe("оценка сервера", () => {
     expect(ocenitServer(server(), [], [h])).toMatchObject({ sostoyanie: "slomano", sovet: expect.stringContaining("Подбери порты") });
   });
 
+  it("не работает один порт: нужно внимание, главнее того, что не открывается из сети", () => {
+    const h = hod({
+      proverka: { yadro_zhivo: true, porty: [{ vid: "reality", port: 2087, slushaet: false }, { vid: "hy2", port: 5443, slushaet: true }], maska: "godna", pamyat_mb: 1, disk_mb: 1 },
+    });
+    expect(ocenitServer(server({ ne_iz_seti: ["reality-tcp"] }), [], [h])).toEqual({
+      sostoyanie: "vnimanie", prichina: "На сервере не работает reality", sovet: expect.stringContaining("Подбери порты"),
+    });
+  });
+
+  it("после проверки сервер подбирали на тех же портах: старая проверка не судит", () => {
+    const h = hod({
+      konec: "2026-11-02T10:00:00Z",
+      proverka: { yadro_zhivo: true, porty: [{ vid: "reality", port: 2087, slushaet: false }, { vid: "hy2", port: 5443, slushaet: true }], maska: "godna", pamyat_mb: 1, disk_mb: 1 },
+    });
+    expect(ocenitServer(server({ proveren: "2026-11-02T10:05:00Z" }), [], [h]).sostoyanie).toBe("horosho");
+    expect(svezhayaProverka(server({ proveren: "2026-11-02T09:59:59Z" }), [h])).toBe(h.proverka);
+    // Принят новый ключ сервера: отметки визита нет, прежняя проверка не в счёт.
+    expect(svezhayaProverka(server(), [h])).toBeUndefined();
+  });
+
+  it("проверка видела прежние порты: о нынешних не судит", () => {
+    const h = hod({
+      proverka: { yadro_zhivo: true, porty: [{ vid: "reality", port: 443, slushaet: false }, { vid: "hy2", port: 8443, slushaet: false }], maska: "godna", pamyat_mb: 1, disk_mb: 1 },
+    });
+    expect(ocenitServer(server(), [], [h]).sostoyanie).toBe("horosho");
+  });
+
   it("программа сервера не ответила: о VPN проверка не судит", () => {
     const h = hod({ proverka: { yadro_zhivo: false, programma_otkaz: "нет ответа", porty: [], maska: "ne-provereno", pamyat_mb: -1, disk_mb: -1 } });
     expect(ocenitServer(server(), [], [h]).sostoyanie).toBe("horosho");
@@ -105,6 +150,16 @@ describe("оценка сервера", () => {
     expect(ocenitServer(server({ proverka_otkaz: "сервер молчит" }), [], []).sostoyanie).toBe("vnimanie");
     expect(ocenitServer(server({ novyy_otpechatok: "SHA256:x" }), [], []).sostoyanie).toBe("vnimanie");
     expect(ocenitServer(server(), [], []).sostoyanie).toBe("horosho");
+  });
+
+  it("ключи не прошли из сети: нужно внимание, и здоровый сервер его не снимает, снимает только запись", () => {
+    const zdorovyy = hod({ proverka: { yadro_zhivo: true, porty: [{ vid: "reality", port: 2087, slushaet: true }], maska: "godna", pamyat_mb: 1, disk_mb: 1 } });
+    const o = ocenitServer(server({ ne_iz_seti: ["reality-tcp", "hy2"], set_tekst: "сервер жив, ключи стоят" }), [], [zdorovyy]);
+    expect(o).toEqual({ sostoyanie: "vnimanie", prichina: "Из твоей сети не открываются reality и hysteria2", sovet: "Сервер жив, ключи стоят", izSeti: true });
+    // Тревога главнее: причина о сети не из записи, и строка дела её не прячет.
+    expect(ocenitServer(server({ ne_iz_seti: ["hy2"] }), [{ id: "svoy-1", imya: "Мой сервер", tekst: "сертификат не продлевается" }], []).izSeti).toBeUndefined();
+    expect(ocenitServer(server({ ne_iz_seti: ["hy2"] }), [], []).prichina).toBe("Из твоей сети не открывается hysteria2");
+    expect(metkaRazdela([server({ ne_iz_seti: ["hy2"] })], [], [])).toBe("warn");
   });
 
   it("метка раздела: худшее из состояний, тревога видна и без списка", () => {
@@ -171,6 +226,30 @@ describe("связь раздела со службой", () => {
     const { result } = renderHook(() => useSvoyVps({ ...s, naSboy: vi.fn(), naSmenuKlyuchey: vi.fn(), aktiven: true }));
     await waitFor(() => expect(result.current.hody).toHaveLength(1));
     expect(result.current.master).toBeNull();
+  });
+
+  it("установка, перепроверки которой не стали ждать, мастер не возвращает", async () => {
+    localStorage.setItem("affory.svoy-vps.uvidennaya-ustanovka", "7");
+    const s = sluzhba({
+      svoyVpsSpisok: () => otvet("svoyVpsSpisok", { servery: [] }),
+      svoyVpsHod: () => otvet("svoyVpsHod", { id: 7, vid: "ustanovka", faza: "idyot", shag: "detektor", ustanovlen: { server: "svoy-1", klyuchi: [], ids: ["a"] } }),
+    });
+    const { result } = renderHook(() => useSvoyVps({ ...s, naSboy: vi.fn(), naSmenuKlyuchey: vi.fn(), aktiven: true }));
+    await waitFor(() => expect(result.current.hody).toHaveLength(1));
+    expect(result.current.master).toBeNull();
+  });
+
+  it("ключи записаны до конца установки: общие ключи перечитываются сразу и раз", async () => {
+    const s = sluzhba({
+      svoyVpsSpisok: () => otvet("svoyVpsSpisok", { servery: [] }),
+      svoyVpsHod: () => otvet("svoyVpsHod", { id: 7, vid: "ustanovka", faza: "idyot", shag: "detektor", ustanovlen: { server: "svoy-1", klyuchi: [], ids: ["a"] } }),
+    });
+    const naSmenuKlyuchey = vi.fn();
+    const { result } = renderHook(() => useSvoyVps({ ...s, naSboy: vi.fn(), naSmenuKlyuchey, aktiven: true }));
+    await waitFor(() => expect(result.current.hody[0]?.ustanovlen).toBeDefined());
+    act(() => s.sobytie({ id: 7, vid: "ustanovka", faza: "idyot", shag: "detektor" }));
+    await waitFor(() => expect(s.zvat.mock.calls.filter(([i]) => i === "svoyVpsHod").length).toBeGreaterThan(1));
+    expect(naSmenuKlyuchey).toHaveBeenCalledTimes(1);
   });
 
   it("конец установки событием: список и общие ключи перечитываются", async () => {

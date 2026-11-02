@@ -47,10 +47,13 @@ export interface OsmotrVps {
   mozhno_stavit: boolean;
 }
 
+/** Ключи записаны: снимок несёт их ещё до перепроверки из сети. */
 export interface UstanovkaVps {
   server: string;
   klyuchi: KlyuchHoda[];
   ids: string[];
+  /** Виды ключей (reality-tcp, hy2), что не прошли из сети этого компьютера. */
+  ne_iz_seti: string[];
 }
 
 export interface OtkazVps {
@@ -59,6 +62,8 @@ export interface OtkazVps {
   klyuch_ostalsya?: boolean;
   podozhdat?: number;
   otpechatok?: string;
+  /** Ключи не прошли из сети человека: это же лежит в записи о сервере. */
+  iz_seti?: boolean;
 }
 
 export interface PortVps {
@@ -105,6 +110,10 @@ export interface HodVps {
   otseyany: OtsevHoda[];
   krug?: number;
   sleduyushchiy?: number;
+  /** Круг детектора кончился плохо, а повторы ещё будут: что он показал и
+   *  когда повторы (время ISO). */
+  krug_tekst?: string;
+  povtory: string[];
   osmotr?: OsmotrVps;
   ustanovlen?: UstanovkaVps;
   snyat?: { parol_vernulsya: boolean };
@@ -140,6 +149,12 @@ export interface SvoyServer {
   sert_proveren?: string;
   proveren?: string;
   proverka_otkaz?: string;
+  /** Виды ключей, что не прошли из сети этого компьютера при последней
+   *  установке или подборе, и почему. Проверка сервера по кнопке гоняет из
+   *  сети ключи видов с работающим портом и убирает провёзшие и те, чьего
+   *  ключа больше нет. */
+  ne_iz_seti: string[];
+  set_tekst?: string;
   klyuch_upravleniya: boolean;
   klyuch_ne_chitaetsya?: string;
   otpechatok?: string;
@@ -204,6 +219,7 @@ function otkazVpsIz(v: unknown): OtkazVps | null {
     klyuch_ostalsya: o.klyuch_ostalsya === true || undefined,
     podozhdat: chislo(o.podozhdat),
     otpechatok: stroka(o.otpechatok),
+    iz_seti: o.iz_seti === true || undefined,
   };
 }
 
@@ -241,6 +257,7 @@ function ustanovkaIz(v: unknown): UstanovkaVps | null {
     server,
     klyuchi: spisok(o.klyuchi, klyuchHodaIz),
     ids: spisok(o.ids, (x) => stroka(x) ?? null),
+    ne_iz_seti: spisok(o.ne_iz_seti, (x) => stroka(x) ?? null),
   };
 }
 
@@ -300,6 +317,8 @@ export function hodIz(v: unknown): HodVps | null {
     otseyany: spisok(o.otseyany, otsevIz),
     krug: chislo(o.krug),
     sleduyushchiy: chislo(o.sleduyushchiy),
+    krug_tekst: stroka(o.krug_tekst),
+    povtory: spisok(o.povtory, (x) => vremya(x) ?? null),
     osmotr: osmotrIz(o.osmotr) ?? undefined,
     ustanovlen: ustanovkaIz(o.ustanovlen) ?? undefined,
     snyat: snyat ? { parol_vernulsya: snyat.parol_vernulsya === true } : undefined,
@@ -353,6 +372,8 @@ function serverIz(v: unknown): SvoyServer | null {
     sert_proveren: vremya(o.sert_proveren),
     proveren: vremya(o.proveren),
     proverka_otkaz: stroka(o.proverka_otkaz),
+    ne_iz_seti: spisok(o.ne_iz_seti, (x) => stroka(x) ?? null),
+    set_tekst: stroka(o.set_tekst),
     klyuch_upravleniya: o.klyuch_upravleniya === true,
     klyuch_ne_chitaetsya: stroka(o.klyuch_ne_chitaetsya),
     otpechatok: stroka(o.otpechatok),
@@ -374,6 +395,8 @@ export interface OcenkaServera {
   sostoyanie: SostoyanieServera;
   prichina?: string;
   sovet?: string;
+  /** Причина взята из записи о сети человека: строка дела её не повторяет. */
+  izSeti?: boolean;
 }
 
 // Хвост тревоги ведёт в этот самый раздел, а в карточке он лишний.
@@ -388,13 +411,39 @@ export function posledneeDelo(hody: HodVps[], server: string, vid: string): HodV
   return itog;
 }
 
+/** Последняя удачная проверка сервера, если после неё его не ставили, не
+ *  подбирали порты и не брали под управление: запись отмечает и эти визиты, и
+ *  то, что видела проверка до них, о нынешнем сервере не скажет. Отметки нет
+ *  вовсе - принят новый ключ сервера, его могли переустановить, и прежняя
+ *  проверка тоже не в счёт. */
+export function svezhayaProverka(s: SvoyServer, hody: HodVps[]): ProverkaVps | undefined {
+  const h = posledneeDelo(hody, s.id, "proverka");
+  if (h?.faza !== "gotovo") return undefined;
+  if (h.konec && (!s.proveren || Date.parse(h.konec) < Date.parse(s.proveren))) return undefined;
+  return h.proverka;
+}
+
+/** Порты, что проверка видела у сервера на нынешних его портах: проверка до
+ *  подбора портов видела прежние, и о нынешних она не скажет. */
+export function portyNyneshnie(s: SvoyServer, p: ProverkaVps | undefined): PortVps[] {
+  return p?.porty.filter((x) => x.port === (x.vid === "hy2" ? s.hy2 : s.reality)) ?? [];
+}
+
+function imyaVida(t: string): string {
+  return t === "hy2" ? "hysteria2" : "reality";
+}
+
+const SOVET_PODBORA = "Подбери порты заново: подбор ставит их на сервер ещё раз";
+
 /** Три значения карточки (план, §4): работает, нужно внимание, не работает.
  *  «Не работает» только по свежей проверке, которая видела VPN на сервере
  *  мёртвым: запись о сервере сама этого не помнит. */
 export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVps[]): OcenkaServera {
-  const p = posledneeDelo(hody, s.id, "proverka");
-  const proverka = p?.faza === "gotovo" ? p.proverka : undefined;
-  if (proverka && !proverka.programma_otkaz) {
+  const p = svezhayaProverka(s, hody);
+  const proverka = p && !p.programma_otkaz ? p : undefined;
+  const porty = portyNyneshnie(s, proverka);
+  const molchat = porty.filter((x) => !x.slushaet);
+  if (proverka) {
     if (!proverka.yadro_zhivo) {
       return {
         sostoyanie: "slomano",
@@ -402,9 +451,8 @@ export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVp
         sovet: proverka.oshibka_yadra ? `Программа сервера пишет: ${proverka.oshibka_yadra}` : undefined,
       };
     }
-    const molchat = proverka.porty.filter((x) => !x.slushaet);
-    if (proverka.porty.length > 0 && molchat.length === proverka.porty.length) {
-      return { sostoyanie: "slomano", prichina: "На сервере не слушает ни один порт VPN", sovet: "Подбери порты заново: подбор ставит их на сервер ещё раз" };
+    if (porty.length > 0 && molchat.length === porty.length) {
+      return { sostoyanie: "slomano", prichina: "На сервере не слушает ни один порт VPN", sovet: SOVET_PODBORA };
     }
   }
   const trevoga = trevogi.find((t) => t.id === s.id);
@@ -415,6 +463,23 @@ export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVp
   if (s.novyy_otpechatok) return { sostoyanie: "vnimanie" };
   if (s.proverka_otkaz) {
     return { sostoyanie: "vnimanie", prichina: "Последняя проверка не прошла", sovet: s.proverka_otkaz.charAt(0).toUpperCase() + s.proverka_otkaz.slice(1) };
+  }
+  // Ключ, мёртвый на самом сервере, главнее того, что он не открывается из
+  // сети: чинит его подбор портов, а не другой адрес.
+  if (molchat.length > 0) {
+    return { sostoyanie: "vnimanie", prichina: `На сервере не работает ${molchat.map((x) => imyaVida(x.vid)).join(" и ")}`, sovet: SOVET_PODBORA };
+  }
+  // Сервер может быть здоров, а ключи из сети человека не проходят: это тоже
+  // «нужно внимание». Снимает его запись: служба убирает вид, когда его ключ
+  // провезёт проверку из сети или ключа больше нет.
+  if (s.ne_iz_seti.length > 0) {
+    const vidy = s.ne_iz_seti.map(imyaVida);
+    return {
+      sostoyanie: "vnimanie",
+      prichina: `Из твоей сети не ${vidy.length > 1 ? "открываются" : "открывается"} ${vidy.join(" и ")}`,
+      sovet: s.set_tekst ? s.set_tekst.charAt(0).toUpperCase() + s.set_tekst.slice(1) : undefined,
+      izSeti: true,
+    };
   }
   return { sostoyanie: "horosho" };
 }
@@ -474,11 +539,12 @@ export const PUSTAYA_FORMA: Forma = {
 
 /** Шаг мастера. `cel` у доступа: поставить VPN или взять под управление
  *  сервер, где он уже стоит. `forma` у установки пуста, когда окно открылось
- *  посреди неё: пароля в памяти уже нет, повтор идёт через доступ. */
+ *  посреди неё: пароля в памяти уже нет, повтор идёт через доступ.
+ *  `neZhdat`: ключи записаны, и человек не стал ждать перепроверки из сети. */
 export type Master =
   | { shag: "dostup"; cel: "postavit" | "vzyat"; forma: Forma; otkaz?: OtkazVps }
   | { shag: "proverka"; forma: Forma; id: number; pustoy: boolean; otkaz?: OtkazVps }
-  | { shag: "ustanovka"; forma: Forma | null; id: number };
+  | { shag: "ustanovka"; forma: Forma | null; id: number; neZhdat?: boolean };
 
 export type ItogKomandy = { hod: HodVps } | { telo: unknown } | { otkaz: OtkazVps };
 
@@ -634,6 +700,8 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
   // следующий: событий на установке десятки, а снимок нужен последний.
   const zaprosHoda = useRef({ idyot: false, eshchyo: false });
   const pervyyHod = useRef(true);
+  // Дела, чьи ключи уже записаны и перечитаны до конца дела.
+  const klyuchiProchitany = useRef(new Set<number>());
   const sprositHod = useCallback(async () => {
     const z = zaprosHoda.current;
     if (z.idyot) {
@@ -660,12 +728,23 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
           continue;
         }
         prinyatHod(h);
+        // Ключи записаны до перепроверки из сети (И7): список и общий набор
+        // перечитываются сейчас, а не в конце дела, которого человек может
+        // не ждать.
+        if (h.faza === "idyot" && h.ustanovlen && !klyuchiProchitany.current.has(h.id)) {
+          klyuchiProchitany.current.add(h.id);
+          void obnovitSpisok();
+          vneshnie.current.naSmenuKlyuchey();
+        }
         // Первый снимок после запуска окна: установка, начатая до него,
-        // возвращает мастер на свой шаг.
+        // возвращает мастер на свой шаг. Та, перепроверки которой человек
+        // не стал ждать, видна в карточке.
         if (pervyyHod.current) {
           pervyyHod.current = false;
           const svezhaya = h.konec === undefined || Date.now() - Date.parse(h.konec) < SROK_VOZVRATA_MS;
-          if (h.vid === "ustanovka" && svezhaya && (h.faza === "idyot" || (h.faza !== "gotovo" && h.id !== prochitatUvidennuyu()))) {
+          const uvidennaya = h.id === prochitatUvidennuyu();
+          const vernut = h.faza === "idyot" ? !(h.ustanovlen && uvidennaya) : h.faza !== "gotovo" && !uvidennaya;
+          if (h.vid === "ustanovka" && svezhaya && vernut) {
             zadatMaster((m) => m ?? { shag: "ustanovka", forma: null, id: h.id });
           }
         }
@@ -673,7 +752,7 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
     } finally {
       z.idyot = false;
     }
-  }, [zvat, prinyatHod]);
+  }, [zvat, prinyatHod, obnovitSpisok]);
 
   const obnovit = useCallback(() => {
     void obnovitSpisok();

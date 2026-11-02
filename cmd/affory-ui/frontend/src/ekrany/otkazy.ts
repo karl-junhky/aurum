@@ -88,7 +88,7 @@ export const tekstOtkaza: Record<string, ZapisOtkaza> = {
   "vps-install-failed": { deystvie: "povtorit", tekst: "установка на сервер не прошла" },
   "vps-reinstall": { deystvie: "postavit-zanovo", tekst: "на сервере нет рабочей установки, поставь его заново" },
   "vps-cert-blocked": { deystvie: "otkryt-port-u-hostera", tekst: "сертификат не выпущен, поставлен только ключ reality" },
-  "vps-address-blocked": { deystvie: "poprosit-drugoy-adres", tekst: "твоя сеть не пускает к адресу сервера" },
+  "vps-address-blocked": { deystvie: "poprosit-drugoy-adres", tekst: "из твоей сети адрес сервера не открывается" },
   "vps-hoster-firewall": { deystvie: "otkryt-port-u-hostera", tekst: "порт закрыт у хостера" },
   "vps-ports-failed": { deystvie: "povtorit", tekst: "порты не подобрались" },
   "vps-network-limited": { deystvie: "proverit-set", tekst: "твоя сеть сейчас пускает не всё" },

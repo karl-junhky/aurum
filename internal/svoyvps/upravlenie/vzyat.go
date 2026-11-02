@@ -105,7 +105,7 @@ func Vzyat(ctx context.Context, v Vzyatie) (itog Itog, err error) {
 	}
 	itog.Sert, itog.Prodlenie = prodlenieStoyashchego(vh, st)
 	itog.Adres, itog.Sekrety, itog.Vhody, itog.Klyuchi = adres.String(), sek, vh, klyuchi
-	itog.Versiya = sostav.VpnUzel
+	itog.Versiya = nomerVersii(sostav.VpnUzel)
 	return itog, nil
 }
 

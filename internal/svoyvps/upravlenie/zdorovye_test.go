@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/netip"
 	"testing"
 
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 )
@@ -135,5 +138,40 @@ func TestProveritServer(t *testing.T) {
 	v.podmenit(t)
 	if _, err := ProveritServer(context.Background(), puti(false), ssh.Zapros{Adres: "203.0.113.10"}, ""); ssh.PrichinaIz(err) != ssh.PrichinaParolNePrinyat {
 		t.Fatal(err)
+	}
+}
+
+func TestNomerVersii(t *testing.T) {
+	for byl, stal := range map[string]string{
+		"vpn-uzel 0.6.0, sing-box 1.14.2-affory-quic.1": "0.6.0",
+		"vpn-uzel 0.6.1": "0.6.1",
+		"0.6.0":          "0.6.0",
+		"":               "",
+	} {
+		if v := nomerVersii(byl); v != stal {
+			t.Errorf("%q: %q", byl, v)
+		}
+	}
+}
+
+// Ключи из сети человека проверяются все, с выходами сервера из осмотра.
+func TestProveritKlyuchi(t *testing.T) {
+	b := proverit
+	t.Cleanup(func() { proverit = b })
+	var opcii proverka.Opcii
+	proverit = func(_ context.Context, k []protokol.Server, o proverka.Opcii, _ proverka.Zapusk) ([]proverka.Itog, error) {
+		opcii = o
+		return []proverka.Itog{{Server: k[0], Vid: proverka.Vezyot}}, nil
+	}
+	klyuchi := []protokol.Server{{Id: "a", Transport: "hy2", Host: "203.0.113.10", Port: 8443}}
+	itogi, err := ProveritKlyuchi(context.Background(), klyuchi, chistyyOsmotr(), proverka.Opcii{Adapter: "Ethernet", PervyyNaVid: true}, nil)
+	if err != nil || len(itogi) != 1 || itogi[0].Vid != proverka.Vezyot {
+		t.Fatalf("итоги %+v, ошибка %v", itogi, err)
+	}
+	if opcii.Adapter != "Ethernet" || opcii.PervyyNaVid || len(opcii.Vyhody) != 2 || opcii.Vyhody[0] != netip.MustParseAddr("203.0.113.10") {
+		t.Fatalf("опции %+v", opcii)
+	}
+	if _, err := ProveritKlyuchi(context.Background(), klyuchi, nil, proverka.Opcii{Adapter: "Ethernet"}, nil); err == nil {
+		t.Fatal("без осмотра проверка пошла")
 	}
 }

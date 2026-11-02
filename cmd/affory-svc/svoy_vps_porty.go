@@ -50,19 +50,19 @@ func (s *Sluzhba) svoyVpsPodobratPorty(k protokol.Kadr) protokol.Kadr {
 		if err != nil {
 			return err
 		}
-		itog, err := s.vpsPodobratPorty(ctx, upravlenie.Podbor{
-			Puti: s.putiVps(), Vhod: zapros, Imya: z.Imya,
-			Ruchnye:  porty.Ruchnye{Reality: p.Reality, Hy2: p.Hy2},
-			Opcii:    konfig.Opcii{Staging: s.vpsStaging},
-			Proverka: proverka.Opcii{Adapter: a.Imya},
-			Zapusk:   s.zapuskProverki,
-			Pryamo:   ssh.PutPryamo(a.Indeks, a.Imya).Dial,
-			Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h) }) },
+		osn := osnovaZapisi{Imya: z.Imya, Port: z.PortSsh, Polzovatel: z.Polzovatel,
+			PortyRuchnye: p.Reality != 0 || p.Hy2 != 0, Postavlen: z.Postavlen, ZapisEst: true}
+		return s.zapisatPoHodu(zad, z.Id, osn, func(klyuchi func(upravlenie.Itog) error) (upravlenie.Itog, error) {
+			return s.vpsPodobratPorty(ctx, upravlenie.Podbor{
+				Puti: s.putiVps(), Vhod: zapros, Imya: z.Imya,
+				Ruchnye:  porty.Ruchnye{Reality: p.Reality, Hy2: p.Hy2},
+				Opcii:    konfig.Opcii{Staging: s.vpsStaging},
+				Proverka: proverka.Opcii{Adapter: a.Imya},
+				Zapusk:   s.zapuskProverki,
+				Pryamo:   ssh.PutPryamo(a.Indeks, a.Imya).Dial,
+				Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h) }) },
+				Klyuchi:  klyuchi,
+			})
 		})
-		if err != nil {
-			return err
-		}
-		return s.zapisatIPokazat(zad, z.Id, osnovaZapisi{Imya: z.Imya, Port: z.PortSsh, Polzovatel: z.Polzovatel,
-			PortyRuchnye: p.Reality != 0 || p.Hy2 != 0, Postavlen: z.Postavlen, ZapisEst: true}, itog)
 	})
 }

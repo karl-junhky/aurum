@@ -38,6 +38,8 @@ type Podbor struct {
 	Zapusk   proverka.Zapusk
 	Pryamo   blok.Dial
 	Hod      func(Hod)
+	// Klyuchi см. podborPortov.Klyuchi.
+	Klyuchi func(Itog) error
 }
 
 // PodobratPorty подбирает порты заново на сервере, где стоит своя
@@ -106,7 +108,7 @@ func PodobratPorty(ctx context.Context, p Podbor) (itog Itog, err error) {
 		return Itog{}, err
 	}
 	itog.Sert, itog.Prodlenie = prodlenieStoyashchego(vh, st)
-	itog.Versiya = sostav.VpnUzel
+	itog.Versiya = nomerVersii(sostav.VpnUzel)
 	opcii := p.Opcii
 	if st.Sert != nil {
 		opcii.Staging = st.Sert.Staging
@@ -134,7 +136,7 @@ func PodobratPorty(ctx context.Context, p Podbor) (itog Itog, err error) {
 
 	pp := podborPortov{Adres: adres, Imya: p.Imya, PortSsh: p.Vhod.Port, Ruchnye: p.Ruchnye,
 		Rabochie: porty.Ruchnye{Reality: portVida(vh, "reality-tcp"), Hy2: portVida(vh, "hy2")},
-		Opcii:    opcii, Proverka: p.Proverka, Zapusk: p.Zapusk, Pryamo: p.Pryamo, Hod: hod}
+		Opcii:    opcii, Proverka: p.Proverka, Zapusk: p.Zapusk, Pryamo: p.Pryamo, Hod: hod, Klyuchi: p.Klyuchi}
 	if err := podobratIPostavit(ctx, s, o, sek, itog.Prodlenie, pp, &itog); err != nil {
 		return Itog{}, err
 	}

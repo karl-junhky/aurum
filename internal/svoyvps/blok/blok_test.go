@@ -531,6 +531,12 @@ func TestProveritPovtory(t *testing.T) {
 				!krugi[2].Posledniy || krugi[2].Sleduyushchiy != 0 {
 				t.Fatalf("круги %+v", krugi)
 			}
+			// Время оставшихся кругов: после первого оба повтора, после второго
+			// последний, тот же, что назван после первого.
+			if len(krugi[0].Povtory) != 2 || len(krugi[1].Povtory) != 1 || len(krugi[2].Povtory) != 0 ||
+				!krugi[1].Povtory[0].Equal(krugi[0].Povtory[1]) || !krugi[0].Povtory[0].Before(krugi[0].Povtory[1]) {
+				t.Fatalf("время повторов %+v", krugi)
+			}
 			if time.Since(nachalo) < povtory[1] {
 				t.Fatalf("три круга за %s", time.Since(nachalo))
 			}

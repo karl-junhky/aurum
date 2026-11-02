@@ -10,6 +10,7 @@ import (
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
@@ -33,9 +34,10 @@ const (
 	svezhestProverki = 24 * time.Hour
 )
 
-// srokProverki держит проверку целиком: у каждой команды SSH свой срок до
-// 10 минут, а задание на службу одно. Здоровая проверка идёт секунды,
-// срыв прямой дороги на VPN добавляет полминуты.
+// srokProverki держит вход и осмотр сервера: у каждой команды SSH свой срок
+// до 10 минут, а задание на службу одно. Здоровая проверка идёт секунды,
+// срыв прямой дороги на VPN добавляет полминуты. Ключи, что не проходили из
+// сети, гоняются после со своим сроком proverka.Predel.
 var srokProverki = 3 * time.Minute
 
 var errProverkaDolgo = errors.New("проверка не уложилась в 3 минуты: сервер отвечает слишком медленно")
@@ -101,7 +103,8 @@ func (s *Sluzhba) vhodUpravleniya(z SvoyServer) (ssh.Zapros, string, error) {
 	return zapros, "", nil
 }
 
-// deloProverki входит, смотрит и записывает итог в запись о сервере.
+// deloProverki входит, смотрит, гоняет из сети ключи видов, что не
+// проходили из неё (snyatIzSeti), и записывает итог в запись о сервере.
 // Отменённая проверка не пишет ничего.
 func (s *Sluzhba) deloProverki(z SvoyServer, zapros ssh.Zapros) func(context.Context, *zadanieVps) error {
 	return func(ctx context.Context, zad *zadanieVps) error {
@@ -132,8 +135,25 @@ func (s *Sluzhba) deloProverki(z SvoyServer, zapros ssh.Zapros) func(context.Con
 			return err
 		}
 		p := proverkaDlyaEkrana(z, zd)
+		snyat := s.snyatIzSeti(ctx, zad, z, p, zd.Osmotr)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		zapisana := s.otmetitProverku(z.Id, func(x *SvoyServer) {
 			x.Proveren, x.ProverkaOtkaz = seychas, ""
+			if len(snyat) > 0 {
+				bylo := len(x.NeIzSeti)
+				x.NeIzSeti = slices.DeleteFunc(x.NeIzSeti, func(t string) bool { return slices.Contains(snyat, t) })
+				// Общая причина писалась на все виды разом и могла назвать
+				// снятый: оставшимся остаются их собственные.
+				if len(x.NeIzSeti) < bylo {
+					x.SetTekst = tekstVidov(x.NeIzSeti, x.SetPoVidam)
+				}
+				// Свои причины нужны, пока есть кого снимать по одному.
+				if len(x.NeIzSeti) < 2 {
+					x.SetPoVidam = nil
+				}
+			}
 			// Пароль могли выключить и включить с другого компьютера или руками.
 			x.ParolVyklyuchen = slices.Contains(zd.Osmotr.SshdFayly, server.FaylParolya)
 			if p.Versiya != "" {
@@ -192,6 +212,75 @@ func proverkaDlyaEkrana(z SvoyServer, zd upravlenie.ZdorovyeServera) ProverkaVps
 		p.Maska = "negodna"
 	}
 	return p
+}
+
+// snyatIzSeti отдаёт виды, которые пора снять с отметки «не прошли из
+// сети»: ключ вида провёз проверку из сети человека или его в списке больше
+// нет. Иначе «нужно внимание» висело бы до подбора портов заново, хотя адрес
+// давно открылся. Гоняются только ключи видов, чей порт на сервере слушает:
+// мёртвый на сервере ключ не провезёт, а проверка держала бы задание минутами.
+// Плановая проверка ключей не гоняет вовсе: ключ закрытого адреса ждёт до
+// минуты, и команды человека отказывали бы минутами раз в сутки. Проверить
+// не вышло - отметка остаётся.
+func (s *Sluzhba) snyatIzSeti(ctx context.Context, zad *zadanieVps, z SvoyServer, p ProverkaVps, o *server.Osmotr) []string {
+	if len(z.NeIzSeti) == 0 {
+		return nil
+	}
+	n, err := s.nabor()
+	if err != nil {
+		log.Printf("свой сервер %s: ключи из сети не проверены: %v", z.Id, err)
+		return nil
+	}
+	var snyat []string
+	var klyuchi []protokol.Server
+	vidov := 0
+	for _, t := range z.NeIzSeti {
+		var vida []protokol.Server
+		for _, k := range n.Servery {
+			if k.Transport == t && slices.Contains(z.Servery, k.Id) {
+				vida = append(vida, k)
+			}
+		}
+		switch {
+		case len(vida) == 0:
+			snyat = append(snyat, t)
+		case slushaetVid(p, t):
+			klyuchi, vidov = append(klyuchi, vida...), vidov+1
+		}
+	}
+	if len(klyuchi) == 0 || zad.fonovoe {
+		return snyat
+	}
+	a, err := s.fizicheskiyAdapter()
+	if err != nil {
+		log.Printf("свой сервер %s: ключи из сети не проверены: %v", z.Id, err)
+		return snyat
+	}
+	s.pravitHod(zad, func(h *HodVps) { h.Shag = string(upravlenie.ShagProverka) })
+	kctx, otmena := context.WithTimeout(ctx, proverka.Predel(len(klyuchi), vidov))
+	defer otmena()
+	itogi, err := s.vpsProveritKlyuchi(kctx, klyuchi, o, proverka.Opcii{Adapter: a.Imya}, s.zapuskProverki)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("свой сервер %s: ключи из сети не проверены: %v", z.Id, err)
+		}
+		return snyat
+	}
+	for _, it := range itogi {
+		if it.Vid == proverka.Vezyot && !slices.Contains(snyat, it.Server.Transport) {
+			snyat = append(snyat, it.Server.Transport)
+		}
+	}
+	return snyat
+}
+
+// slushaetVid: проверка видела порт вида transport слушающим.
+func slushaetVid(p ProverkaVps, transport string) bool {
+	vid := "reality"
+	if transport == "hy2" {
+		vid = "hy2"
+	}
+	return slices.ContainsFunc(p.Porty, func(x PortVps) bool { return x.Vid == vid && x.Slushaet })
 }
 
 // otmetitProverku правит запись id, если она ещё есть: сервер могли

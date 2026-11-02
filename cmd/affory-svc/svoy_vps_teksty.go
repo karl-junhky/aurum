@@ -344,15 +344,54 @@ func chuzhoeDlyaCheloveka(chto []string) string {
 	return tekst
 }
 
-// preduprezhdenieVps переводит «не так» установки, дошедшей до ключей.
-func preduprezhdenieVps(p upravlenie.Preduprezhdenie) OtkazVps {
-	klyuch := fmt.Sprintf("%s на порту %d", imyaVida(p.Transport), p.Port)
+// preduprezhdeniyaVps переводит «не так» установки, дошедшей до ключей.
+// «Не прошёл» одного детектора называет все виды разом: вердикт у них
+// общий, и иначе одна и та же строка стояла бы дважды.
+func preduprezhdeniyaVps(pr []upravlenie.Preduprezhdenie) []OtkazVps {
+	out := make([]OtkazVps, 0, len(pr))
+	vzyato := make([]bool, len(pr))
+	for i, p := range pr {
+		if vzyato[i] {
+			continue
+		}
+		gruppa := []upravlenie.Preduprezhdenie{p}
+		if p.Vid == upravlenie.NeProshyol {
+			for j := i + 1; j < len(pr); j++ {
+				q := pr[j]
+				if !vzyato[j] && q.Vid == upravlenie.NeProshyol && q.Detektor == p.Detektor && q.Otkaz == p.Otkaz {
+					gruppa, vzyato[j] = append(gruppa, q), true
+				}
+			}
+		}
+		out = append(out, preduprezhdenieVps(gruppa))
+	}
+	return out
+}
+
+// preduprezhdenieVps пишет одно предупреждение. Виды в gruppa отличаются
+// только ключом: вид и вердикт берутся у первого.
+func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie) OtkazVps {
+	p := gruppa[0]
+	var klyuchi, porty []string
+	for _, x := range gruppa {
+		klyuchi = append(klyuchi, fmt.Sprintf("%s на порту %d", imyaVida(x.Transport), x.Port))
+		proto := "TCP"
+		if x.Transport == "hy2" {
+			proto = "UDP"
+		}
+		porty = append(porty, fmt.Sprintf("%d (%s)", x.Port, proto))
+	}
+	klyuch := strings.Join(klyuchi, " и ")
+	neProshyol := " не прошёл"
+	if len(gruppa) > 1 {
+		neProshyol = " не прошли"
+	}
 	switch p.Vid {
 	case upravlenie.NetSerta:
 		return OtkazVps{Kod: protokol.KodVpsNetSerta,
 			Tekst: "сертификат на адрес не выпущен: у хостера закрыты порты 80 и 443. Поставлен только reality; открой у хостера порт 80 и подбери порты заново, тогда встанет hysteria2"}
 	case upravlenie.NeVezyot:
-		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "ключ " + klyuch + " не провёз проверку"}
+		return OtkazVps{Kod: protokol.KodVpsPorty, IzSeti: true, Tekst: "ключ " + klyuch + " не провёз проверку из твоей сети"}
 	case upravlenie.NeProvereno:
 		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "ключи поставлены, но проверить их не вышло"}
 	case upravlenie.PortyNeOtkryty:
@@ -362,21 +401,105 @@ func preduprezhdenieVps(p upravlenie.Preduprezhdenie) OtkazVps {
 	if p.Detektor != nil {
 		vid = p.Detektor.Vid
 	}
+	o := OtkazVps{Kod: protokol.KodVpsPorty, IzSeti: true}
 	switch vid {
 	case blok.BelyeSpiski:
-		return OtkazVps{Kod: protokol.KodVpsSetOgranichena, Tekst: "твоя сеть пускает только разрешённые сайты: свой сервер из неё не виден. Поставлен " + klyuch}
+		o.Kod, o.Tekst = protokol.KodVpsSetOgranichena, "твоя сеть пускает только разрешённые сайты: свой сервер из неё не виден. Ключи стоят, проверь их с телефона по мобильному интернету"
 	case blok.NeSostoyalas:
-		return OtkazVps{Kod: protokol.KodVpsSetOgranichena, Tekst: "твоя сеть не отвечает, проверить " + klyuch + " не вышло"}
+		o.Kod, o.Tekst = protokol.KodVpsSetOgranichena, "твоя сеть не отвечает, проверить "+klyuch+" не вышло"
 	case blok.OtvetNeVozvrashchaetsya:
-		return OtkazVps{Kod: protokol.KodVpsBrandmauerHostera, Tekst: fmt.Sprintf("стук доходит до сервера, а ответ не возвращается: открой у хостера порт %d", p.Port)}
+		o.Kod, o.Tekst = protokol.KodVpsBrandmauerHostera, "стук доходит до сервера, а ответ не возвращается: открой у хостера "+slovoPorta(len(porty))+" "+strings.Join(porty, " и ")
 	case blok.NeDohodit:
-		return OtkazVps{Kod: protokol.KodVpsAdresZakryt, Tekst: "сервер жив, но твоя сеть не пускает к его адресу: попроси у хостера другой адрес"}
+		// Другой вид мог пройти: тогда проверять с телефона только этот.
+		chto, otkroyutsya := "их", "не откроются"
+		if len(gruppa) == 1 {
+			chto, otkroyutsya = imyaVida(p.Transport), "не откроется"
+		}
+		o.Kod, o.Tekst = protokol.KodVpsAdresZakryt, "сервер жив, ключи стоят. Проверь "+chto+" с телефона по мобильному интернету: если и там "+otkroyutsya+", попроси у хостера другой адрес"
 	case blok.Glushat:
-		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "по дороге к серверу глушат шифрованное соединение: " + klyuch + " не прошёл"}
+		o.Tekst = "по дороге к серверу глушат шифрованное соединение: " + klyuch + neProshyol
 	case blok.Podmena:
-		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "на адрес сервера отвечает кто-то другой: " + klyuch + " не прошёл"}
+		o.Tekst = "на адрес сервера отвечает кто-то другой: " + klyuch + neProshyol
+	default:
+		o.Tekst = klyuch + neProshyol + " проверку из твоей сети"
 	}
-	return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: klyuch + " не прошёл проверку из твоей сети"}
+	return o
+}
+
+func slovoPorta(n int) string {
+	if n > 1 {
+		return "порты"
+	}
+	return "порт"
+}
+
+// tekstKruga это что показал круг детектора, после которого будут ещё:
+// окно говорит это сразу и даёт не ждать повторов (И7). Пусто - круг не
+// отрицательный, говорить нечего.
+func tekstKruga(v blok.Vid) string {
+	switch v {
+	case blok.NeDohodit, blok.ServerMolchit, blok.MolchitNapryamuyu:
+		return "из твоей сети адрес сервера сейчас не открывается. Так бывает временно"
+	case blok.Glushat:
+		return "по дороге к серверу сейчас глушат шифрованное соединение"
+	case blok.Podmena:
+		return "на адрес сервера сейчас отвечает кто-то другой"
+	case blok.OtvetNeVozvrashchaetsya:
+		return "сервер получает попытки подключиться, а ответ до тебя не доходит: похоже, порт закрыт у хостера"
+	}
+	return ""
+}
+
+// tekstSeti это почему ключи не прошли из сети человека, для записи о
+// сервере: карточка показывает его, пока ключи не пройдут.
+func tekstSeti(pr []OtkazVps) string {
+	var chasti []string
+	for _, p := range pr {
+		if p.IzSeti && p.Tekst != "" {
+			chasti = append(chasti, p.Tekst)
+		}
+	}
+	return skleitPrichiny(chasti)
+}
+
+// skleitPrichiny пишет причины одной строкой: вторая и дальше с большой
+// буквы, как новые предложения.
+func skleitPrichiny(chasti []string) string {
+	chasti = slices.Clone(chasti)
+	for i := 1; i < len(chasti); i++ {
+		r := []rune(chasti[i])
+		chasti[i] = strings.ToUpper(string(r[0])) + string(r[1:])
+	}
+	return strings.Join(chasti, ". ")
+}
+
+// prichinySeti это причина для записи о сервере: общая на виды vidy и,
+// когда видов больше одного, своя у каждого. Своя нужна, когда проверка
+// снимет один вид: общая могла назвать и его, а своя сохранит совет
+// оставшемуся, например какой порт открыть у хостера.
+func prichinySeti(pr []upravlenie.Preduprezhdenie, vidy []string) (string, map[string]string) {
+	obshchaya := tekstSeti(preduprezhdeniyaVps(pr))
+	if len(vidy) < 2 {
+		return obshchaya, nil
+	}
+	poVidam := make(map[string]string, len(vidy))
+	for _, t := range vidy {
+		svoi := slices.DeleteFunc(slices.Clone(pr), func(p upravlenie.Preduprezhdenie) bool { return p.Transport != t })
+		poVidam[t] = tekstSeti(preduprezhdeniyaVps(svoi))
+	}
+	return obshchaya, poVidam
+}
+
+// tekstVidov это причина для видов vidy из причин по видам: так она не
+// назовёт снятый вид. Одинаковые причины пишутся раз.
+func tekstVidov(vidy []string, poVidam map[string]string) string {
+	var chasti []string
+	for _, t := range vidy {
+		if tekst := poVidam[t]; tekst != "" && !slices.Contains(chasti, tekst) {
+			chasti = append(chasti, tekst)
+		}
+	}
+	return skleitPrichiny(chasti)
 }
 
 func imyaVida(transport string) string {

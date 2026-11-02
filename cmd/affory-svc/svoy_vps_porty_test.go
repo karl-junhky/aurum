@@ -58,6 +58,16 @@ func TestSvoyVpsPodobratPorty(t *testing.T) {
 		x.Hod(upravlenie.Hod{Shag: upravlenie.ShagPodbor, Otsev: &porty.Otsev{Proto: "udp", Port: 443, Prichina: porty.PrichinaZanyat, Process: "caddy"}})
 		it := itogSoSekretami(t, sek, kh, 443, 11444)
 		it.Vhod.Put, it.ParolVyklyuchen = "напрямую", true
+		// Ключи ложатся в набор до перепроверки из сети: hy2 на подборе не
+		// прошёл, а при повторе провёз.
+		rannyy := it
+		rannyy.NeProshli = []string{"hy2"}
+		if err := x.Klyuchi(rannyy); err != nil {
+			return upravlenie.Itog{}, err
+		}
+		if z := zapisPoId(t, s, id); z.Hy2 != 11444 || !slices.Equal(z.NeIzSeti, []string{"hy2"}) {
+			t.Errorf("запись до перепроверки: %+v", z)
+		}
 		return it, nil
 	}
 	if otv := s.svoyVpsPodobratPorty(kadrVps(t, "svoyVpsPodobratPorty", zaprosPodboraVps{Id: id})); otv.Oshib != nil {
@@ -95,7 +105,7 @@ func TestSvoyVpsPodobratPorty(t *testing.T) {
 	}
 	zap := n.SvoiServery[0]
 	if zap.Hy2 != 11444 || zap.Reality != 443 || !zap.Postavlen.Equal(postavlenDlyaTesta) || zap.PortyRuchnye || !zap.ParolVyklyuchen ||
-		zap.Polzovatel != "admin" || zap.PortSsh != 2222 || !slices.Equal(zap.Servery, novye) {
+		zap.Polzovatel != "admin" || zap.PortSsh != 2222 || !slices.Equal(zap.Servery, novye) || len(zap.NeIzSeti) != 0 {
 		t.Fatalf("запись: %+v", zap)
 	}
 }
@@ -180,11 +190,16 @@ func TestSvoyVpsPodobratPortyZabyt(t *testing.T) {
 	s := sPustymNaborom(t)
 	kh := klyuchHostaDlyaTesta(t)
 	id, _, sek := postavitDlyaPodbora(t, s, kh)
-	s.vpsPodobratPorty = func(context.Context, upravlenie.Podbor) (upravlenie.Itog, error) {
+	s.vpsPodobratPorty = func(_ context.Context, x upravlenie.Podbor) (upravlenie.Itog, error) {
 		if err := s.ubratZapisSvoego(id); err != nil {
 			t.Error(err)
 		}
-		return itogSoSekretami(t, sek, kh, 443, 11444), nil
+		// Отказ ранней записи останавливает подбор до перепроверки.
+		if err := x.Klyuchi(itogSoSekretami(t, sek, kh, 443, 11444)); err != nil {
+			return upravlenie.Itog{}, err
+		}
+		t.Error("ключи забытого сервера записаны")
+		return upravlenie.Itog{}, nil
 	}
 	s.svoyVpsPodobratPorty(kadrVps(t, "svoyVpsPodobratPorty", zaprosPodboraVps{Id: id}))
 	h := dozhdatsyaVps(t, s)

@@ -51,7 +51,8 @@ func (m *most) VybratKlyuchSsh() (*klyuchSsh, error) {
 }
 
 // katalogSsh это папка .ssh человека, если она есть: ключи по умолчанию
-// лежат там. Без неё диалог откроется там, где решит сам.
+// лежат там. Без неё папка пользователя: иначе диалог откроется в текущей
+// папке процесса, а окно, поднятое из автозапуска, стоит в System32.
 func katalogSsh() string {
 	dom, err := os.UserHomeDir()
 	if err != nil {
@@ -60,7 +61,7 @@ func katalogSsh() string {
 	}
 	kat := filepath.Join(dom, ".ssh")
 	if info, err := os.Stat(kat); err != nil || !info.IsDir() {
-		return ""
+		return dom
 	}
 	return kat
 }

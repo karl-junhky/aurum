@@ -85,6 +85,15 @@ type SvoyServer struct {
 	// обновила.
 	Proveren      time.Time `json:"proveren,omitzero"`
 	ProverkaOtkaz string    `json:"proverka_otkaz,omitempty"`
+	// NeIzSeti это виды ключей (reality-tcp, hy2), что не прошли из сети
+	// этого компьютера при последней установке или подборе, SetTekst -
+	// почему, SetPoVidam - почему у каждого вида, когда их больше одного.
+	// Проверка сервера по кнопке гоняет из сети ключи видов, чей порт на
+	// сервере работает, и убирает виды, чей ключ провёз или чьего ключа в
+	// списке больше нет.
+	NeIzSeti   []string          `json:"ne_iz_seti,omitempty"`
+	SetTekst   string            `json:"set_tekst,omitempty"`
+	SetPoVidam map[string]string `json:"set_po_vidam,omitempty"`
 }
 
 // idSvoego выводит id своего сервера из адреса: та же машина после
@@ -128,6 +137,9 @@ type OtkazVps struct {
 	// Otpechatok это ключ хоста, который предъявил сервер при смене ключа:
 	// его человек сверяет до «Систему переустановили».
 	Otpechatok string `json:"otpechatok,omitempty"`
+	// IzSeti: предупреждение о том, что ключи не прошли из сети человека.
+	// Оно же лежит в записи о сервере, и карточка берёт его оттуда.
+	IzSeti bool `json:"iz_seti,omitempty"`
 }
 
 // KlyuchHoda это ключ в ходе подбора и проверки.
@@ -169,11 +181,14 @@ type OsmotrVps struct {
 	MozhnoStavit bool `json:"mozhno_stavit"`
 }
 
-// UstanovkaVps это итог установки: ключи группы.
+// UstanovkaVps это итог установки: ключи группы. Появляется, как только
+// ключи записаны, ещё до перепроверки из сети (И7).
 type UstanovkaVps struct {
 	Server  string       `json:"server"`
 	Klyuchi []KlyuchHoda `json:"klyuchi"`
 	Ids     []string     `json:"ids"`
+	// NeIzSeti это виды ключей, что не прошли из сети человека.
+	NeIzSeti []string `json:"ne_iz_seti,omitempty"`
 }
 
 // HodVps это снимок задания своего сервера. Его отдаёт svoyVpsHod тому, кто
@@ -191,12 +206,16 @@ type HodVps struct {
 	// знает, куда она шла (записи о сервере до конца установки нет).
 	Adres string `json:"adres,omitempty"`
 	// Put: напрямую или через VPN, после входа.
-	Put              string        `json:"put,omitempty"`
-	Klyuch           *KlyuchHoda   `json:"klyuch,omitempty"`
-	Proverki         []KlyuchHoda  `json:"proverki,omitempty"`
-	Otseyany         []OtsevHoda   `json:"otseyany,omitempty"`
-	Krug             int           `json:"krug,omitempty"`
-	Sleduyushchiy    int           `json:"sleduyushchiy,omitempty"`
+	Put           string       `json:"put,omitempty"`
+	Klyuch        *KlyuchHoda  `json:"klyuch,omitempty"`
+	Proverki      []KlyuchHoda `json:"proverki,omitempty"`
+	Otseyany      []OtsevHoda  `json:"otseyany,omitempty"`
+	Krug          int          `json:"krug,omitempty"`
+	Sleduyushchiy int          `json:"sleduyushchiy,omitempty"`
+	// Povtory и KrugTekst: круг детектора кончился плохо, а повторы ещё
+	// будут. KrugTekst говорит, что показал круг, Povtory - когда повторы.
+	Povtory          []time.Time   `json:"povtory,omitempty"`
+	KrugTekst        string        `json:"krug_tekst,omitempty"`
 	Osmotr           *OsmotrVps    `json:"osmotr,omitempty"`
 	Ustanovlen       *UstanovkaVps `json:"ustanovlen,omitempty"`
 	Snyat            *SnosVps      `json:"snyat,omitempty"`
@@ -628,12 +647,79 @@ func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, 
 		Pryamo:   ssh.PutPryamo(a.Indeks, a.Imya).Dial,
 		Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h) }) },
 	}
-	itog, err := s.vpsUstanovit(ctx, u)
-	if err != nil {
+	osn := osnovaZapisi{Imya: z.Imya, Port: z.Port, Polzovatel: z.Polzovatel, PortyRuchnye: z.Reality != 0 || z.Hy2 != 0}
+	return s.zapisatPoHodu(zad, id, osn, func(klyuchi func(upravlenie.Itog) error) (upravlenie.Itog, error) {
+		u.Klyuchi = klyuchi
+		return s.vpsUstanovit(ctx, u)
+	})
+}
+
+// zapisatPoHodu ведёт запись итога установки и подбора заново (И7): ключи
+// ложатся в набор, как только на сервере они окончательные, а детектор и
+// проверка ключей идут после и дописывают итог в запись и снимок. Повторы
+// детектора идут до 12 минут, и человек, который не стал их ждать, уже
+// подключается этими ключами.
+func (s *Sluzhba) zapisatPoHodu(zad *zadanieVps, id string, osn osnovaZapisi,
+	delo func(klyuchi func(upravlenie.Itog) error) (upravlenie.Itog, error)) error {
+	zapisano, ranshe := false, 0
+	itog, err := delo(func(it upravlenie.Itog) error {
+		if err := s.zapisatIPokazat(zad, id, osn, it); err != nil {
+			return err
+		}
+		zapisano, ranshe = true, len(it.Preduprezhdeniya)
+		return nil
+	})
+	switch {
+	case err != nil:
 		return err
+	case !zapisano:
+		return s.zapisatIPokazat(zad, id, osn, itog)
 	}
-	return s.zapisatIPokazat(zad, id, osnovaZapisi{Imya: z.Imya, Port: z.Port, Polzovatel: z.Polzovatel,
-		PortyRuchnye: z.Reality != 0 || z.Hy2 != 0}, itog)
+	s.dopisatProverku(zad, id, ranshe, itog)
+	return nil
+}
+
+// dopisatProverku кладёт итог детектора и проверки ключей, что шли после
+// записи: в запись о сервере - виды, что не прошли из сети человека, и
+// почему, в снимок - проверки ключей и новые предупреждения. ranshe это
+// сколько предупреждений итога уже показано при записи.
+func (s *Sluzhba) dopisatProverku(zad *zadanieVps, id string, ranshe int, itog upravlenie.Itog) {
+	novye := itog.Preduprezhdeniya[min(ranshe, len(itog.Preduprezhdeniya)):]
+	zhurnalPreduprezhdeniy(id, novye)
+	tekst, poVidam := prichinySeti(itog.Preduprezhdeniya, itog.NeProshli)
+	zapisana := s.otmetitProverku(id, func(x *SvoyServer) {
+		x.NeIzSeti, x.SetTekst, x.SetPoVidam = slices.Clone(itog.NeProshli), tekst, poVidam
+	})
+	if zapisana != nil {
+		log.Printf("свой сервер %s: итог проверки из сети не записан: %v", id, zapisana)
+	}
+	s.pravitHod(zad, func(h *HodVps) {
+		// Новое значение, а не правка на месте: прежний снимок мог уйти окну.
+		if h.Ustanovlen != nil {
+			u := *h.Ustanovlen
+			u.Klyuchi, u.NeIzSeti = klyuchiHoda(itog), slices.Clone(itog.NeProshli)
+			h.Ustanovlen = &u
+		}
+		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(novye)...)
+		if zapisana != nil {
+			h.Preduprezhdeniya = append(h.Preduprezhdeniya, OtkazVps{Kod: kodSohraneniya(zapisana), Tekst: sboi.DlyaCheloveka(zapisana)})
+		}
+	})
+}
+
+// klyuchiHoda это ключи итога с их проверкой; Vid пуст, пока ключ не
+// проверялся.
+func klyuchiHoda(itog upravlenie.Itog) []KlyuchHoda {
+	klyuchi := make([]KlyuchHoda, len(itog.Klyuchi))
+	for i, kl := range itog.Klyuchi {
+		klyuchi[i] = KlyuchHoda{Transport: kl.Server.Transport, Port: kl.Server.Port}
+		for _, p := range itog.Proverki {
+			if p.Server.Id == kl.Server.Id {
+				klyuchi[i].Vid, klyuchi[i].Otkaz = string(p.Vid), p.Otkaz
+			}
+		}
+	}
+	return klyuchi
 }
 
 // oshibkaZapisi: ключи на сервере стоят, а набор не записан. Код тот же,
@@ -661,21 +747,10 @@ func (s *Sluzhba) zapisatIPokazat(zad *zadanieVps, id string, osn osnovaZapisi, 
 	case err != nil:
 		return &oshibkaZapisi{err}
 	}
-	klyuchi := make([]KlyuchHoda, len(itog.Klyuchi))
-	for i, kl := range itog.Klyuchi {
-		klyuchi[i] = KlyuchHoda{Transport: kl.Server.Transport, Port: kl.Server.Port}
-		for _, p := range itog.Proverki {
-			if p.Server.Id == kl.Server.Id {
-				klyuchi[i].Vid, klyuchi[i].Otkaz = string(p.Vid), p.Otkaz
-			}
-		}
-	}
 	s.pravitHod(zad, func(h *HodVps) {
 		h.Put = itog.Vhod.Put
-		h.Ustanovlen = &UstanovkaVps{Server: id, Klyuchi: klyuchi, Ids: ids}
-		for _, p := range itog.Preduprezhdeniya {
-			h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdenieVps(p))
-		}
+		h.Ustanovlen = &UstanovkaVps{Server: id, Klyuchi: klyuchiHoda(itog), Ids: ids, NeIzSeti: slices.Clone(itog.NeProshli)}
+		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(itog.Preduprezhdeniya)...)
 		if otstali != nil {
 			h.Preduprezhdeniya = append(h.Preduprezhdeniya, *otstali)
 		}
@@ -737,6 +812,14 @@ func primenitHod(x *HodVps, h upravlenie.Hod) {
 			Prichina: string(h.Otsev.Prichina), Process: h.Otsev.Process})
 	case h.Krug != nil:
 		x.Krug, x.Sleduyushchiy = h.Krug.Nomer, int(h.Krug.Sleduyushchiy.Seconds())
+		x.Povtory, x.KrugTekst = nil, ""
+		if !h.Krug.Posledniy {
+			x.Povtory, x.KrugTekst = slices.Clone(h.Krug.Povtory), tekstKruga(h.Krug.Vid)
+		}
+	}
+	// Детектор кончился: его «повторю в …» больше не правда.
+	if h.Shag != upravlenie.ShagDetektor {
+		x.Povtory, x.KrugTekst = nil, ""
 	}
 }
 
@@ -773,7 +856,9 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		KlyuchHostaTip: it.Vhod.KlyuchHosta.Tip, KlyuchHosta: it.Vhod.KlyuchHosta.TeloBase64(),
 		Versiya: it.Versiya, Maska: it.Sekrety.Maska, PortyRuchnye: osn.PortyRuchnye,
 		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: osn.Postavlen, ParolVyklyuchen: it.ParolVyklyuchen,
+		NeIzSeti: slices.Clone(it.NeProshli),
 	}
+	zapis.SetTekst, zapis.SetPoVidam = prichinySeti(it.Preduprezhdeniya, it.NeProshli)
 	if zapis.Postavlen.IsZero() {
 		zapis.Postavlen = seychas
 	}

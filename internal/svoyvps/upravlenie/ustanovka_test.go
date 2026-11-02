@@ -97,7 +97,7 @@ func novayaMashina(t *testing.T) *mashina {
 	}
 	ustanovit = func(_ context.Context, x server.Mashina, _ io.ReadSeeker, _ gossh.PublicKey) (server.Ustanovka, error) {
 		rootom(x, "установка программы")
-		return server.Ustanovka{Versiya: "0.6.0"}, nil
+		return server.Ustanovka{Versiya: "vpn-uzel 0.6.0, sing-box 1.14.2"}, nil
 	}
 	primenit = func(_ context.Context, x server.Mashina, p []byte) (server.Kvitanciya, error) {
 		rootom(x, "пакет")
@@ -406,12 +406,43 @@ func TestUstanovitNeProshyol(t *testing.T) {
 	m.vhod.pryamo.sv.Tunnel = true
 	m.vybor = porty.Vybor{}
 	m.det = blok.Itog{Vid: blok.NeDohodit}
-	itog, err := Ustanovit(context.Background(), m.ustanovka())
+	nikto := func(k []protokol.Server) []proverka.Itog {
+		var it []proverka.Itog
+		for _, s := range k {
+			it = append(it, proverka.Itog{Server: s, Vid: proverka.NetOtveta})
+		}
+		return it
+	}
+	m.itogi = nikto
+	// Ключи уходят службе до детектора: перепроверки можно не ждать.
+	u := m.ustanovka()
+	var shagi []Shag
+	var rano *Itog
+	u.Hod = func(h Hod) { shagi = append(shagi, h.Shag) }
+	u.Klyuchi = func(it Itog) error {
+		if rano != nil {
+			t.Fatal("ключи отданы дважды")
+		}
+		rano = &it
+		shagi = append(shagi, "klyuchi")
+		return nil
+	}
+	itog, err := Ustanovit(context.Background(), u)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if rano == nil || len(rano.Klyuchi) != 2 || !slices.Equal(rano.NeProshli, []string{"reality-tcp", "hy2"}) ||
+		len(rano.Preduprezhdeniya) != 0 || rano.Adres != "203.0.113.10" {
+		t.Fatalf("ранний итог %+v", rano)
+	}
+	if i, j := slices.Index(shagi, "klyuchi"), slices.Index(shagi, ShagDetektor); i < 0 || j < i || slices.Index(shagi, ShagPorty) > i {
+		t.Fatalf("шаги %v", shagi)
+	}
 	if !slices.Equal(itog.Vhody.Reality, []int{443}) || !slices.Equal(itog.Vhody.Hy2, []int{443}) {
 		t.Fatalf("входы %+v", itog.Vhody)
+	}
+	if !slices.Equal(itog.NeProshli, []string{"reality-tcp", "hy2"}) {
+		t.Fatalf("не прошли %v", itog.NeProshli)
 	}
 	o := m.detOpcii
 	if o == nil || o.Adres.String() != "203.0.113.10" || o.PortSsh != 22 || o.Tunnel != blok.TunnelOtvetil ||
@@ -436,12 +467,29 @@ func TestUstanovitNeProshyol(t *testing.T) {
 		return []proverka.Itog{{Server: k[0], Vid: proverka.Vezyot}, {Server: k[1], Vid: proverka.NetOtveta}}
 	}
 	itog, err = Ustanovit(context.Background(), m.ustanovka())
-	if err != nil || len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Transport != "hy2" {
+	if err != nil || len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Transport != "hy2" || !slices.Equal(itog.NeProshli, []string{"hy2"}) {
 		t.Fatalf("итог %+v, ошибка %v", itog.Preduprezhdeniya, err)
 	}
 	if m.detOpcii.Tunnel != blok.TunnelNeProveren || !slices.Equal(m.detOpcii.TCP,
 		[]blok.PortTCP{{Port: 80}, {Port: 443}, {Port: 8443, TLS: "www.example.com"}}) {
 		t.Fatalf("опции детектора %+v", m.detOpcii)
+	}
+	// Адрес закрывали ненадолго: на подборе не прошёл никто, а окончательная
+	// проверка после детектора провезла оба ключа. Предупреждать не о чем.
+	m = novayaMashina(t)
+	m.vybor = porty.Vybor{}
+	m.det = blok.Itog{Vid: blok.Dostupen, Krugov: 2}
+	itog, err = Ustanovit(context.Background(), m.ustanovka())
+	if err != nil || len(itog.Preduprezhdeniya) != 0 || len(itog.NeProshli) != 0 || m.detOpcii == nil {
+		t.Fatalf("после повтора итог %+v, не прошли %v, ошибка %v", itog.Preduprezhdeniya, itog.NeProshli, err)
+	}
+	// Отказ записи ключей останавливает дело: детектор и проверка не идут.
+	m = novayaMashina(t)
+	m.vybor = porty.Vybor{}
+	u = m.ustanovka()
+	u.Klyuchi = func(Itog) error { return errors.New("набор не записан") }
+	if _, err := Ustanovit(context.Background(), u); err == nil || m.detOpcii != nil || m.proveryal != nil {
+		t.Fatalf("отказ записи: %v, детектор %v, проверка %v", err, m.detOpcii, m.proveryal)
 	}
 }
 
@@ -456,6 +504,9 @@ func TestUstanovitNeVezyot(t *testing.T) {
 	}
 	if p := itog.Preduprezhdeniya[0]; p.Vid != NeVezyot || p.Transport != "reality-tcp" || p.Port != 443 || p.Otkaz != "встал на 16 КБ" {
 		t.Fatalf("предупреждение %+v", p)
+	}
+	if !slices.Equal(itog.NeProshli, []string{"reality-tcp"}) {
+		t.Fatalf("не прошли %v", itog.NeProshli)
 	}
 	// Проверка не состоялась: сервер поставлен, ключи отдаются.
 	m = novayaMashina(t)

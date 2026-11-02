@@ -276,7 +276,7 @@ func TestKlyuchi(t *testing.T) {
 		t.Fatalf("ключей %d", len(k))
 	}
 	r, h := k[0], k[1]
-	if r.Server.Imya != "Мой сервер reality" || r.Server.Transport != "reality-tcp" || r.Server.Host != "203.0.113.10" ||
+	if r.Server.Imya != "Мой сервер, reality" || r.Server.Transport != "reality-tcp" || r.Server.Host != "203.0.113.10" ||
 		r.Server.Port != 443 || r.Server.Uuid != s.Uuid || r.Server.PublicKey != s.RealityOtkr || r.Server.ShortId != s.ShortId ||
 		r.Server.Flow != flowVision || r.Server.Sni != s.Maska || r.Server.Fp != "edge" || r.Server.Id != ssylki.Id("203.0.113.10", 443, "reality-tcp") {
 		t.Fatalf("reality %+v", r.Server)
@@ -284,7 +284,7 @@ func TestKlyuchi(t *testing.T) {
 	if !r.Server.Svoy || !k[1].Server.Svoy {
 		t.Fatal("ключи без пометки своего сервера: ядро поставит reality chrome вместо проверенного firefox")
 	}
-	if h.Server.Imya != "Мой сервер hy2" || h.Server.Transport != "hy2" || h.Server.Port != 8443 || h.Server.Parol != s.Parol ||
+	if h.Server.Imya != "Мой сервер, hysteria2" || h.Server.Transport != "hy2" || h.Server.Port != 8443 || h.Server.Parol != s.Parol ||
 		h.Server.Obfs != "salamander" || h.Server.ObfsParol != s.ObfsParol || h.Server.Sni != "203.0.113.10" || h.Server.Pin != "" {
 		t.Fatalf("hy2 %+v", h.Server)
 	}
@@ -293,7 +293,7 @@ func TestKlyuchi(t *testing.T) {
 		chasti []string
 	}{
 		{r.Ssylka, []string{"vless://" + s.Uuid + "@203.0.113.10:443?", "security=reality", "pbk=" + s.RealityOtkr, "sid=" + s.ShortId,
-			"flow=xtls-rprx-vision", "fp=edge", "sni=dl.google.com", "type=tcp", "#%D0%9C%D0%BE%D0%B9%20%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80%20reality"}},
+			"flow=xtls-rprx-vision", "fp=edge", "sni=dl.google.com", "type=tcp", "#%D0%9C%D0%BE%D0%B9%20%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80%2C%20reality"}},
 		{h.Ssylka, []string{"hy2://" + s.Parol + "@203.0.113.10:8443?", "obfs=salamander", "obfs-password=" + s.ObfsParol, "sni=203.0.113.10"}},
 	} {
 		for _, ch := range c.chasti {
@@ -336,7 +336,7 @@ func TestKlyuchiKandidatov(t *testing.T) {
 	for _, x := range k {
 		imena = append(imena, x.Server.Imya)
 	}
-	if strings.Join(imena, "|") != "Мой reality 443|Мой reality 8443|Мой hy2" {
+	if strings.Join(imena, "|") != "Мой, reality 443|Мой, reality 8443|Мой, hysteria2" {
 		t.Fatalf("имена %q", imena)
 	}
 	if !strings.Contains(k[0].Ssylka, "@[2001:db8::10]:443?") || k[2].Server.Sni != "2001:db8::10" {

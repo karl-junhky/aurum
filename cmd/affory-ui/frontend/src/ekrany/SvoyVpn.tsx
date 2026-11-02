@@ -12,9 +12,9 @@ import { podpisDeystviya, tekstOtkaza } from "./otkazy";
 import { Vygruzka, type VygruzkaOtvet } from "./Vygruzka";
 import { vozrast, vygruzkaIz } from "./Servery";
 import {
-  ocenitServer, posledneeDelo, PUSTAYA_FORMA, zapomnitUvidennuyu,
+  ocenitServer, portyNyneshnie, PUSTAYA_FORMA, svezhayaProverka, zapomnitUvidennuyu,
   type Forma, type HodVps, type KlyuchFayla, type KlyuchHoda, type Master, type OsmotrVps, type OtkazVps,
-  type SostoyanieServera, type SvoyServer, type SvoyVps,
+  type ProverkaVps, type SostoyanieServera, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
 
 // Раздел «Свой VPN» (план 2026-11-01, §4 и Ж2): пустое состояние, мастер
@@ -70,10 +70,39 @@ const ITOG_PROVERKI: Record<string, string> = {
   cel: "проверка не закончена",
 };
 
+// Начало отказа проверки, которое повторяет слово итога: «не ответил: нет
+// ответа через ключ: …» читалось тремя слоями одного смысла.
+const POVTOR_OTKAZA: Record<string, string> = {
+  "net-otveta": "нет ответа через ключ: ",
+  zamerz: "поток встал: ",
+};
+
 function itogKlyucha(k: KlyuchHoda): string {
   if (!k.vid) return "не проверялся";
   const slovo = ITOG_PROVERKI[k.vid] ?? k.vid;
-  return k.otkaz && k.vid !== "vezyot" ? `${slovo}: ${k.otkaz}` : slovo;
+  // Адрес выхода нужен отчёту, а не подписи: слово итога и так говорит всё.
+  if (!k.otkaz || k.vid === "vezyot" || k.vid === "chuzhoy-vyhod") return slovo;
+  const nachalo = POVTOR_OTKAZA[k.vid];
+  const otkaz = nachalo && k.otkaz.startsWith(nachalo) ? k.otkaz.slice(nachalo.length) : k.otkaz;
+  return `${slovo}: ${otkaz}`;
+}
+
+/** Время по часам компьютера: «20:24». */
+function chasy(iso: string): string {
+  return new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Когда детектор проверит адрес ещё раз: время, а не отсчёт, который без
+ *  событий службы стоял бы на месте. */
+function povtoryTekstom(h: HodVps): string {
+  if (h.povtory.length === 0) return "";
+  return `Проверю ещё раз ${h.povtory.map((p) => `в ${chasy(p)}`).join(" и ")}`;
+}
+
+/** Что сказать о ключе, пока у него нет итога проверки. */
+function bezProverki(k: KlyuchHoda, u: { ne_iz_seti: string[] }, idyot: boolean): string {
+  if (u.ne_iz_seti.includes(k.transport)) return "из твоей сети не открылся";
+  return idyot ? "проверяю" : "не проверялся";
 }
 
 function prichinaOtseva(prichina: string, process?: string): string {
@@ -495,7 +524,7 @@ function ShagDostup({ cel, forma, otkaz, idyot, aktiven, naSmenu, vybratKlyuch, 
                 testId="svoy-soobshchenie"
                 znachenie={forma.soobshchenie}
                 naVvod={naSoobshchenie}
-                placeholder="Вставь письмо или сообщение хостера с адресом, логином и паролем"
+                placeholder={"Вставь письмо или сообщение хостера с адресом, логином и паролем. Например:\n\nСервер готов\nIP-адрес: 203.0.113.10\nЛогин: root\nПароль: Kf8mQ2xLp"}
               />
             </PolePodpisannoe>
             <p className="text-fg-muted text-xs">Affory разбирает его здесь и никуда не отправляет</p>
@@ -644,7 +673,7 @@ export function punktyOsmotra(h: HodVps | undefined, sposob: Forma["sposob"] | n
   const tunnel = putSlovami(o.put) === "через VPN";
   const punkty: Punkt[] = [
     { imya: "Вход", itog: "da", podrobno: `порт ${port}${kak}` },
-    { imya: "Путь", itog: tunnel ? "vnimanie" : "da", podrobno: tunnel ? "напрямую сервер молчит, вход через VPN" : putSlovami(o.put) || "напрямую" },
+    { imya: "Путь", itog: tunnel ? "vnimanie" : "da", podrobno: tunnel ? "через VPN: напрямую сервер не ответил" : putSlovami(o.put) || "напрямую" },
     { imya: "Права", itog: "da", podrobno: o.root ? "root" : "через sudo" },
     { imya: "Система", itog: "da", podrobno: o.sistema ?? "не определена" },
   ];
@@ -698,7 +727,7 @@ function ShagProverka({ h, forma, pustoy, otkaz, idyot, aktiven, naPustoy, naNaz
         </Panel>
         {o && (
           <p className="text-fg-faint break-all text-xs" title="Affory запомнил отпечаток. Если при следующем входе он будет другим, Affory остановится до твоего решения">
-            Ключ сервера {o.otpechatok}
+            Отпечаток сервера {o.otpechatok}
           </p>
         )}
       </div>
@@ -762,7 +791,7 @@ const CHTO_IDYOT: Record<string, string> = {
   podbor: "пробую порты по одному из твоей сети",
   paket: "ставлю выбранные порты",
   porty: "открываю порты в брандмауэре сервера",
-  detektor: "выясняю, почему порты не проходят",
+  detektor: "проверяю, почему порты не проходят из твоей сети",
   proverka: "2 МБ через каждый ключ",
 };
 
@@ -871,9 +900,6 @@ function chtoSeychas(h: HodVps): string {
     const v = vidKlyucha(h.klyuch.transport);
     return `Пробую ${h.klyuch.port} по ${v.proto} для ${v.imya}`;
   }
-  if (h.shag === "detektor" && h.krug) {
-    return h.sleduyushchiy ? `Круг ${h.krug} пройден, следующий через ${Math.ceil(h.sleduyushchiy / 60)} мин` : `Круг ${h.krug}`;
-  }
   const posledniy = h.proverki[h.proverki.length - 1];
   if (posledniy && posledniy.vid !== "vezyot") return `${posledniy.port} по ${vidKlyucha(posledniy.transport).proto}: ${itogKlyucha(posledniy)}`;
   return "";
@@ -916,7 +942,7 @@ export function otchyotDela(h: HodVps, adres: string | undefined, versiya: strin
   return stroki.filter((s) => s !== "").join("\n");
 }
 
-function ShagUstanovka({ h, mozhnoPovtorit, aktiven, idyot, itogOtchyota, naOtmenu, naOtchyot, naPovtor, naZakryt, naServery }: {
+function ShagUstanovka({ h, mozhnoPovtorit, aktiven, idyot, itogOtchyota, naOtmenu, naOtchyot, naPovtor, naZakryt, naServery, naNeZhdat }: {
   h: HodVps | undefined;
   mozhnoPovtorit: boolean;
   aktiven: boolean;
@@ -927,11 +953,29 @@ function ShagUstanovka({ h, mozhnoPovtorit, aktiven, idyot, itogOtchyota, naOtme
   naPovtor: () => void;
   naZakryt: () => void;
   naServery: () => void;
+  /** Ключи записаны, перепроверка из сети идёт: перейти к ним, не дожидаясь. */
+  naNeZhdat: () => void;
 }) {
   const etapy = etapyUstanovki(h);
   const konchilas = h !== undefined && h.faza !== "idyot";
+  // Первый круг детектора пуст, а повторы ещё через минуты (И7): человек
+  // сразу узнаёт, в чём дело, и может не ждать.
+  const zhdyomPovtora = h?.faza === "idyot" && h.ustanovlen && h.krug_tekst ? h : undefined;
   return (
     <>
+      {zhdyomPovtora && (
+        <Panel>
+          <Plashka
+            ton="warn"
+            testId="svoy-povtor-iz-seti"
+            znachok={<IkVnimanie className="text-warn h-4 w-4" />}
+            zagolovok={sPropisnoy(zhdyomPovtora.krug_tekst ?? "")}
+            tekst={`${povtoryTekstom(zhdyomPovtora)}. Ключи уже готовы: можно не ждать и проверить их с телефона по мобильному интернету`}
+          >
+            <Knopka rang="vtoraya" testId="svoy-ne-zhdat" onClick={naNeZhdat}>Не ждать</Knopka>
+          </Plashka>
+        </Panel>
+      )}
       {h?.faza === "oshibka" && h.otkaz && (
         <OtkazDela otkaz={h.otkaz} deystviya={{ povtorit: mozhnoPovtorit ? naPovtor : undefined, "otkryt-servery": naServery }} />
       )}
@@ -1000,8 +1044,29 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
   naZakryt: () => void;
 }) {
   const klyuchi = h.ustanovlen?.klyuchi ?? [];
+  const idyot = h.faza === "idyot";
+  const estKlyuchi = (h.ustanovlen?.ids.length ?? 0) > 0;
+  // Из этой сети не прошёл ни один ключ: главное теперь проверить их с
+  // телефона, а не подключаться отсюда.
+  const proshli = klyuchi.some((k) => k.vid === "vezyot");
+  const vseProshli = klyuchi.length > 0 && klyuchi.every((k) => k.vid === "vezyot");
+  // Выгрузка открывается под ключами: окно само доводит её до глаз.
+  const kVygruzke = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (vygruzka) kVygruzke.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [vygruzka]);
   return (
     <>
+      {idyot && (
+        <Panel>
+          <Plashka
+            testId="svoy-perepoverka"
+            znachok={<Vertushka className="text-accent-ink h-4 w-4" />}
+            zagolovok={h.shag === "detektor" ? "Проверяю адрес из твоей сети ещё раз" : "Проверяю ключи из твоей сети"}
+            tekst={[povtoryTekstom(h), "Итог появится в карточке сервера"].filter(Boolean).join(". ")}
+          />
+        </Panel>
+      )}
       {h.preduprezhdeniya.length > 0 && (
         <Panel>
           {h.preduprezhdeniya.map((p, i) => (
@@ -1016,30 +1081,37 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
             return (
               <Ryad
                 key={`${k.transport}-${k.port}`}
-                znachok={<ZnachokItoga itog={k.vid === "vezyot" ? "da" : "vnimanie"} />}
+                znachok={<ZnachokItoga itog={k.vid === "vezyot" ? "da" : !k.vid && idyot && !h.ustanovlen?.ne_iz_seti.includes(k.transport) ? "idyot" : "vnimanie"} />}
                 nazvanie={<span className="flex items-baseline gap-2">{v.imya}<span className="text-fg-muted text-[13px] font-normal tabular-nums">{v.proto} {k.port}</span></span>}
-                poyasnenie={itogKlyucha(k)}
+                poyasnenie={k.vid ? itogKlyucha(k) : bezProverki(k, h.ustanovlen ?? { ne_iz_seti: [] }, idyot)}
               >
                 <Teg ton="akcent">в списке серверов</Teg>
               </Ryad>
             );
           })}
           <div className="border-border flex flex-wrap items-center gap-3 border-t px-4 py-4">
-            <Knopka rang="glavnaya" bolshaya aktiven={aktiven && (h.ustanovlen?.ids.length ?? 0) > 0} testId="svoy-podklyuchit" onClick={naPodklyuchit}>Подключиться</Knopka>
-            <Knopka rang="vtoraya" bolshaya aktiven={aktiven && (h.ustanovlen?.ids.length ?? 0) > 0} zhdyot={zhdyotVygruzka} testId="svoy-klyuchi-telefona" onClick={naVygruzit}>Ключи для телефона</Knopka>
+            <Knopka rang={proshli ? "glavnaya" : "vtoraya"} bolshaya aktiven={aktiven && estKlyuchi} testId="svoy-podklyuchit" onClick={naPodklyuchit}>Подключиться</Knopka>
+            <Knopka rang={proshli ? "vtoraya" : "glavnaya"} bolshaya aktiven={aktiven && estKlyuchi} zhdyot={zhdyotVygruzka} testId="svoy-klyuchi-telefona" onClick={naVygruzit}>Ключи для телефона</Knopka>
             <Knopka rang="tekst" onClick={naZakryt}>Готово</Knopka>
           </div>
         </Panel>
-        <p className="text-fg-muted text-xs">
-          Affory подбирал порты из сети этого компьютера. С мобильного интернета на телефоне какой-то из ключей может не открыться
-        </p>
+        {vseProshli && (
+          <p className="text-fg-muted text-xs">
+            Affory подбирал порты из сети этого компьютера. С мобильного интернета на телефоне какой-то из ключей может не открыться
+          </p>
+        )}
       </div>
       {otkazVygruzki && <p role="alert" className="text-danger text-xs">{otkazVygruzki}</p>}
-      {vygruzka && <Vygruzka vygruzka={vygruzka} zakryt={naZakrytVygruzku} skopirovat={skopirovat} kodyQr={kodyQr} />}
+      {vygruzka && (
+        <div ref={kVygruzke}>
+          <Vygruzka vygruzka={vygruzka} zakryt={naZakrytVygruzku} skopirovat={skopirovat} kodyQr={kodyQr} />
+        </div>
+      )}
       {server && (
         <Gruppa nazvanie="Доступ к серверу">
           <Panel>
-            <RyadVhoda vkl={!server.parol_vyklyuchen} idyot={idyotParol} aktiven={aktiven && server.klyuch_upravleniya} naSmenu={naVhod} />
+            {/* Пока идёт перепроверка, служба занята ею и второе дело не начнёт. */}
+            <RyadVhoda vkl={!server.parol_vyklyuchen} idyot={idyotParol} aktiven={aktiven && server.klyuch_upravleniya && !idyot} naSmenu={naVhod} />
             {itogParolya}
           </Panel>
         </Gruppa>
@@ -1109,13 +1181,16 @@ export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlash
 
 /** Ход и итог дела одной строкой. Отказ ставит своё действие, если окно его
  *  умеет. */
-function StrokaDela({ h, adres, aktiven, zanyato = false, naOtmenu, naSkryt, deystviya, dop }: {
+function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtmenu, naSkryt, deystviya, dop }: {
   h: HodVps;
   adres: string | undefined;
   aktiven: boolean;
   /** Идёт другое дело: кнопка по отказу упрётся в занятую службу. «Отменить»
    *  от этого не гаснет. */
   zanyato?: boolean;
+  /** Карточка уже показывает причину о сети человека из записи о сервере:
+   *  в строке дела её предупреждения повторились бы. */
+  bezSeti?: boolean;
   naOtmenu: () => void;
   naSkryt: () => void;
   deystviya: Partial<Record<string, () => void>>;
@@ -1123,13 +1198,20 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, naOtmenu, naSkryt, dey
   dop?: ReactNode;
 }) {
   if (h.faza === "idyot") {
-    const imya = h.planovaya ? "Плановая проверка сервера" : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
+    // Ключи уже записаны, и дело только перепроверяет их из сети (И7).
+    const imya = h.planovaya
+      ? "Плановая проверка сервера"
+      : h.ustanovlen ? "Проверяю ключи из твоей сети" : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
+    const tekst = h.shag === "detektor" && h.povtory.length > 0
+      ? [h.krug_tekst ? sPropisnoy(h.krug_tekst) : "", povtoryTekstom(h)].filter(Boolean).join(". ")
+      : CHTO_IDYOT[h.shag ?? ""];
     return (
-      <Plashka testId="svoy-delo" znachok={<Vertushka className="text-accent-ink h-4 w-4" />} zagolovok={imya} tekst={CHTO_IDYOT[h.shag ?? ""]}>
+      <Plashka testId="svoy-delo" znachok={<Vertushka className="text-accent-ink h-4 w-4" />} zagolovok={imya} tekst={tekst}>
         <Knopka rang="vtoraya" aktiven={aktiven} onClick={naOtmenu}>Отменить</Knopka>
       </Plashka>
     );
   }
+  const preduprezhdeniya = bezSeti ? h.preduprezhdeniya.filter((p) => !p.iz_seti) : h.preduprezhdeniya;
   const zakryt = (
     <button type="button" aria-label="Скрыть итог" onClick={naSkryt} className="text-fg-muted hover:text-foreground inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
       <IkZakryt className="h-4 w-4" />
@@ -1153,7 +1235,7 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, naOtmenu, naSkryt, dey
     );
   }
   const itog = itogDela(h, adres);
-  if (!itog && h.preduprezhdeniya.length === 0) return null;
+  if (!itog && preduprezhdeniya.length === 0) return null;
   return (
     <>
       {itog && (
@@ -1161,7 +1243,7 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, naOtmenu, naSkryt, dey
           {zakryt}
         </Plashka>
       )}
-      {h.preduprezhdeniya.map((p, i) => (
+      {preduprezhdeniya.map((p, i) => (
         <Plashka key={`${i}-${p.kod}`} ton="warn" znachok={<IkVnimanie className="text-warn h-4 w-4" />} zagolovok={sPropisnoy(tekstOtkaza[p.kod]?.tekst ?? "есть замечание")} tekst={sPropisnoy(p.tekst)}>
           {!itog && zakryt}
         </Plashka>
@@ -1198,6 +1280,18 @@ function ZadatPorty({ server, aktiven, naPodobrat, naOtmenu }: {
   );
 }
 
+/** Строка ключа в карточке. Ключ, мёртвый на самом сервере, главнее всего:
+ *  его чинит подбор портов, а не другой адрес. Дальше то, что он не прошёл
+ *  из сети человека, хотя на сервере работает: так его и увидит человек. */
+export function sostoyanieKlyucha(s: SvoyServer, p: ProverkaVps | undefined, transport: "reality-tcp" | "hy2"): string {
+  const vid = transport === "hy2" ? "hy2" : "reality";
+  const videla = portyNyneshnie(s, p).find((x) => x.vid === vid);
+  if (videla && !videla.slushaet) return "на сервере не работает";
+  if (s.ne_iz_seti.includes(transport)) return "из твоей сети не открывается";
+  if (videla) return "работает на сервере";
+  return s.porty_ruchnye ? "порт задан руками" : "порт подобран из твоей сети";
+}
+
 type Vopros = { vid: "snesti" | "zabyt"; server: SvoyServer };
 
 /** Вход с адресом, портом и пользователем из записи о сервере. */
@@ -1232,8 +1326,7 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   const upravlyaem = s.klyuch_upravleniya && !s.novyy_otpechatok && !s.klyuch_ne_chitaetsya;
   const mozhno = aktiven && upravlyaem && !zanyato;
   const delo = posledniy(hody.filter((h) => h.server === s.id && !skryty.includes(h.id)));
-  const proverka = posledneeDelo(hody, s.id, "proverka");
-  const p = proverka?.faza === "gotovo" ? proverka.proverka : undefined;
+  const p = svezhayaProverka(s, hody);
   // «Повторить» повторяет упавшее дело. Снос и снятие ключа снова через
   // вопрос. Подбор повторяется сам по сети: порты, заданные руками, снимок
   // хода не хранит, их задают заново через «Задать порты».
@@ -1313,6 +1406,7 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
           adres={s.adres}
           aktiven={aktiven}
           zanyato={zanyato}
+          bezSeti={ocenka.izSeti === true}
           naOtmenu={() => naDelo("svoyVpsOtmenit", {})}
           naSkryt={() => naSkryt(delo.id)}
           deystviya={deystviya}
@@ -1333,11 +1427,11 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
       <div className="border-border border-t">
         {s.reality !== undefined && (
           <Ryad nazvanie={<span className="flex items-baseline gap-2">reality<span className="text-fg-muted text-[13px] font-normal tabular-nums">TCP {s.reality}</span></span>}
-            poyasnenie={p ? (p.porty.find((x) => x.vid === "reality")?.slushaet ? "слушает на сервере" : "на сервере не слушает") : s.porty_ruchnye ? "порт задан руками" : "порт подобран из твоей сети"} />
+            poyasnenie={sostoyanieKlyucha(s, p, "reality-tcp")} />
         )}
         {s.hy2 !== undefined && (
           <Ryad nazvanie={<span className="flex items-baseline gap-2">hysteria2<span className="text-fg-muted text-[13px] font-normal tabular-nums">UDP {s.hy2}</span></span>}
-            poyasnenie={p ? (p.porty.find((x) => x.vid === "hy2")?.slushaet ? "слушает на сервере" : "на сервере не слушает") : s.porty_ruchnye ? "порт задан руками" : "порт подобран из твоей сети"} />
+            poyasnenie={sostoyanieKlyucha(s, p, "hy2")} />
         )}
         <Ryad
           nazvanie="Сертификат"
@@ -1723,7 +1817,8 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
         </KolonkaMastera>
       );
     case "ustanovka": {
-      const gotovo = hod?.faza === "gotovo";
+      // Не стал ждать перепроверки: ключи записаны, она идёт в службе дальше.
+      const gotovo = hod?.faza === "gotovo" || (m.neZhdat === true && hod?.faza === "idyot" && hod.ustanovlen !== undefined);
       // Сервер и адрес установки служба называет с первого события: без
       // формы (окно открыто посреди установки) адрес берётся из снимка.
       const id = hod?.ustanovlen?.server ?? hod?.server;
@@ -1811,6 +1906,12 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
             }}
             naZakryt={vyyti}
             naServery={p.naServery}
+            naNeZhdat={() => {
+              // Окно, поднятое заново, не вернёт мастер к этой установке:
+              // её ход виден в карточке.
+              zapomnitUvidennuyu(m.id);
+              zadatMaster({ ...m, neZhdat: true });
+            }}
           />
         </KolonkaMastera>
       );

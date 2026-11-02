@@ -92,6 +92,8 @@ type Ustanovka struct {
 	// Pryamo это соединение мимо туннеля для детектора блокировки.
 	Pryamo blok.Dial
 	Hod    func(Hod)
+	// Klyuchi см. podborPortov.Klyuchi.
+	Klyuchi func(Itog) error
 }
 
 // VidPreduprezhdeniya это что вышло не так, а установка всё же дошла до
@@ -144,6 +146,11 @@ type Itog struct {
 	// ParolVyklyuchen: на сервере лежит наш файл sshd, вход по паролю
 	// выключали из программы (З6).
 	ParolVyklyuchen bool
+	// NeProshli это виды ключей (reality-tcp, hy2), которые не прошли из сети
+	// человека: у подбора не прошёл ни один кандидат вида, или ключ не провёз
+	// окончательную проверку. Вид, чей ключ провёз её при повторе, отсюда
+	// уходит.
+	NeProshli []string
 }
 
 // Ostanovka: осмотр нашёл то, с чем установка не идёт. Своя отметка
@@ -228,7 +235,7 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	if err != nil {
 		return Itog{}, err
 	}
-	itog.Versiya = ust.Versiya
+	itog.Versiya = nomerVersii(ust.Versiya)
 
 	hod(Hod{Shag: ShagMaska})
 	spisokMasok := u.Maski
@@ -259,7 +266,7 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 		return Itog{}, err
 	}
 	pp := podborPortov{Adres: adres, Imya: u.Imya, PortSsh: u.Vhod.Port, Ruchnye: u.Ruchnye, Opcii: u.Opcii,
-		Proverka: u.Proverka, Zapusk: u.Zapusk, Pryamo: u.Pryamo, Hod: hod}
+		Proverka: u.Proverka, Zapusk: u.Zapusk, Pryamo: u.Pryamo, Hod: hod, Klyuchi: u.Klyuchi}
 	if err := podobratIPostavit(ctx, s, o, sek, pr, pp, &itog); err != nil {
 		return Itog{}, err
 	}
@@ -283,12 +290,19 @@ type podborPortov struct {
 	Zapusk   proverka.Zapusk
 	Pryamo   blok.Dial
 	Hod      func(Hod)
+	// Klyuchi узнаёт итог, как только ключи на сервере окончательные и их
+	// порты открыты, до детектора и проверки ключей: служба кладёт их в набор
+	// сразу. Повторы детектора идут до 12 минут, и человек может их не ждать
+	// (И7). Itog.NeProshli в нём это виды без прошедшего кандидата. Отказ
+	// останавливает дело так же, как отказ записи после него. nil - итог
+	// только в конце.
+	Klyuchi func(Itog) error
 }
 
 // podobratIPostavit это шаги 2-6 §3.3 и проверка ключей: кандидаты по
 // осмотру o, пробный пакет с ними, проверка их из сети человека,
-// окончательный пакет, порты в ufw, детектор для вида без прошедшего,
-// проверка ключей. Итог дописывает в itog.
+// окончательный пакет, порты в ufw, итог в p.Klyuchi, детектор для вида без
+// прошедшего, проверка ключей. Итог дописывает в itog.
 func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, sek konfig.Sekrety, pr porty.Prodlenie, p podborPortov, itog *Itog) error {
 	hod := p.Hod
 	hod(Hod{Shag: ShagPodbor})
@@ -381,6 +395,15 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 	if itog.Porty, err = otkrytPorty(ctx, s, final.Reality, final.Hy2); err != nil {
 		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: PortyNeOtkryty, Otkaz: err.Error()})
 	}
+	itog.NeProshli = slices.Clone(neProshli)
+	if p.Klyuchi != nil {
+		// Копия: дальше предупреждения дописываются и вычёркиваются.
+		k := *itog
+		k.Preduprezhdeniya, k.NeProshli = slices.Clone(itog.Preduprezhdeniya), slices.Clone(itog.NeProshli)
+		if err := p.Klyuchi(k); err != nil {
+			return err
+		}
+	}
 
 	if len(neProshli) > 0 {
 		hod(Hod{Shag: ShagDetektor})
@@ -411,9 +434,21 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NeProvereno, Otkaz: err.Error()})
 	}
 	for _, it := range itogi {
-		if it.Vid != proverka.Vezyot && !slices.Contains(neProshli, it.Server.Transport) {
+		t := it.Server.Transport
+		switch {
+		// На подборе вид не прошёл, а теперь провёз: адрес закрывали ненадолго,
+		// и предупреждать уже не о чем.
+		case it.Vid == proverka.Vezyot && slices.Contains(itog.NeProshli, t):
+			itog.NeProshli = slices.DeleteFunc(itog.NeProshli, func(x string) bool { return x == t })
+			itog.Preduprezhdeniya = slices.DeleteFunc(itog.Preduprezhdeniya, func(x Preduprezhdenie) bool {
+				return x.Vid == NeProshyol && x.Transport == t
+			})
+		case it.Vid != proverka.Vezyot && !slices.Contains(neProshli, t):
 			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NeVezyot,
-				Transport: it.Server.Transport, Port: it.Server.Port, Otkaz: it.Otkaz})
+				Transport: t, Port: it.Server.Port, Otkaz: it.Otkaz})
+			if !slices.Contains(itog.NeProshli, t) {
+				itog.NeProshli = append(itog.NeProshli, t)
+			}
 		}
 	}
 
@@ -559,6 +594,17 @@ func vyhody(o *server.Osmotr) []netip.Addr {
 		a = append(a, x.Set.Addr())
 	}
 	return a
+}
+
+// nomerVersii это номер версии программы сервера из ответа «vpn-uzel 0.6.0,
+// sing-box 1.14.2»: так её отдают установка и отметка, которую читают подбор
+// и захват, а проверка знает её номером. Итог у всех один.
+func nomerVersii(s string) string {
+	if v, ok := strings.CutPrefix(s, "vpn-uzel "); ok {
+		v, _, _ = strings.Cut(v, ",")
+		return strings.TrimSpace(v)
+	}
+	return s
 }
 
 func portVida(v konfig.Vhody, transport string) int {

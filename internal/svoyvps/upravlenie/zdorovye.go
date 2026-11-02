@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 )
@@ -66,4 +68,16 @@ func ProveritServer(ctx context.Context, p Puti, z ssh.Zapros, maska string) (zd
 		return ZdorovyeServera{}, err
 	}
 	return zd, nil
+}
+
+// ProveritKlyuchi проверяет ключи своего сервера из сети человека так же,
+// как установка: по одному и с контролем испорченной копией. Адреса выхода
+// сервера берутся из осмотра o.
+func ProveritKlyuchi(ctx context.Context, klyuchi []protokol.Server, o *server.Osmotr, op proverka.Opcii, zapusk proverka.Zapusk) (itogi []proverka.Itog, err error) {
+	defer zashchita("ProveritKlyuchi", &err)
+	if o == nil {
+		return nil, errors.New("проверка ключей: нет осмотра сервера")
+	}
+	op.Vyhody, op.PervyyNaVid = vyhody(o), false
+	return proverit(ctx, klyuchi, op, zapusk)
 }

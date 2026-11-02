@@ -437,11 +437,13 @@ func Klyuchi(s Sekrety, v Vhody) ([]Klyuch, error) {
 		return nil, err
 	}
 	adres := a.String()
+	// «Мой сервер, reality» и «Мой сервер, hysteria2»: так ключи видны и в
+	// списке, и на телефоне, вид назван тем же словом, что в окне.
 	imya := func(vid string, port, vsego int) string {
 		if vsego > 1 {
-			return v.Imya + " " + vid + " " + strconv.Itoa(port)
+			return v.Imya + ", " + vid + " " + strconv.Itoa(port)
 		}
-		return v.Imya + " " + vid
+		return v.Imya + ", " + vid
 	}
 	zadumannye := make([]protokol.Server, 0, len(v.Reality)+len(v.Hy2))
 	for _, port := range v.Reality {
@@ -452,7 +454,7 @@ func Klyuchi(s Sekrety, v Vhody) ([]Klyuch, error) {
 	}
 	for _, port := range v.Hy2 {
 		zadumannye = append(zadumannye, protokol.Server{
-			Imya: imya("hy2", port, len(v.Hy2)), Transport: "hy2", Host: adres, Port: port,
+			Imya: imya("hysteria2", port, len(v.Hy2)), Transport: "hy2", Host: adres, Port: port,
 			Parol: s.Parol, Obfs: obfsHy2, ObfsParol: s.ObfsParol, Sni: adres,
 		})
 	}

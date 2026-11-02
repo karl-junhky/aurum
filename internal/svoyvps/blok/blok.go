@@ -201,6 +201,9 @@ type Krug struct {
 	// Sleduyushchiy это через сколько следующий круг. Бывает 0 и у не
 	// последнего: круг шёл дольше паузы до повтора.
 	Sleduyushchiy time.Duration
+	// Povtory это когда по плану начнутся оставшиеся круги: окно называет
+	// человеку время, а не отсчёт, который без событий не идёт.
+	Povtory []time.Time
 }
 
 // Itog это вердикт и то, из чего он сложен (последний круг).
@@ -256,11 +259,15 @@ func Proverit(ctx context.Context, o Opcii) (itog Itog, err error) {
 		}
 		posledniy := !itog.Vid.otricatelnyy() || nomer > len(povtory)
 		var dalshe time.Duration
+		var plan []time.Time
 		if !posledniy {
 			dalshe = max(time.Until(konecPervogo.Add(povtory[nomer-1])), 0)
+			for _, d := range povtory[nomer-1:] {
+				plan = append(plan, konecPervogo.Add(d))
+			}
 		}
 		if o.Hod != nil {
-			o.Hod(Krug{Nomer: nomer, Vid: itog.Vid, Posledniy: posledniy, Sleduyushchiy: dalshe})
+			o.Hod(Krug{Nomer: nomer, Vid: itog.Vid, Posledniy: posledniy, Sleduyushchiy: dalshe, Povtory: plan})
 		}
 		if posledniy {
 			return itog, nil

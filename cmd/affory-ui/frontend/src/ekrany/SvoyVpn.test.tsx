@@ -3,11 +3,12 @@ import { useCallback, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
-  punktyOsmotra, teloDostupa, zanyatyeDlyaReality,
+  punktyOsmotra, sostoyanieKlyucha, teloDostupa, zanyatyeDlyaReality,
 } from "./SvoyVpn";
 import {
   PUSTAYA_FORMA, type HodVps, type ItogKomandy, type Master, type OsmotrVps, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
+import { razobratSoobshchenie } from "../soobshchenieHostera";
 
 afterEach(() => {
   cleanup();
@@ -20,13 +21,13 @@ function server(dop: Partial<SvoyServer> = {}): SvoyServer {
   return {
     id: "svoy-1", imya: "Мой сервер", adres: "203.0.113.40", port_ssh: 22, polzovatel: "root",
     parol_vyklyuchen: false, maska: "www.example.net", reality: 2087, hy2: 5443, porty_ruchnye: false,
-    prodlenie: "80", servery: ["k-r", "k-h"], sert_trevoga: false, klyuch_upravleniya: true,
+    prodlenie: "80", servery: ["k-r", "k-h"], sert_trevoga: false, klyuch_upravleniya: true, ne_iz_seti: [],
     proveren: SEYCHAS(), ...dop,
   };
 }
 
 function hod(dop: Partial<HodVps>): HodVps {
-  return { id: 1, vid: "proverka", faza: "gotovo", proverki: [], otseyany: [], preduprezhdeniya: [], ...dop };
+  return { id: 1, vid: "proverka", faza: "gotovo", proverki: [], otseyany: [], preduprezhdeniya: [], povtory: [], ...dop };
 }
 
 function osmotr(dop: Partial<OsmotrVps> = {}): OsmotrVps {
@@ -117,6 +118,12 @@ describe("шаг «Доступ»", () => {
     fireEvent.click(screen.getByTestId("svoy-ochistit-bufer"));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Буфер очищен"));
     expect(s.ochistitBufer).toHaveBeenCalledWith("primer-parolya");
+  });
+
+  it("в пустом поле письма пример, и он сам разбирается по полям", () => {
+    stend({ master: nachalo });
+    const primer = (screen.getByTestId("svoy-soobshchenie").getAttribute("placeholder") ?? "").split("Например:")[1] ?? "";
+    expect(razobratSoobshchenie(primer)).toMatchObject({ adres: "203.0.113.10", polzovatel: "root", parol: "Kf8mQ2xLp" });
   });
 
   it("правка письма не затирает поле, поправленное руками", () => {
@@ -322,10 +329,10 @@ describe("шаг «Установка»", () => {
       master: { shag: "ustanovka", forma: null, id: 11 },
       hody: [hod({
         id: 11, vid: "ustanovka", faza: "gotovo",
-        ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087, vid: "net-otveta" }, { transport: "hy2", port: 5443, vid: "vezyot" }], ids: ["k-r", "k-h"] },
+        ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087, vid: "net-otveta" }, { transport: "hy2", port: 5443, vid: "vezyot" }], ids: ["k-r", "k-h"], ne_iz_seti: [] },
       })],
       otvety: {
-        exportServers: () => ({ telo: { tekst: "hy2://x@203.0.113.40:5443", base64: "aA==", servery: [{ id: "k-h", imya: "Мой сервер hy2", transport: "hy2", adres: "203.0.113.40:5443", ssylka: "hy2://x@203.0.113.40:5443" }] } }),
+        exportServers: () => ({ telo: { tekst: "hy2://x@203.0.113.40:5443", base64: "aA==", servery: [{ id: "k-h", imya: "Мой сервер, hysteria2", transport: "hy2", adres: "203.0.113.40:5443", ssylka: "hy2://x@203.0.113.40:5443" }] } }),
       },
     });
     fireEvent.click(screen.getByTestId("svoy-klyuchi-telefona"));
@@ -334,9 +341,64 @@ describe("шаг «Установка»", () => {
     expect(s.naPodklyuchit).toHaveBeenCalledWith("k-h");
     expect(s.master()).toBeNull();
   });
+
+  it("пустой круг перепроверки: сразу причина, время повторов и «Не ждать»", () => {
+    const povtor = new Date(Date.now() + 2 * 60_000).toISOString();
+    const s = stend({
+      servery: [server({ ne_iz_seti: ["reality-tcp", "hy2"] })],
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({
+        id: 11, vid: "ustanovka", faza: "idyot", shag: "detektor", server: "svoy-1", krug: 1,
+        krug_tekst: "из твоей сети адрес сервера сейчас не открывается. Так бывает временно", povtory: [povtor],
+        ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087 }, { transport: "hy2", port: 5443 }], ids: ["k-r", "k-h"], ne_iz_seti: ["reality-tcp", "hy2"] },
+      })],
+    });
+    const plashka = screen.getByTestId("svoy-povtor-iz-seti");
+    expect(plashka).toHaveTextContent("Из твоей сети адрес сервера сейчас не открывается");
+    expect(plashka).toHaveTextContent(`Проверю ещё раз в ${new Date(povtor).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`);
+    fireEvent.click(screen.getByTestId("svoy-ne-zhdat"));
+    expect(s.master()).toMatchObject({ shag: "ustanovka", neZhdat: true });
+    // Окно, поднятое заново, к этой установке мастер не вернёт.
+    expect(localStorage.getItem("affory.svoy-vps.uvidennaya-ustanovka")).toBe("11");
+    // Готовые ключи с пометкой, перепроверка идёт дальше и не отменяется.
+    expect(screen.getByTestId("svoy-perepoverka")).toHaveTextContent("Проверяю адрес из твоей сети ещё раз");
+    expect(within(screen.getByTestId("svoy-gotovo")).getAllByText("из твоей сети не открылся")).toHaveLength(2);
+    expect(screen.queryByText(/С мобильного интернета на телефоне какой-то/)).toBeNull();
+    expect(s.imena()).not.toContain("svoyVpsOtmenit");
+    // Служба занята перепроверкой: смену входа по паролю она не начнёт.
+    expect(screen.getByTestId("svoy-vhod-po-parolyu")).toBeDisabled();
+  });
+
+  it("после детектора плашка перепроверки говорит о ключах, а не об адресе", () => {
+    stend({
+      servery: [server()],
+      master: { shag: "ustanovka", forma: null, id: 11, neZhdat: true },
+      hody: [hod({
+        id: 11, vid: "ustanovka", faza: "idyot", shag: "proverka", server: "svoy-1",
+        ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087 }], ids: ["k-r"], ne_iz_seti: [] },
+      })],
+    });
+    expect(screen.getByTestId("svoy-perepoverka")).toHaveTextContent("Проверяю ключи из твоей сети");
+  });
 });
 
 describe("карточка сервера", () => {
+  it("ключи не прошли из сети: «нужно внимание», и проверка сервера этого не стирает", () => {
+    stend({
+      servery: [server({ ne_iz_seti: ["hy2"], set_tekst: "сервер жив, ключи стоят" })],
+      hody: [
+        hod({ id: 2, server: "svoy-1", proverka: { yadro_zhivo: true, porty: [{ vid: "reality", port: 2087, slushaet: true }, { vid: "hy2", port: 5443, slushaet: true }], maska: "godna", pamyat_mb: 1, disk_mb: 1 } }),
+        hod({ id: 3, vid: "ustanovka", faza: "gotovo", server: "svoy-1", preduprezhdeniya: [{ kod: "vps-address-blocked", tekst: "сервер жив, ключи стоят", iz_seti: true }] }),
+      ],
+    });
+    expect(screen.getByTestId("svoy-sostoyanie")).toHaveTextContent("нужно внимание");
+    expect(screen.getByText("Из твоей сети не открывается hysteria2")).toBeInTheDocument();
+    expect(screen.getByText("работает на сервере")).toBeInTheDocument();
+    expect(screen.getByText("из твоей сети не открывается")).toBeInTheDocument();
+    // Причина одна: из записи, а не ещё раз строкой дела.
+    expect(screen.getAllByText("Сервер жив, ключи стоят")).toHaveLength(1);
+  });
+
   it("свежая проверка видела мёртвый VPN: «не работает» с причиной", () => {
     stend({
       servery: [server()],
@@ -507,6 +569,29 @@ describe("проверки полей и тексты", () => {
     expect(e.map((x) => x.itog)).toEqual(["da", "idyot", "zhdyot", "zhdyot"]);
     const g = etapyUstanovki(hod({ vid: "ustanovka", faza: "gotovo", preduprezhdeniya: [{ kod: "vps-cert-blocked", tekst: "80 и 443 закрыты" }] }));
     expect(g.find((x) => x.id === "sertifikat")).toMatchObject({ itog: "vnimanie", podrobno: "80 и 443 закрыты" });
+  });
+
+  it("строка ключа в карточке: мёртвый на сервере главнее, чем «не из твоей сети»", () => {
+    const p = (slushaet: boolean) => ({ yadro_zhivo: true, porty: [{ vid: "hy2", port: 5443, slushaet }], maska: "godna", pamyat_mb: 1, disk_mb: 1 });
+    const s = server({ ne_iz_seti: ["hy2"] });
+    expect(sostoyanieKlyucha(s, p(false), "hy2")).toBe("на сервере не работает");
+    expect(sostoyanieKlyucha(s, p(true), "hy2")).toBe("из твоей сети не открывается");
+    expect(sostoyanieKlyucha(s, undefined, "hy2")).toBe("из твоей сети не открывается");
+    expect(sostoyanieKlyucha(server(), p(true), "hy2")).toBe("работает на сервере");
+    expect(sostoyanieKlyucha(server(), undefined, "hy2")).toBe("порт подобран из твоей сети");
+    // Порт подобран заново после проверки: её итог про прежний порт.
+    expect(sostoyanieKlyucha(server({ hy2: 40443 }), p(false), "hy2")).toBe("порт подобран из твоей сети");
+  });
+
+  it("причина на фишке без повторов одного смысла", () => {
+    const p = probyPortov(hod({
+      proverki: [
+        { transport: "reality-tcp", port: 443, vid: "net-otveta", otkaz: "нет ответа через ключ: соединение не установилось" },
+        { transport: "hy2", port: 8443, vid: "chuzhoy-vyhod", otkaz: "выход с 198.51.100.1, а не с адреса сервера" },
+      ],
+    }));
+    expect(p.reality[0].prichina).toBe("не ответил: соединение не установилось");
+    expect(p.hy2[0].prichina).toBe("выходит в сеть не с адреса сервера");
   });
 
   it("порт, пробованный дважды, одной фишкой с последним итогом", () => {
