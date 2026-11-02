@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -553,5 +556,328 @@ func TestSvoyVpsParolOtkaz(t *testing.T) {
 	id, _ = postavitSvoy(t, s, klyuchHostaDlyaTesta(t), false)
 	if kod := kodOtkaza(s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": true}))); kod != protokol.KodVpsVzyat {
 		t.Fatalf("без ключа управления: %q", kod)
+	}
+}
+
+func prinyatKlyuch(t *testing.T, s *Sluzhba, id, otpechatok string) protokol.Kadr {
+	t.Helper()
+	return s.svoyVpsPrinyatKlyuchHosta(kadrVps(t, "svoyVpsPrinyatKlyuchHosta", map[string]string{"id": id, "otpechatok": otpechatok}))
+}
+
+// Сервер предъявил другой ключ: запись помнит его, карточка видит отпечаток,
+// «Я переустановил систему» принимает ровно этот ключ.
+func TestSvoyVpsPrinyatKlyuchHosta(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh, novyy := klyuchHostaDlyaTesta(t), klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, true)
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.ParolVyklyuchen = true }); err != nil {
+		t.Fatal(err)
+	}
+	var zapros ssh.Zapros
+	s.vpsProverit = func(_ context.Context, _ upravlenie.Puti, z ssh.Zapros, _ string) (upravlenie.ZdorovyeServera, error) {
+		zapros = z
+		return upravlenie.ZdorovyeServera{}, fmt.Errorf("вход: %w", &ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya, Predyavlen: &novyy})
+	}
+	// Новый ключ записан до конца задания: окно перечитывает список по
+	// событию конца. Каждая запись набора смотрит, идёт ли ещё задание.
+	pisat := s.sekretyPisat
+	var poKoncu atomic.Bool
+	s.sekretyPisat = func(b []byte) error {
+		if s.svoyVpsIdyot() == "" {
+			poKoncu.Store(true)
+		}
+		return pisat(b)
+	}
+	s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+	h := dozhdatsyaVps(t, s)
+	s.sekretyPisat = pisat
+	if h.Faza != fazaOshibka || h.Otkaz == nil || h.Otkaz.Kod != protokol.KodVpsKlyuchHosta || h.Otkaz.Otpechatok != novyy.Otpechatok() {
+		t.Fatalf("проверка с чужим ключом: %+v", h)
+	}
+	if poKoncu.Load() {
+		t.Fatal("набор писался после конца задания")
+	}
+	z := zapisPoId(t, s, id)
+	if z.KlyuchHosta != kh.TeloBase64() || z.NovyyKlyuchHostaTip != novyy.Tip || z.NovyyKlyuchHosta != novyy.TeloBase64() || z.ProverkaOtkaz == "" {
+		t.Fatalf("запись после чужого ключа: %+v", z)
+	}
+
+	otv := s.svoyVpsSpisok(protokol.Kadr{Imya: "svoyVpsSpisok"})
+	if bytes.Contains(otv.Telo, []byte(novyy.TeloBase64())) {
+		t.Fatalf("тело нового ключа ушло в список: %s", otv.Telo)
+	}
+	var spisok struct {
+		Servery []SvoyServerDlyaEkrana `json:"servery"`
+	}
+	if err := json.Unmarshal(otv.Telo, &spisok); err != nil {
+		t.Fatal(err)
+	}
+	if len(spisok.Servery) != 1 || spisok.Servery[0].Otpechatok != kh.Otpechatok() || spisok.Servery[0].NovyyOtpechatok != novyy.Otpechatok() {
+		t.Fatalf("список: %+v", spisok.Servery)
+	}
+
+	// Не тот отпечаток, чужой id, пустое тело: запись не тронута. На чужом
+	// отпечатке окно перечитает список и покажет новый.
+	for _, c := range []struct {
+		imya string
+		otv  protokol.Kadr
+		kod  string
+	}{
+		{"прежний отпечаток", prinyatKlyuch(t, s, id, kh.Otpechatok()), protokol.KodVpsKlyuchHosta},
+		{"нет сервера", prinyatKlyuch(t, s, "net-takogo", novyy.Otpechatok()), protokol.KodTeloNegodno},
+		{"без отпечатка", prinyatKlyuch(t, s, id, ""), protokol.KodTeloNegodno},
+	} {
+		if kod := kodOtkaza(c.otv); kod != c.kod {
+			t.Fatalf("%s: %q", c.imya, kod)
+		}
+	}
+	if b := zapisPoId(t, s, id); !reflect.DeepEqual(b, z) {
+		t.Fatalf("запись после отказов: %+v", b)
+	}
+
+	// Посреди задания ключ не принимается: оно вошло бы с прежним.
+	pusk := make(chan struct{})
+	s.vpsProverit = func(ctx context.Context, _ upravlenie.Puti, _ ssh.Zapros, _ string) (upravlenie.ZdorovyeServera, error) {
+		close(pusk)
+		<-ctx.Done()
+		return upravlenie.ZdorovyeServera{}, ctx.Err()
+	}
+	s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+	<-pusk
+	if kod := kodOtkaza(prinyatKlyuch(t, s, id, novyy.Otpechatok())); kod != protokol.KodVpsZanyato {
+		t.Fatalf("приём посреди задания: %q", kod)
+	}
+	s.svoyVpsOtmenit(protokol.Kadr{Imya: "svoyVpsOtmenit"})
+	dozhdatsyaVps(t, s)
+
+	// Запись не легла: ключ остаётся прежним, ожидание тоже.
+	s.sekretyPisat = func([]byte) error { return errors.New("тест: диск полон") }
+	if otv := prinyatKlyuch(t, s, id, novyy.Otpechatok()); otv.Oshib == nil {
+		t.Fatal("приём без записи прошёл")
+	}
+	s.sekretyPisat = pisat
+	if b := zapisPoId(t, s, id); !reflect.DeepEqual(b, z) {
+		t.Fatalf("запись после незаписанного приёма: %+v", b)
+	}
+
+	otv = prinyatKlyuch(t, s, id, novyy.Otpechatok())
+	if otv.Oshib != nil || !bytes.Contains(otv.Telo, []byte(id)) {
+		t.Fatalf("приём: %+v", otv)
+	}
+	z = zapisPoId(t, s, id)
+	// Отказ прошлой проверки был про прежний ключ: он снят, и сервер ждёт
+	// плановую первым.
+	if z.KlyuchHostaTip != novyy.Tip || z.KlyuchHosta != novyy.TeloBase64() || z.NovyyKlyuchHosta != "" || z.NovyyKlyuchHostaTip != "" || z.ParolVyklyuchen ||
+		!z.Proveren.IsZero() || z.ProverkaOtkaz != "" {
+		t.Fatalf("запись после приёма: %+v", z)
+	}
+	if kod := kodOtkaza(prinyatKlyuch(t, s, id, novyy.Otpechatok())); kod != protokol.KodTeloNegodno {
+		t.Fatalf("повторный приём: %q", kod)
+	}
+
+	// Следующий вход ждёт уже новый ключ.
+	s.vpsProverit = func(_ context.Context, _ upravlenie.Puti, z ssh.Zapros, _ string) (upravlenie.ZdorovyeServera, error) {
+		zapros = z
+		return upravlenie.ZdorovyeServera{Osmotr: osmotrChistyy(), Uzel: server.SostoyanieUzla{Versiya: "0.6.1"}}, nil
+	}
+	s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+	if h := dozhdatsyaVps(t, s); h.Faza != fazaGotovo || zapros.Izvesten == nil || !bytes.Equal(zapros.Izvesten.Telo, novyy.Telo) {
+		t.Fatalf("вход после приёма: %+v, ключ %+v", h, zapros.Izvesten)
+	}
+}
+
+// Ожидающий ключ снимается любым удачным входом с записанным и не
+// заводится отказом без предъявленного ключа.
+func TestSvoyVpsNovyyKlyuchHostaSnimaetsya(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh, novyy := klyuchHostaDlyaTesta(t), klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, true)
+	ozhidaet := func() {
+		t.Helper()
+		if err := s.otmetitProverku(id, func(x *SvoyServer) {
+			x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta = novyy.Tip, novyy.TeloBase64()
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snyat := func(chto string) {
+		t.Helper()
+		if z := zapisPoId(t, s, id); z.NovyyKlyuchHosta != "" || z.NovyyKlyuchHostaTip != "" {
+			t.Fatalf("%s: ожидающий ключ остался: %+v", chto, z)
+		}
+	}
+
+	ozhidaet()
+	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+		return upravlenie.ZdorovyeServera{Osmotr: osmotrChistyy(), Uzel: server.SostoyanieUzla{Versiya: "0.6.1"}}, nil
+	}
+	s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+	dozhdatsyaVps(t, s)
+	snyat("удачная проверка")
+
+	ozhidaet()
+	s.vpsVyklyuchitParol = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+		return upravlenie.ParolItog{}, nil
+	}
+	s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": true}))
+	dozhdatsyaVps(t, s)
+	snyat("удачное выключение пароля")
+
+	// Предъявлен тот же ключ, что записан: ждать нечего.
+	ozhidaet()
+	s.otmetitKlyuchHosta(id, &ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya, Predyavlen: &kh})
+	snyat("предъявлен записанный ключ")
+
+	// Отказ без предъявленного ключа или с другой причиной ожидание не
+	// трогает, тот же предъявленный ключ - тоже, и набор тогда не пишется.
+	ozhidaet()
+	byla := zapisPoId(t, s, id)
+	pisat := s.sekretyPisat
+	zapisey := 0
+	s.sekretyPisat = func(b []byte) error { zapisey++; return pisat(b) }
+	for _, err := range []error{
+		&ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya},
+		&ssh.Otkaz{Prichina: ssh.PrichinaTishina, Predyavlen: &novyy},
+		errors.New("что-то"),
+		&ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya, Predyavlen: &novyy},
+	} {
+		s.otmetitKlyuchHosta(id, err)
+	}
+	s.otmetitKlyuchHosta("", nil)
+	s.sekretyPisat = pisat
+	if z := zapisPoId(t, s, id); !reflect.DeepEqual(z, byla) || zapisey != 0 {
+		t.Fatalf("запись после посторонних отказов (%d записей): %+v", zapisey, z)
+	}
+}
+
+// Сервер уже в разделе: осмотр и захват входят с записанным ключом хоста, а
+// присланный с осмотра не в счёт. Их отказ со сменой ключа ложится в запись
+// ожиданием приёма.
+func TestSvoyVpsZapisannyyKlyuchHosta(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh, novyy := klyuchHostaDlyaTesta(t), klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, false)
+	smena := &ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya, Predyavlen: &novyy}
+	var vhod ssh.Zapros
+	osmotr := func(_ context.Context, _ upravlenie.Puti, z ssh.Zapros) (upravlenie.Otchet, error) {
+		vhod = z
+		return upravlenie.Otchet{}, smena
+	}
+	s.vpsOsmotret = osmotr
+	s.svoyVpsOsmotret(kadrVps(t, "svoyVpsOsmotret", dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"}))
+	if h := dozhdatsyaVps(t, s); h.Server != id || h.Otkaz == nil || h.Otkaz.Kod != protokol.KodVpsKlyuchHosta {
+		t.Fatalf("осмотр сервера из раздела: %+v", h)
+	}
+	if vhod.Izvesten == nil || !bytes.Equal(vhod.Izvesten.Telo, kh.Telo) {
+		t.Fatalf("осмотр вошёл не с записанным ключом: %+v", vhod.Izvesten)
+	}
+	if z := zapisPoId(t, s, id); z.NovyyKlyuchHosta != novyy.TeloBase64() {
+		t.Fatalf("осмотр не оставил ожидания: %+v", z)
+	}
+
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta = "", "" }); err != nil {
+		t.Fatal(err)
+	}
+	var v upravlenie.Vzyatie
+	s.vpsVzyat = func(_ context.Context, x upravlenie.Vzyatie) (upravlenie.Itog, error) {
+		v = x
+		return upravlenie.Itog{}, smena
+	}
+	telo := zaprosVzyatiya{dostupVps: dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"},
+		KlyuchHostaTip: novyy.Tip, KlyuchHosta: novyy.TeloBase64()}
+	s.svoyVpsVzyat(kadrVps(t, "svoyVpsVzyat", telo))
+	if h := dozhdatsyaVps(t, s); h.Otkaz == nil || h.Otkaz.Kod != protokol.KodVpsKlyuchHosta {
+		t.Fatalf("захват при сменившемся ключе: %+v", h)
+	}
+	if v.Vhod.Izvesten == nil || !bytes.Equal(v.Vhod.Izvesten.Telo, kh.Telo) {
+		t.Fatalf("захват вошёл не с записанным ключом: %+v", v.Vhod.Izvesten)
+	}
+	if z := zapisPoId(t, s, id); z.NovyyKlyuchHosta != novyy.TeloBase64() || z.KlyuchHosta != kh.TeloBase64() {
+		t.Fatalf("захват не оставил ожидания: %+v", z)
+	}
+
+	// Адрес без записи осмотр встречает впервые.
+	s = sPustymNaborom(t)
+	s.vpsOsmotret = osmotr
+	vhod = ssh.Zapros{}
+	s.svoyVpsOsmotret(kadrVps(t, "svoyVpsOsmotret", dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"}))
+	if h := dozhdatsyaVps(t, s); h.Server != "" || vhod.Izvesten != nil || vhod.Adres != adresSvoego {
+		t.Fatalf("первая встреча: %+v, вход %+v", h, vhod)
+	}
+}
+
+// Испорченный ключ хоста в записи это порча хранилища: осмотр, захват и
+// приём отвечают о ней, а не зовут перепроверить сервер.
+func TestSvoyVpsKlyuchHostaIsporchen(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh := klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, true)
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta = kh.Tip, "!!!" }); err != nil {
+		t.Fatal(err)
+	}
+	var spisok struct {
+		Servery []SvoyServerDlyaEkrana `json:"servery"`
+	}
+	if err := json.Unmarshal(s.svoyVpsSpisok(protokol.Kadr{Imya: "svoyVpsSpisok"}).Telo, &spisok); err != nil {
+		t.Fatal(err)
+	}
+	if len(spisok.Servery) != 1 || spisok.Servery[0].NovyyOtpechatok != "" || spisok.Servery[0].Otpechatok != kh.Otpechatok() {
+		t.Fatalf("список с испорченным новым ключом: %+v", spisok.Servery)
+	}
+	otv := prinyatKlyuch(t, s, id, kh.Otpechatok())
+	if otv.Oshib == nil || otv.Oshib.Kod != protokol.KodTeloNegodno || !strings.Contains(otv.Oshib.Tekst, "не разобран") {
+		t.Fatalf("приём испорченного ключа: %+v", otv.Oshib)
+	}
+	if z := zapisPoId(t, s, id); z.KlyuchHosta != kh.TeloBase64() {
+		t.Fatalf("приём испорченного ключа тронул запись: %+v", z)
+	}
+
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.KlyuchHosta = "!!!" }); err != nil {
+		t.Fatal(err)
+	}
+	s.vpsOsmotret = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.Otchet, error) {
+		t.Error("осмотр пошёл на сервер с испорченной записью")
+		return upravlenie.Otchet{}, nil
+	}
+	if kod := kodOtkaza(s.svoyVpsOsmotret(kadrVps(t, "svoyVpsOsmotret", dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"}))); kod != protokol.KodSecretsUnreadable {
+		t.Fatalf("осмотр с испорченной записью: %q", kod)
+	}
+	telo := zaprosVzyatiya{dostupVps: dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"}, KlyuchHostaTip: kh.Tip, KlyuchHosta: kh.TeloBase64()}
+	if kod := kodOtkaza(s.svoyVpsVzyat(kadrVps(t, "svoyVpsVzyat", telo))); kod != protokol.KodSecretsUnreadable {
+		t.Fatalf("захват с испорченной записью: %q", kod)
+	}
+	// Ключа хоста в записи нет вовсе: ключом управления не входят вслепую.
+	if err := s.otmetitProverku(id, func(x *SvoyServer) { x.KlyuchHostaTip, x.KlyuchHosta = "", "" }); err != nil {
+		t.Fatal(err)
+	}
+	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+		t.Error("проверка пошла на сервер без ключа хоста в записи")
+		return upravlenie.ZdorovyeServera{}, nil
+	}
+	if kod := kodOtkaza(s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))); kod != protokol.KodSecretsUnreadable {
+		t.Fatalf("проверка без ключа хоста в записи: %q", kod)
+	}
+}
+
+// Ключ хоста в записи сменили, пока проверка шла со старым: её отказ про
+// прежний ключ в запись не ложится.
+func TestSvoyVpsProveritSoStarymKlyuchom(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh, novyy := klyuchHostaDlyaTesta(t), klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, true)
+	byla := zapisPoId(t, s, id)
+	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+		if err := s.otmetitProverku(id, func(x *SvoyServer) { x.KlyuchHostaTip, x.KlyuchHosta = novyy.Tip, novyy.TeloBase64() }); err != nil {
+			return upravlenie.ZdorovyeServera{}, err
+		}
+		return upravlenie.ZdorovyeServera{}, &ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya, Predyavlen: &novyy}
+	}
+	s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+	if h := dozhdatsyaVps(t, s); h.Otkaz == nil || h.Otkaz.Kod != protokol.KodVpsKlyuchHosta {
+		t.Fatalf("проверка со старым ключом: %+v", h)
+	}
+	z := zapisPoId(t, s, id)
+	if !z.Proveren.Equal(byla.Proveren) || z.ProverkaOtkaz != "" || z.KlyuchHosta != novyy.TeloBase64() || z.NovyyKlyuchHosta != "" {
+		t.Fatalf("запись после проверки со старым ключом: %+v", z)
 	}
 }

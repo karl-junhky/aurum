@@ -145,9 +145,10 @@ var dolgie = map[string]time.Duration{
 	"listServers": srokHranilishcha,
 	"listRules":   srokHranilishcha,
 	// Свой сервер (01.11.2026): список читает набор и по файлу ключа
-	// управления на каждый сервер, установка читает набор до запуска
+	// управления на каждый сервер, установка и осмотр читают набор до запуска
 	// задания. Остальные команды своего сервера сразу отдают снимок.
 	"svoyVpsSpisok":    srokHranilishcha,
+	"svoyVpsOsmotret":  srokHranilishcha,
 	"svoyVpsUstanovit": srokHranilishcha,
 	"svoyVpsSnesti":    srokHranilishcha,
 	"svoyVpsVzyat":     srokHranilishcha,
@@ -156,6 +157,9 @@ var dolgie = map[string]time.Duration{
 	"svoyVpsParol":     srokHranilishcha,
 	// Убирает ключи из набора, то есть пересобирает правила, как removeServer.
 	"svoyVpsZabyt": SrokDolgoy,
+	// Пишет набор прямо в ответе на команду, а за записью идёт та же
+	// пересборка правил.
+	"svoyVpsPrinyatKlyuchHosta": SrokDolgoy,
 
 	// Замеры. Длительность заказывает человек, и она перекрывает всё остальное
 	// в этом списке: полоса меряется до 30 секунд в каждую сторону, пинг

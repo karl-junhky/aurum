@@ -223,6 +223,8 @@ func (s *Sluzhba) obrabotat(ctx context.Context, k protokol.Kadr) protokol.Kadr 
 		return s.svoyVpsOtpustit(k)
 	case "svoyVpsParol":
 		return s.svoyVpsParol(k)
+	case "svoyVpsPrinyatKlyuchHosta":
+		return s.svoyVpsPrinyatKlyuchHosta(k)
 
 	case "checkExitIp":
 		return s.checkExitIp(ctx, k)
@@ -575,7 +577,7 @@ func imenaKomand() []string {
 		"startSpeedTest", "speedTestStatus", "cancelSpeedTest",
 		"svoyVpsOsmotret", "svoyVpsUstanovit", "svoyVpsHod", "svoyVpsOtmenit", "svoyVpsSpisok",
 		"svoyVpsSnesti", "svoyVpsVzyat", "svoyVpsZabyt", "svoyVpsProverit", "svoyVpsOtpustit",
-		"svoyVpsParol",
+		"svoyVpsParol", "svoyVpsPrinyatKlyuchHosta",
 	}
 }
 

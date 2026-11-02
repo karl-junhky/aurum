@@ -120,7 +120,11 @@ func (s *Sluzhba) deloProverki(z SvoyServer, zapros ssh.Zapros) func(context.Con
 			if ctx.Err() == nil {
 				tekst := otkazVps(err).Tekst
 				if err := s.otmetitProverku(z.Id, func(x *SvoyServer) {
-					x.Proveren, x.ProverkaOtkaz = seychas, tekst
+					// Ключ хоста в записи успели сменить (приём нового), пока
+					// проверка шла со старым: её отказ уже не про эту запись.
+					if x.KlyuchHostaTip == z.KlyuchHostaTip && x.KlyuchHosta == z.KlyuchHosta {
+						x.Proveren, x.ProverkaOtkaz = seychas, tekst
+					}
 				}); err != nil {
 					log.Printf("свой сервер %s: неудача проверки не записана: %v", z.Id, err)
 				}

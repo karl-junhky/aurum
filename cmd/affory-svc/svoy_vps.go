@@ -52,14 +52,18 @@ type SvoyServer struct {
 	Polzovatel string `json:"polzovatel"`
 	// KlyuchHosta это тип и тело ключа хоста в base64: по ним следующий вход
 	// сверяет, тот ли это сервер.
-	KlyuchHostaTip  string `json:"klyuch_hosta_tip"`
-	KlyuchHosta     string `json:"klyuch_hosta"`
-	ParolVyklyuchen bool   `json:"parol_vyklyuchen,omitempty"`
-	Versiya         string `json:"versiya,omitempty"`
-	Maska           string `json:"maska"`
-	Reality         int    `json:"reality,omitempty"`
-	Hy2             int    `json:"hy2,omitempty"`
-	PortyRuchnye    bool   `json:"porty_ruchnye,omitempty"`
+	KlyuchHostaTip string `json:"klyuch_hosta_tip"`
+	KlyuchHosta    string `json:"klyuch_hosta"`
+	// NovyyKlyuchHosta это ключ, который сервер предъявил вместо
+	// записанного: «Я переустановил систему» принимает именно его.
+	NovyyKlyuchHostaTip string `json:"novyy_klyuch_hosta_tip,omitempty"`
+	NovyyKlyuchHosta    string `json:"novyy_klyuch_hosta,omitempty"`
+	ParolVyklyuchen     bool   `json:"parol_vyklyuchen,omitempty"`
+	Versiya             string `json:"versiya,omitempty"`
+	Maska               string `json:"maska"`
+	Reality             int    `json:"reality,omitempty"`
+	Hy2                 int    `json:"hy2,omitempty"`
+	PortyRuchnye        bool   `json:"porty_ruchnye,omitempty"`
 	// Prodlenie: чем программа сервера продлевает сертификат: 80, 443 или
 	// net (сертификата нет, hy2 не стоит).
 	Prodlenie string `json:"prodlenie,omitempty"`
@@ -323,6 +327,12 @@ func (s *Sluzhba) nachatVps(vid string, fonovoe bool, delo func(ctx context.Cont
 		if err != nil && ctx.Err() == nil {
 			log.Printf("свой сервер, %s: %v", vid, err)
 		}
+		// До конца задания: окно, получив его, перечитает список и увидит
+		// в карточке, ждёт ли сервер приёма нового ключа.
+		s.muVps.Lock()
+		id := z.snimok.Server
+		s.muVps.Unlock()
+		s.otmetitKlyuchHosta(id, err)
 		// Конец ставится тем же взятием замка, что и последний снимок: окно,
 		// получив событие конца, сразу может завести следующее дело.
 		s.pravitHod(z, func(h *HodVps) {
@@ -436,15 +446,35 @@ func (s *Sluzhba) svoyVpsOsmotret(k protokol.Kadr) protokol.Kadr {
 	if err != nil {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
 	}
+	// Сервер уже в разделе: вход сверяет ключ хоста с записью, а не верит
+	// первой встрече. Иначе пароль ушёл бы тому, кто предъявил другой ключ, и
+	// захват с осмотра принял бы его в обход «Я переустановил систему».
+	id := idSvoego(adres)
+	n, err := s.nabor()
+	if err != nil {
+		return otkazIz(k, protokol.KodSecretsUnreadable, err)
+	}
+	if i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id }); i >= 0 {
+		if z.Izvesten, err = n.SvoiServery[i].izvestnyy(); err != nil {
+			return otkazIz(k, protokol.KodSecretsUnreadable, err)
+		}
+	}
+	zapisan := z.Izvesten != nil
 	return s.zapustitVps(k, vidOsmotr, func(ctx context.Context, zad *zadanieVps) error {
-		s.pravitHod(zad, func(h *HodVps) { h.Shag = string(upravlenie.ShagVhod) })
+		s.pravitHod(zad, func(h *HodVps) {
+			h.Shag = string(upravlenie.ShagVhod)
+			// Отказ со сменой ключа ляжет в запись ожиданием приёма.
+			if zapisan {
+				h.Server = id
+			}
+		})
 		o, err := s.vpsOsmotret(ctx, s.putiVps(), z)
 		if err != nil {
 			return err
 		}
 		// Своя ли отметка установки, решает ключ управления этого компьютера.
 		var klyuch gossh.PublicKey
-		if k, ok, err := s.klyuchUpravleniya(idSvoego(adres)); err != nil {
+		if k, ok, err := s.klyuchUpravleniya(id); err != nil {
 			return err
 		} else if ok {
 			klyuch = k.PublicKey()
@@ -726,6 +756,9 @@ type SvoyServerDlyaEkrana struct {
 	// Это не «ключа нет»: захват упал бы на нём же, выход - «Забыть».
 	KlyuchNeChitaetsya string `json:"klyuch_ne_chitaetsya,omitempty"`
 	Otpechatok         string `json:"otpechatok,omitempty"`
+	// NovyyOtpechatok: сервер предъявил другой ключ хоста, карточка
+	// показывает его отпечаток рядом с «Я переустановил систему».
+	NovyyOtpechatok string `json:"novyy_otpechatok,omitempty"`
 }
 
 func (s *Sluzhba) svoyVpsSpisok(k protokol.Kadr) protokol.Kadr {
@@ -744,7 +777,14 @@ func (s *Sluzhba) svoyVpsSpisok(k protokol.Kadr) protokol.Kadr {
 		if kh, err := ssh.KlyuchHostaIzZapisi(x.KlyuchHostaTip, x.KlyuchHosta); err == nil {
 			e.Otpechatok = kh.Otpechatok()
 		}
-		e.KlyuchHosta = ""
+		if x.NovyyKlyuchHosta != "" {
+			if kh, err := ssh.KlyuchHostaIzZapisi(x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta); err != nil {
+				log.Printf("свой сервер %s: новый ключ хоста в записи не разобран: %v", x.Id, err)
+			} else {
+				e.NovyyOtpechatok = kh.Otpechatok()
+			}
+		}
+		e.KlyuchHosta, e.NovyyKlyuchHostaTip, e.NovyyKlyuchHosta = "", "", ""
 		spisok = append(spisok, e)
 	}
 	return otvet(k.Id, k.Imya, map[string]any{"servery": spisok})

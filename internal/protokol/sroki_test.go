@@ -15,6 +15,7 @@ func TestDolgieKomandyPoluchayutDolgiySrok(t *testing.T) {
 		"addServer", "addServers", "removeServer", "setSubscription",
 		"exportProfile", "importProfile", "exportServers",
 		"setAutoMember", "removeSubscription",
+		"svoyVpsZabyt", "svoyVpsPrinyatKlyuchHosta",
 	} {
 		// Не меньше, а не ровно: команды подписок ждут дольше минуты (L14).
 		if SrokOtveta(imya) < SrokDolgoy {
@@ -105,6 +106,9 @@ func TestKomandyChitayushchieNaborNeUkladyvayutsyaVBystryySrok(t *testing.T) {
 		// measureDelays обходит набор целиком, значит платит за расшифровку
 		// хранилища раньше, чем сделает первый замер.
 		"measureDelays",
+		// Свой сервер: запись о сервере читается до запуска задания.
+		"svoyVpsSpisok", "svoyVpsOsmotret", "svoyVpsUstanovit", "svoyVpsSnesti", "svoyVpsVzyat",
+		"svoyVpsProverit", "svoyVpsOtpustit", "svoyVpsParol", "svoyVpsZabyt", "svoyVpsPrinyatKlyuchHosta",
 	} {
 		srok, est := dolgie[imya]
 		if !est {

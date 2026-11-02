@@ -74,14 +74,31 @@ func (s *Sluzhba) zapisSvoego(k protokol.Kadr) (SvoyServer, *protokol.Kadr) {
 
 var errNetKlyuchaUpravleniya = errors.New("ключа управления этим сервером на компьютере нет: сначала возьми сервер под управление")
 
+// izvestnyy это ключ хоста из записи, с которым сверяется любой вход на этот
+// сервер; nil - ключа в записи нет. Неразборный ключ это порча хранилища, а
+// не отказ сервера: выход из неё - «Забыть».
+func (x SvoyServer) izvestnyy() (*ssh.KlyuchHosta, error) {
+	if x.KlyuchHosta == "" {
+		return nil, nil
+	}
+	kh, err := ssh.KlyuchHostaIzZapisi(x.KlyuchHostaTip, x.KlyuchHosta)
+	if err != nil {
+		return nil, err
+	}
+	return &kh, nil
+}
+
 // vhodKlyuchom это вход на свой сервер root по ключу управления, с ключом
 // хоста из записи.
 func vhodKlyuchom(z SvoyServer, podpis gossh.Signer) (ssh.Zapros, error) {
-	kh, err := ssh.KlyuchHostaIzZapisi(z.KlyuchHostaTip, z.KlyuchHosta)
+	kh, err := z.izvestnyy()
 	if err != nil {
 		return ssh.Zapros{}, err
 	}
-	return ssh.Zapros{Adres: z.Adres, Port: z.PortSsh, Izvesten: &kh,
+	if kh == nil {
+		return ssh.Zapros{}, errors.New("в записи о сервере нет ключа хоста")
+	}
+	return ssh.Zapros{Adres: z.Adres, Port: z.PortSsh, Izvesten: kh,
 		Vhod: ssh.Vhod{Polzovatel: "root", Podpis: podpis}}, nil
 }
 
@@ -117,8 +134,8 @@ func (s *Sluzhba) svoyVpsSnesti(k protokol.Kadr) protokol.Kadr {
 }
 
 // zaprosVzyatiya это данные «Взять под управление»: вход человека и ключ
-// хоста с осмотра. Ключа хоста нет - берётся из записи, а нет и её - первая
-// встреча.
+// хоста с осмотра. Есть запись с ключом хоста - берётся он, а нет ни её, ни
+// ключа с осмотра - первая встреча.
 type zaprosVzyatiya struct {
 	dostupVps
 	KlyuchHostaTip string `json:"klyuch_hosta_tip,omitempty"`
@@ -145,12 +162,15 @@ func (s *Sluzhba) svoyVpsVzyat(k protokol.Kadr) protokol.Kadr {
 	if i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id }); i >= 0 {
 		bylo = &n.SvoiServery[i]
 	}
-	tip, telo := z.KlyuchHostaTip, z.KlyuchHosta
-	if telo == "" && bylo != nil {
-		tip, telo = bylo.KlyuchHostaTip, bylo.KlyuchHosta
+	// Записанный ключ главнее присланного с осмотра: сменившийся ключ
+	// принимает только «Я переустановил систему».
+	if bylo != nil {
+		if zapros.Izvesten, err = bylo.izvestnyy(); err != nil {
+			return otkazIz(k, protokol.KodSecretsUnreadable, err)
+		}
 	}
-	if telo != "" {
-		kh, err := ssh.KlyuchHostaIzZapisi(tip, telo)
+	if zapros.Izvesten == nil && z.KlyuchHosta != "" {
+		kh, err := ssh.KlyuchHostaIzZapisi(z.KlyuchHostaTip, z.KlyuchHosta)
 		if err != nil {
 			return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "ключ сервера с проверки не разобран: проверь сервер ещё раз")
 		}
@@ -338,4 +358,117 @@ func (s *Sluzhba) ubratZapisSvoego(id string) error {
 		n.SvoiServery = slices.Delete(n.SvoiServery, i, i+1)
 		return nil
 	})
+}
+
+// otmetitKlyuchHosta ведёт ключ хоста, ждущий приёма, по концу задания над
+// сервером id. Сервер предъявил другой ключ - запись запоминает его:
+// карточка покажет отпечаток, и «Я переустановил систему» примет именно
+// его. Задание удалось - вход прошёл с записанным ключом (осмотр и захват
+// при записи берут его же), и ждать нечего. Ключ, совпавший с записанным,
+// ожидание тоже снимает. Запись правится, только если ожидание меняется:
+// плановая проверка раз в час иначе переписывала бы набор зря.
+func (s *Sluzhba) otmetitKlyuchHosta(id string, err error) {
+	if id == "" {
+		return
+	}
+	var tip, telo string
+	if err != nil {
+		var otk *ssh.Otkaz
+		if !errors.As(err, &otk) || otk.Prichina != ssh.PrichinaKlyuchHostaSmenilsya || otk.Predyavlen == nil {
+			return
+		}
+		tip, telo = otk.Predyavlen.Tip, otk.Predyavlen.TeloBase64()
+	}
+	zhdat := func(x *SvoyServer) (string, string) {
+		if x.KlyuchHostaTip == tip && x.KlyuchHosta == telo {
+			return "", ""
+		}
+		return tip, telo
+	}
+	n, e := s.nabor()
+	if e != nil {
+		log.Printf("свой сервер %s: ключ хоста, ждущий приёма, не отмечен: %v", id, e)
+		return
+	}
+	i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id })
+	if i < 0 {
+		return
+	}
+	if t, b := zhdat(&n.SvoiServery[i]); t == n.SvoiServery[i].NovyyKlyuchHostaTip && b == n.SvoiServery[i].NovyyKlyuchHosta {
+		return
+	}
+	if e := s.otmetitProverku(id, func(x *SvoyServer) {
+		x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta = zhdat(x)
+	}); e != nil {
+		log.Printf("свой сервер %s: ключ хоста, ждущий приёма, не отмечен: %v", id, e)
+	}
+}
+
+const (
+	// zaporNaPriyomKlyucha лишь страховка, как у «Забыть»: запор снимает defer.
+	zaporNaPriyomKlyucha    = 10 * time.Minute
+	otkazPrinimaetsyaKlyuch = "клиент как раз принимает новый ключ сервера: повтори через несколько секунд"
+)
+
+// svoyVpsPrinyatKlyuchHosta это «Я переустановил систему» (§4.3): запись
+// берёт ключ хоста, который сервер предъявил вместо записанного. Окно шлёт
+// отпечаток, показанный человеку, и принимается только ключ с ним: сервер
+// мог с тех пор предъявить другой. Отметка пароля сбрасывается: на свежей
+// системе нашего файла sshd нет. Прошлая проверка снимается: её отказ был
+// про прежний ключ, а без отметки сервер первым попадёт в плановую.
+func (s *Sluzhba) svoyVpsPrinyatKlyuchHosta(k protokol.Kadr) protokol.Kadr {
+	var telo struct {
+		Id         string `json:"id"`
+		Otpechatok string `json:"otpechatok"`
+	}
+	if err := json.Unmarshal(k.Telo, &telo); err != nil || telo.Otpechatok == "" {
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "тело команды не разобрано")
+	}
+	// Запор: пока ключ меняется, задание не начнётся. Задание, собравшее вход
+	// до запора, войдёт с прежним ключом и упадёт; отказ проверки в запись
+	// тогда не ляжет (deloProverki сверяет ключ).
+	otperet, tekst := s.zaperetVps(time.Now().Add(zaporNaPriyomKlyucha), otkazPrinimaetsyaKlyuch)
+	if otperet == nil {
+		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
+	}
+	defer otperet()
+	var (
+		nePrinyat = errors.New("ключ не принят")
+		kod       = protokol.KodTeloNegodno
+		prichina  string
+	)
+	err := s.pravitNabor(func(n *Nabor) error {
+		i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == telo.Id })
+		if i < 0 {
+			prichina = "такого сервера в разделе «Свой VPN» нет"
+			return nePrinyat
+		}
+		x := &n.SvoiServery[i]
+		if x.NovyyKlyuchHosta == "" {
+			prichina = "другого ключа сервер не предъявлял: проверь сервер"
+			return nePrinyat
+		}
+		kh, err := ssh.KlyuchHostaIzZapisi(x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta)
+		if err != nil {
+			prichina = "новый ключ сервера в записи не разобран: проверь сервер ещё раз"
+			return nePrinyat
+		}
+		// Окно по этому коду перечитает список и покажет новый отпечаток.
+		if kh.Otpechatok() != telo.Otpechatok {
+			kod, prichina = protokol.KodVpsKlyuchHosta, "сервер с тех пор предъявил другой ключ: сверь новый отпечаток"
+			return nePrinyat
+		}
+		x.KlyuchHostaTip, x.KlyuchHosta = x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta
+		x.NovyyKlyuchHostaTip, x.NovyyKlyuchHosta = "", ""
+		x.ParolVyklyuchen = false
+		x.Proveren, x.ProverkaOtkaz = time.Time{}, ""
+		return nil
+	})
+	switch {
+	case errors.Is(err, nePrinyat):
+		return otkaz(k.Id, k.Imya, kod, prichina)
+	case err != nil:
+		return otkazIz(k, kodSohraneniya(err), err)
+	}
+	return otvet(k.Id, k.Imya, map[string]string{"id": telo.Id})
 }
