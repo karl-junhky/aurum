@@ -97,6 +97,8 @@ export interface HodVps {
   shag?: string;
   server?: string;
   planovaya?: boolean;
+  /** Адрес сервера установки: у окна, открытого посреди неё, формы нет. */
+  adres?: string;
   put?: string;
   klyuch?: KlyuchHoda;
   proverki: KlyuchHoda[];
@@ -291,6 +293,7 @@ export function hodIz(v: unknown): HodVps | null {
     shag: stroka(o.shag),
     server: stroka(o.server),
     planovaya: o.planovaya === true || undefined,
+    adres: stroka(o.adres),
     put: stroka(o.put),
     klyuch: klyuchHodaIz(o.klyuch) ?? undefined,
     proverki: spisok(o.proverki, klyuchHodaIz),

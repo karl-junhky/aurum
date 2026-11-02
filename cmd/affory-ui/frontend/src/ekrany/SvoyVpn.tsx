@@ -1707,12 +1707,12 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
       );
     case "ustanovka": {
       const gotovo = hod?.faza === "gotovo";
-      // Сервер установки служба называет с первого снимка: адрес упавшей
-      // известен, если запись о сервере успела побывать в списке.
+      // Сервер и адрес установки служба называет с первого события: без
+      // формы (окно открыто посреди установки) адрес берётся из снимка.
       const id = hod?.ustanovlen?.server ?? hod?.server;
       const server = id ? servery?.find((s) => s.id === id) : undefined;
       const parol = id ? posledniy(hody.filter((h) => h.server === id && h.vid === "parol")) : undefined;
-      const adres = m.forma ? chistyyAdres(m.forma.adres) : id ? svoy.adresServera(id) : undefined;
+      const adres = m.forma ? chistyyAdres(m.forma.adres) : hod?.adres ?? (id ? svoy.adresServera(id) : undefined);
       if (gotovo && hod) {
         const ids = hod.ustanovlen?.ids ?? [];
         // Подключение к ключу, который провёз проверку: первому такому.

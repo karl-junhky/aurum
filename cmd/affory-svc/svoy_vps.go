@@ -187,6 +187,9 @@ type HodVps struct {
 	// осмотра); Planovaya - проверку начала сама служба, а не человек.
 	Server    string `json:"server,omitempty"`
 	Planovaya bool   `json:"planovaya,omitempty"`
+	// Adres - адрес сервера установки: окно, открытое посреди неё, иначе не
+	// знает, куда она шла (записи о сервере до конца установки нет).
+	Adres string `json:"adres,omitempty"`
 	// Put: напрямую или через VPN, после входа.
 	Put              string        `json:"put,omitempty"`
 	Klyuch           *KlyuchHoda   `json:"klyuch,omitempty"`
@@ -557,7 +560,7 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "этот сервер уже в разделе «Свой VPN»: действия в его карточке")
 	}
 	return s.zapustitVps(k, vidUstanovka, func(ctx context.Context, zad *zadanieVps) error {
-		s.pravitHod(zad, func(h *HodVps) { h.Server = id })
+		s.pravitHod(zad, func(h *HodVps) { h.Server, h.Adres = id, adres.String() })
 		return s.ustanovitVps(ctx, zad, id, z, zapros)
 	})
 }

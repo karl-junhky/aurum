@@ -23,7 +23,7 @@ function hod(dop: Partial<HodVps> = {}): HodVps {
 describe("разбор ответов службы", () => {
   it("полный снимок установки", () => {
     const h = hodIz({
-      id: 1762000000000, vid: "ustanovka", faza: "idyot", shag: "podbor", server: "svoy-1",
+      id: 1762000000000, vid: "ustanovka", faza: "idyot", shag: "podbor", server: "svoy-1", adres: "203.0.113.10",
       klyuch: { transport: "hy2", port: 5443 },
       proverki: [{ transport: "reality-tcp", port: 443, vid: "net-otveta", otkaz: "молчит" }, { port: 1 }],
       otseyany: [{ proto: "tcp", port: 22, prichina: "ssh" }],
@@ -31,6 +31,7 @@ describe("разбор ответов службы", () => {
       nachalo: "2026-11-02T05:00:00Z", konec: "0001-01-01T00:00:00Z",
     });
     expect(h).not.toBeNull();
+    expect(h?.adres).toBe("203.0.113.10");
     expect(h?.klyuch).toEqual({ transport: "hy2", port: 5443, vid: undefined, otkaz: undefined });
     // Запись без транспорта выпадает, а не становится нулём.
     expect(h?.proverki).toHaveLength(1);

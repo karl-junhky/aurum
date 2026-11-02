@@ -446,7 +446,7 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
       servery = [...servery.filter((s) => !s.id.startsWith(`${SVOY_ID}-`)), ...klyuchiSvoego(adres, 2087, 5443)];
     };
     const h = nachatDelo("ustanovka", SVOY_ID, [
-      (x) => { x.shag = "vhod"; },
+      (x) => { x.shag = "vhod"; x.adres = adres; },
       (x) => { x.shag = "osmotr"; x.put = PUT_PRYAMO; },
       (x) => { x.shag = "klyuch"; },
       (x) => { x.shag = "programma"; },

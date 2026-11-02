@@ -525,6 +525,9 @@ func TestSvoyVpsUstanovit(t *testing.T) {
 	if h.Faza != fazaGotovo || h.Ustanovlen == nil || h.Server != idSvoego(netip.MustParseAddr(adresSvoego)) {
 		t.Fatalf("установка: %+v", h)
 	}
+	if h.Adres != adresSvoego {
+		t.Errorf("адрес в снимке установки %q, а не %q: окно, открытое посреди неё, не узнает сервер", h.Adres, adresSvoego)
+	}
 	if !prog.zakryta {
 		t.Error("программа сервера не закрыта")
 	}
