@@ -14,9 +14,11 @@ import { PervyyZapusk, type SostoyanieUstanovki } from "./ekrany/PervyyZapusk";
 import { Pravila, type PravilaOtvet } from "./ekrany/Pravila";
 import {
   dobavitNaydennoeQr, kodyQr, naytiQrNaEkrane, opisanieVersii, otkrytNastroykiVremeni, otkrytPapkuZhurnalov, prochitatSoedineniya, prochitatOhvatPrilozheniya, perezapustitOkno, perezapustitSPravami, prochitatProfil, skopirovatTekst, sohranitDiagnostiku, sohranitProfil, spisokProtsessov, startovayaVkladka,
-  tekstBufera, vybratArhiv, vybratKudaSohranit, vybratOtkuda, vybratPrilozhenie, zabytQr, zapisatVZhurnal, type Zapushchennyy,
+  tekstBufera, vybratArhiv, vybratKlyuchSsh, vybratKudaSohranit, vybratOtkuda, vybratPrilozhenie, zabytQr, zapisatVZhurnal, type Zapushchennyy,
 } from "./most";
 import { Servery, svodkaQrIz, type PodpiskaNaEkrane, type SpisokServerov, type ZamerZaderzhki } from "./ekrany/Servery";
+import { SvoyVpn } from "./ekrany/SvoyVpn";
+import { metkaRazdela, useSvoyVps } from "./svoyVps";
 import { VKLADKI, type Vkladka } from "./ekrany/vkladki";
 import {
   KanalNedostupen, otkrytGitHub, naSobytie, naVidimostOkna, naVkladku, oknoRazvernut, oknoSvernut, oknoZakryt, sluzhbaUstanovlena,
@@ -377,6 +379,23 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
     }
   }, [zhaloba]);
 
+  // Свой VPN (план 2026-11-01, Ж): список, ход дел и мастер живут здесь, а не
+  // в экране, чтобы установка, начатая до ухода на другую вкладку, не теряла
+  // свой шаг. Отказы команд экран рисует сам, сюда уходит только обрыв канала.
+  const svoy = useSvoyVps({
+    zvat,
+    naSobytie,
+    naSboy: (e) => {
+      if (e instanceof KanalNedostupen) zadatSvyaz("net");
+    },
+    // Установка, подбор и снос меняют ключи в общем списке серверов.
+    naSmenuKlyuchey: () => {
+      void obnovitSpisok();
+      void obnovitPodpiski();
+    },
+    aktiven: svyaz === "est",
+  });
+
   const zagruzitOtlozhennye = useCallback(async () => {
     try {
       const kadr = await zvat("hello", { protocol: VERSIYA_PROTOKOLA });
@@ -632,11 +651,21 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
           zadatOtkaz({ kod: KOD_OBOLOCHKI, tekst: e instanceof Error ? e.message : String(e) }),
         );
         break;
+      // Отказы своего сервера разбирает его раздел: там отпечаток, карточка
+      // и вход для захвата.
+      case "prinyat-klyuch-hosta":
+      case "vzyat-pod-upravlenie":
+        zadatVkladku("svoy-vpn");
+        ubratOtkaz();
+        break;
       case "proverit-set":
       case "pokazat-vinovnika":
       case "nichego":
       case "postavit-sluzhbu":
       case "obnovit-programmu":
+      case "pereustanovit-os":
+      case "otkryt-port-u-hostera":
+      case "poprosit-drugoy-adres":
         ubratOtkaz();
         break;
     }
@@ -861,6 +890,14 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
     }
   }, [zhaloba]);
 
+  // Пароль из вставленного письма хостера. Очищается, только если в буфере
+  // ещё он: скопированное после этого человеком стирать нельзя.
+  const ochistitBufer = useCallback(async (parol: string): Promise<boolean> => {
+    if (await tekstBufera() !== parol) return false;
+    await skopirovatTekst("");
+    return true;
+  }, []);
+
   // Подстраховка Ctrl+V: WebView2 у Wails идёт с выключенными браузерными
   // акселераторами, и на рабочей машине вставка с клавиатуры не доходила до
   // поля вовсе. Слушатель ничего не делает там, где родная вставка работает.
@@ -991,7 +1028,7 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
 
   return (
     <main className="affory-desktop bg-background text-foreground h-screen" data-testid="oboloshka">
-      <Karkas naGitHub={() => { void otkrytGitHub().catch((e: unknown) => zhaloba("Не удалось открыть GitHub", e)); }} vkladka={vkladka} naVkladku={zadatVkladku} naSvernut={oknoSvernut} naRazvernut={oknoRazvernut} naZakryt={oknoZakryt} zablokirovany={ustanovka !== null}>
+      <Karkas naGitHub={() => { void otkrytGitHub().catch((e: unknown) => zhaloba("Не удалось открыть GitHub", e)); }} vkladka={vkladka} naVkladku={zadatVkladku} naSvernut={oknoSvernut} naRazvernut={oknoRazvernut} naZakryt={oknoZakryt} zablokirovany={ustanovka !== null} metkaSvoegoVpn={metkaRazdela(svoy.servery, naEkrane.svoi_trevogi ?? [], svoy.hody)}>
         {/* A refusal is shown on whichever tab is open: a declined UAC on
             Settings must not wait for the human to walk back to Connection. */}
         {pokazat && !ustanovka && (
@@ -1065,6 +1102,7 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
             spisok={spisok}
             naDeystvie={naGlavnoe}
             naServery={naServery}
+            naSvoyServer={() => zadatVkladku("svoy-vpn")}
             naRezhim={naRezhim}
             kObnovleniyu={kObnovleniyu}
             podmenaIdet={hodObnovleniya !== null}
@@ -1098,6 +1136,22 @@ export function App({ periodOprosaMs = PERIOD_OPROSA_MS }: AppProps = {}) {
               },
               zabyt: zabytQr,
             }}
+          />
+        ) : vkladka === "svoy-vpn" ? (
+          <SvoyVpn
+            svoy={svoy}
+            trevogi={naEkrane.svoi_trevogi ?? []}
+            aktiven={svyaz === "est"}
+            naPodklyuchit={(id) => {
+              zadatVkladku("podklyuchenie");
+              void vypolnit("connect", { server: id });
+            }}
+            naServery={naServery}
+            skopirovat={skopirovatTekst}
+            kodyQr={kodyQr}
+            vybratKlyuch={vybratKlyuchSsh}
+            ochistitBufer={ochistitBufer}
+            versiya={versiyaOkna}
           />
         ) : vkladka === "pravila" ? (
           <Pravila

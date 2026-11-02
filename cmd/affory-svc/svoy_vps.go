@@ -55,7 +55,7 @@ type SvoyServer struct {
 	KlyuchHostaTip string `json:"klyuch_hosta_tip"`
 	KlyuchHosta    string `json:"klyuch_hosta"`
 	// NovyyKlyuchHosta это ключ, который сервер предъявил вместо
-	// записанного: «Я переустановил систему» принимает именно его.
+	// записанного: «Систему переустановили» принимает именно его.
 	NovyyKlyuchHostaTip string `json:"novyy_klyuch_hosta_tip,omitempty"`
 	NovyyKlyuchHosta    string `json:"novyy_klyuch_hosta,omitempty"`
 	ParolVyklyuchen     bool   `json:"parol_vyklyuchen,omitempty"`
@@ -126,7 +126,7 @@ type OtkazVps struct {
 	// Podozhdat: следующий вход не раньше, чем через столько секунд.
 	Podozhdat int `json:"podozhdat,omitempty"`
 	// Otpechatok это ключ хоста, который предъявил сервер при смене ключа:
-	// его человек сверяет до «Я переустановил систему».
+	// его человек сверяет до «Систему переустановили».
 	Otpechatok string `json:"otpechatok,omitempty"`
 }
 
@@ -448,7 +448,7 @@ func (s *Sluzhba) svoyVpsOsmotret(k protokol.Kadr) protokol.Kadr {
 	}
 	// Сервер уже в разделе: вход сверяет ключ хоста с записью, а не верит
 	// первой встрече. Иначе пароль ушёл бы тому, кто предъявил другой ключ, и
-	// захват с осмотра принял бы его в обход «Я переустановил систему».
+	// захват с осмотра принял бы его в обход «Систему переустановили».
 	id := idSvoego(adres)
 	n, err := s.nabor()
 	if err != nil {
@@ -847,7 +847,7 @@ type SvoyServerDlyaEkrana struct {
 	KlyuchNeChitaetsya string `json:"klyuch_ne_chitaetsya,omitempty"`
 	Otpechatok         string `json:"otpechatok,omitempty"`
 	// NovyyOtpechatok: сервер предъявил другой ключ хоста, карточка
-	// показывает его отпечаток рядом с «Я переустановил систему».
+	// показывает его отпечаток рядом с «Систему переустановили».
 	NovyyOtpechatok string `json:"novyy_otpechatok,omitempty"`
 }
 

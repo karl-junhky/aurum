@@ -277,6 +277,275 @@ function vybrat(vhod: Record<string, unknown>): unknown {
 
 // Ответы команд, по одному на каждую команду службы.
 //
+// ---------------------------------------------------------------- свой VPN
+//
+// Записи и задания своего сервера (1.11.0) живут здесь, как в службе
+// (cmd/affory-svc/svoy_vps.go): одно задание за раз, ответ команды сразу
+// отдаёт снимок, ход идёт событием svoy-vps-hod, полный снимок отдаёт
+// svoyVpsHod. Случай раздела задаётся своим параметром:
+//
+//     ?svoy=pusto            своих серверов нет (по умолчанию)
+//     ?svoy=server           один сервер, работает
+//     ?svoy=slomano          проверка видит VPN на сервере мёртвым
+//     ?svoy=bez-klyucha      ключ управления остался на другом компьютере
+//     ?svoy=klyuch-hosta     сервер предъявил другой ключ хоста
+//     ?svoy=ustanovka        установка идёт с запуска окна
+//     ?svoy=ustanovka-otkaz  установка встала на подборе портов
+//
+// Адрес 203.0.113.66 в мастере даёт отказ входа. Пароль и ключ из тела
+// заглушка не читает и не хранит.
+
+const SVOY = parametr("svoy", "pusto");
+const SVOY_ID = "svoy-5f1c0e2a9b7d4c31";
+const SVOY_ADRES = "203.0.113.40";
+const CHAS_MS = 3600 * 1000;
+
+/** Отказ команды тем же кадром, что у службы: полем oshibka, а не
+ *  исключением моста. */
+class OtkazStenda extends Error {
+  constructor(readonly kod: string, tekst: string) {
+    super(tekst);
+  }
+}
+
+type Zapis = Record<string, unknown>;
+
+function svoyZapis(adres: string, reality: number, hy2: number): Zapis {
+  return {
+    id: SVOY_ID, imya: "Мой сервер", adres, port_ssh: 22, polzovatel: "root",
+    klyuch_hosta_tip: "ssh-ed25519", maska: "www.example.net", versiya: "0.6.0",
+    reality, hy2, prodlenie: "80",
+    servery: [`${SVOY_ID}-reality`, `${SVOY_ID}-hy2`],
+    postavlen: new Date(Date.now() - 72 * CHAS_MS).toISOString(),
+    sert_do: Math.floor((Date.now() + 80 * 24 * CHAS_MS) / 1000),
+    sert_proveren: new Date(Date.now() - 2 * CHAS_MS).toISOString(),
+    proveren: new Date(Date.now() - 2 * CHAS_MS).toISOString(),
+    klyuch_upravleniya: SVOY !== "bez-klyucha",
+    otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDE",
+    ...(SVOY === "klyuch-hosta" ? { novyy_otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDI" } : {}),
+  };
+}
+
+/** Ключи группы в общем списке: имена и транспорты, как у konfig.go. */
+function klyuchiSvoego(adres: string, reality: number, hy2: number): Server[] {
+  return [
+    { id: `${SVOY_ID}-reality`, imya: "Мой сервер reality", transport: "reality-tcp", host: adres, port: reality, iz_podpiski: false, svoy: true },
+    { id: `${SVOY_ID}-hy2`, imya: "Мой сервер hy2", transport: "hy2", host: adres, port: hy2, iz_podpiski: false, svoy: true },
+  ];
+}
+
+const S_SERVEROM = !["pusto", "ustanovka", "ustanovka-otkaz"].includes(SVOY);
+let svoi: Zapis[] = S_SERVEROM ? [svoyZapis(SVOY_ADRES, 2087, 5443)] : [];
+if (S_SERVEROM) servery.push(...klyuchiSvoego(SVOY_ADRES, 2087, 5443));
+
+function ubratSvoego(id: string): void {
+  svoi = svoi.filter((z) => z.id !== id);
+  servery = servery.filter((s) => !s.id.startsWith(`${id}-`));
+}
+
+let hodVps: Zapis | null = null;
+let shagiVps: ReturnType<typeof setTimeout>[] = [];
+
+function izvestitHod(): void {
+  if (!hodVps) return;
+  const { id, vid, faza, shag, server, planovaya } = hodVps;
+  izvestit("kanal", JSON.stringify({ tip: "sobytie", id: 0, imya: "svoy-vps-hod", telo: { id, vid, faza, shag, server, planovaya } }));
+}
+
+/** Новое задание. Шаги идут по таймеру, каждый правит снимок и шлёт событие,
+ *  последний ставит фазу. */
+function nachatDelo(vid: string, server: string | undefined, shagi: ((h: Zapis) => void)[], shagMs = 700): Zapis {
+  if (hodVps && hodVps.faza === "idyot") throw new OtkazStenda("vps-busy", "служба уже занята другим делом со своим сервером, дождись его конца");
+  hodVps = { id: Date.now(), vid, faza: "idyot", shag: vid === "ustanovka" ? "zagruzka" : "vhod", server, proverki: [], otseyany: [], preduprezhdeniya: [], nachalo: new Date().toISOString() };
+  shagiVps = shagi.map((shag, i) => setTimeout(() => {
+    if (!hodVps || hodVps.faza !== "idyot") return;
+    shag(hodVps);
+    if (hodVps.faza !== "idyot") hodVps.konec = new Date().toISOString();
+    izvestitHod();
+  }, (i + 1) * shagMs));
+  return { ...hodVps };
+}
+
+function zakonchit(h: Zapis, faza: string, dobavit: Zapis = {}): void {
+  Object.assign(h, dobavit, { faza });
+  delete h.klyuch;
+}
+
+const PUT_PRYAMO = "напрямую через Ethernet";
+
+/** Ход подбора: два порта не проходят, по одному на вид проходит. */
+function shagiPodbora(adres: string, otkaz: boolean): ((h: Zapis) => void)[] {
+  const proverki = (h: Zapis) => h.proverki as Zapis[];
+  return [
+    (h) => { h.shag = "podbor"; h.otseyany = [{ proto: "tcp", port: 22, prichina: "ssh" }, { proto: "tcp", port: 80, prichina: "sert" }]; h.klyuch = { transport: "reality-tcp", port: 443 }; },
+    (h) => { proverki(h).push({ transport: "reality-tcp", port: 443, vid: "net-otveta", otkaz: "за 10 секунд ни байта" }); h.klyuch = { transport: "reality-tcp", port: 2087 }; },
+    (h) => { proverki(h).push({ transport: "reality-tcp", port: 2087, vid: "vezyot" }); h.klyuch = { transport: "hy2", port: 443 }; },
+    otkaz
+      ? (h) => {
+          proverki(h).push({ transport: "hy2", port: 443, vid: "zamerz", otkaz: "встал на 300 КБ" });
+          zakonchit(h, "oshibka", { otkaz: { kod: "vps-ports-failed", tekst: `ни один порт hysteria2 не прошёл из этой сети до ${adres}` } });
+        }
+      : (h) => { proverki(h).push({ transport: "hy2", port: 443, vid: "zamerz", otkaz: "встал на 300 КБ" }); h.klyuch = { transport: "hy2", port: 5443 }; },
+    (h) => { proverki(h).push({ transport: "hy2", port: 5443, vid: "vezyot" }); delete h.klyuch; h.shag = "paket"; },
+    (h) => { h.shag = "porty"; },
+    (h) => { h.shag = "proverka"; h.klyuch = { transport: "reality-tcp", port: 2087 }; },
+  ];
+}
+
+function ustanovlen(): Zapis {
+  return {
+    server: SVOY_ID,
+    klyuchi: [{ transport: "reality-tcp", port: 2087, vid: "vezyot" }, { transport: "hy2", port: 5443, vid: "vezyot" }],
+    ids: [`${SVOY_ID}-reality`, `${SVOY_ID}-hy2`],
+  };
+}
+
+function poId(v: Record<string, unknown>): Zapis {
+  const z = svoi.find((x) => x.id === stroka(v.id));
+  if (!z) throw new OtkazStenda("request-invalid", "свой сервер с таким id не найден");
+  return z;
+}
+
+const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = {
+  svoyVpsSpisok: () => ({ servery: svoi }),
+  svoyVpsHod: () => (hodVps ? { ...hodVps } : { faza: "net" }),
+  svoyVpsOtmenit: () => {
+    if (hodVps && hodVps.faza === "idyot") {
+      for (const t of shagiVps) clearTimeout(t);
+      zakonchit(hodVps, "otmeneno");
+      hodVps.konec = new Date().toISOString();
+      izvestitHod();
+    }
+    return hodVps ? { ...hodVps } : { faza: "net" };
+  },
+  svoyVpsOsmotret: (v) => {
+    const adres = stroka(v.adres);
+    return nachatDelo("osmotr", undefined, [
+      (h) => {
+        if (adres === "203.0.113.66") {
+          zakonchit(h, "oshibka", { otkaz: { kod: "vps-login-failed", tekst: "сервер не принял пароль для root" } });
+          return;
+        }
+        h.put = PUT_PRYAMO;
+        zakonchit(h, "gotovo", {
+          osmotr: {
+            put: PUT_PRYAMO, root: true, klyuch_hosta_tip: "ssh-ed25519", klyuch_hosta: "c3RlbmQ=",
+            otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDE", sistema: "Ubuntu 24.04, x86_64, KVM, 1 ГБ памяти",
+            zamechaniya: [{ kod: "net-bbr", stop: false, tekst: "ядро без BBR: Affory включит его сам, если позволит система" }],
+            mozhno_stavit: true,
+          },
+        });
+      },
+    ], 1200);
+  },
+  svoyVpsUstanovit: (v) => {
+    const adres = stroka(v.adres);
+    const posle = (h: Zapis) => {
+      zakonchit(h, "gotovo", { ustanovlen: ustanovlen() });
+      svoi = [...svoi.filter((z) => z.id !== SVOY_ID), { ...svoyZapis(adres, 2087, 5443), proveren: new Date().toISOString(), klyuch_upravleniya: true }];
+      servery = [...servery.filter((s) => !s.id.startsWith(`${SVOY_ID}-`)), ...klyuchiSvoego(adres, 2087, 5443)];
+    };
+    const h = nachatDelo("ustanovka", SVOY_ID, [
+      (x) => { x.shag = "vhod"; },
+      (x) => { x.shag = "osmotr"; x.put = PUT_PRYAMO; },
+      (x) => { x.shag = "klyuch"; },
+      (x) => { x.shag = "programma"; },
+      (x) => { x.shag = "maska"; },
+      (x) => { x.shag = "sertifikat"; },
+      ...shagiPodbora(adres, SVOY === "ustanovka-otkaz"),
+      posle,
+    ]);
+    return h;
+  },
+  svoyVpsProverit: (v) => {
+    const z = poId(v);
+    return nachatDelo("proverka", stroka(z.id), [
+      (h) => { h.shag = "osmotr"; h.put = PUT_PRYAMO; },
+      (h) => {
+        const zhivo = SVOY !== "slomano";
+        zakonchit(h, "gotovo", {
+          proverka: {
+            versiya: "0.6.0", yadro_zhivo: zhivo,
+            ...(zhivo ? {} : { oshibka_yadra: "sing-box вышел с кодом 1: порт 2087 уже занят" }),
+            porty: [{ vid: "reality", port: z.reality, slushaet: zhivo }, { vid: "hy2", port: z.hy2, slushaet: zhivo }],
+            sert_do: z.sert_do, maska: "godna", pamyat_mb: 612, disk_mb: 18234,
+          },
+        });
+        z.proveren = new Date().toISOString();
+      },
+    ], 900);
+  },
+  svoyVpsPodobratPorty: (v) => {
+    const z = poId(v);
+    const reality = typeof v.reality === "number" ? v.reality : 2087;
+    const hy2 = typeof v.hy2 === "number" ? v.hy2 : 5443;
+    return nachatDelo("podbor", stroka(z.id), [
+      ...shagiPodbora(stroka(z.adres), false),
+      (h) => {
+        zakonchit(h, "gotovo", { ustanovlen: { ...ustanovlen(), klyuchi: [{ transport: "reality-tcp", port: reality, vid: "vezyot" }, { transport: "hy2", port: hy2, vid: "vezyot" }] } });
+        Object.assign(z, { reality, hy2, porty_ruchnye: typeof v.reality === "number" || typeof v.hy2 === "number" });
+        servery = [...servery.filter((s) => !s.id.startsWith(`${z.id}-`)), ...klyuchiSvoego(stroka(z.adres), reality, hy2)];
+      },
+    ]);
+  },
+  svoyVpsSnesti: (v) => {
+    const z = poId(v);
+    return nachatDelo("snos", stroka(z.id), [
+      (h) => { h.shag = "osmotr"; h.put = PUT_PRYAMO; },
+      (h) => {
+        zakonchit(h, "gotovo", { snyat: { parol_vernulsya: z.parol_vyklyuchen === true } });
+        ubratSvoego(stroka(z.id));
+      },
+    ], 1000);
+  },
+  svoyVpsOtpustit: (v) => {
+    const z = poId(v);
+    return nachatDelo("otpusk", stroka(z.id), [
+      (h) => {
+        zakonchit(h, "gotovo", { put: PUT_PRYAMO, otpushchen: { klyucha_ne_bylo: false } });
+        ubratSvoego(stroka(z.id));
+      },
+    ], 1000);
+  },
+  svoyVpsZabyt: (v) => {
+    if (hodVps && hodVps.faza === "idyot") throw new OtkazStenda("vps-busy", "сервер нельзя забыть, пока идёт дело с ним");
+    const z = poId(v);
+    ubratSvoego(stroka(z.id));
+    return { id: z.id };
+  },
+  svoyVpsVzyat: (v) => {
+    const z = svoi.find((x) => x.adres === stroka(v.adres));
+    return nachatDelo("vzyat", z ? stroka(z.id) : SVOY_ID, [
+      (h) => {
+        zakonchit(h, "gotovo", { put: PUT_PRYAMO });
+        if (z) z.klyuch_upravleniya = true;
+      },
+    ], 1000);
+  },
+  svoyVpsParol: (v) => {
+    const z = poId(v);
+    const vyklyuchit = v.vyklyuchit === true;
+    return nachatDelo("parol", stroka(z.id), [
+      (h) => {
+        zakonchit(h, "gotovo", { put: PUT_PRYAMO, parol: vyklyuchit ? { vyklyuchen: true } : { vyklyuchen: false, snaruzhi: "vklyuchen" } });
+        z.parol_vyklyuchen = vyklyuchit;
+      },
+    ], 900);
+  },
+  svoyVpsPrinyatKlyuchHosta: (v) => {
+    const z = poId(v);
+    if (stroka(v.otpechatok) !== stroka(z.novyy_otpechatok)) throw new OtkazStenda("vps-host-key-changed", "сервер предъявил уже другой ключ");
+    z.otpechatok = z.novyy_otpechatok;
+    delete z.novyy_otpechatok;
+    return { id: z.id };
+  },
+};
+
+// Установка, начатая до запуска окна: мастер обязан вернуться к ней сам.
+if (SVOY === "ustanovka" || SVOY === "ustanovka-otkaz") {
+  SVOY_OTVETY.svoyVpsUstanovit({ adres: SVOY_ADRES });
+}
+
 // Форма ответа повторяет службу поле в поле. Окно разбирает тело и падает
 // ЦЕЛИКОМ, если поля нет: первый же прогон обхода 19.09.2026 уронил раздел
 // «Настройки» нажатием «Проверить», потому что прежний `default` возвращал
@@ -485,6 +754,7 @@ const OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = {
 
   exportProfile: () => ({ profil: "QUZGT1JZLVBST0ZJTA==" }),
   importProfile: () => ({ prinyato: true }),
+  ...SVOY_OTVETY,
 };
 
 /** Команды, которых заглушка не знает.
@@ -516,6 +786,8 @@ const ZAPUSHCHENNYE = [
 export const Call = {
   async ByName(imya: string, ...args: unknown[]): Promise<unknown> {
     if (imya === "main.most.VybratPrilozhenie") throw new Error("В браузерном стенде выбор файла недоступен. В установленном Affory откроется окно выбора приложения.");
+    // Файла ключа в браузере нет: стенду нужно имя и непустое содержимое.
+    if (imya === "main.most.VybratKlyuchSsh") return { imya: "id_ed25519", base64: "c3RlbmQ=" };
     if (imya === "main.most.OtkrytPapkuZhurnalov") throw new Error("В браузерном стенде Проводник недоступен. В установленном Affory кнопка открывает папку журналов.");
     if (imya === "main.most.OtkrytNastroykiVremeni") throw new Error("В браузерном стенде настроек Windows нет. В установленном Affory кнопка открывает настройки даты и времени.");
     if (imya === "main.most.SluzhbaUstanovlena") return sluzhbaEst;
@@ -570,7 +842,12 @@ export const Call = {
           oshibka: { kod: "stend-ne-znaet-komandu", tekst: `подставной мост не знает команду ${komanda}` },
         });
       }
-      return JSON.stringify({ tip: "otvet", id: 1, imya: komanda, telo: otvetchik(vhod) });
+      try {
+        return JSON.stringify({ tip: "otvet", id: 1, imya: komanda, telo: otvetchik(vhod) });
+      } catch (e) {
+        if (!(e instanceof OtkazStenda)) throw e;
+        return JSON.stringify({ tip: "otvet", id: 1, imya: komanda, oshibka: { kod: e.kod, tekst: e.message } });
+      }
     }
     return null;
   },

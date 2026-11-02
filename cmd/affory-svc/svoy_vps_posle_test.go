@@ -575,7 +575,7 @@ func prinyatKlyuch(t *testing.T, s *Sluzhba, id, otpechatok string) protokol.Kad
 }
 
 // Сервер предъявил другой ключ: запись помнит его, карточка видит отпечаток,
-// «Я переустановил систему» принимает ровно этот ключ.
+// «Систему переустановили» принимает ровно этот ключ.
 func TestSvoyVpsPrinyatKlyuchHosta(t *testing.T) {
 	s := sPustymNaborom(t)
 	kh, novyy := klyuchHostaDlyaTesta(t), klyuchHostaDlyaTesta(t)

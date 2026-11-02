@@ -166,6 +166,10 @@ vi.mock("./most", () => ({
     stend.s.sled.push({ chto: "vybratPrilozhenie", args: [] });
     return "C:\\Program Files\\Steam\\steam.exe";
   },
+  vybratKlyuchSsh: async () => {
+    stend.s.sled.push({ chto: "vybratKlyuchSsh", args: [] });
+    return null;
+  },
   spisokProtsessov: async () => {
     if (stend.s.protsessyLomayutsya) throw new Error("список процессов не читается");
     if (stend.s.protsessyDerzhatsya)

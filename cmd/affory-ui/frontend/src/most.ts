@@ -175,6 +175,29 @@ export async function vybratArhiv(): Promise<string> {
   }
 }
 
+/** Файл ключа SSH для своего сервера: имя и содержимое в base64. */
+export interface FaylKlyucha {
+  imya: string;
+  base64: string;
+}
+
+/** Выбор и чтение закрытого ключа SSH (1.11.0). Файл читает оболочка, служба
+ *  получает только содержимое. null значит «закрыл диалог», сбой бросает. */
+export async function vybratKlyuchSsh(): Promise<FaylKlyucha | null> {
+  let otvet: unknown;
+  try {
+    otvet = await Call.ByName("main.most.VybratKlyuchSsh");
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e));
+  }
+  if (otvet == null) return null;
+  const o = otvet as { imya?: unknown; base64?: unknown };
+  if (typeof o.imya !== "string" || typeof o.base64 !== "string" || o.base64 === "") {
+    throw new Error("окно выбора ключа вернуло не файл");
+  }
+  return { imya: o.imya, base64: o.base64 };
+}
+
 /** One running process of this session, for the rules form. */
 export interface Zapushchennyy {
   imya: string;

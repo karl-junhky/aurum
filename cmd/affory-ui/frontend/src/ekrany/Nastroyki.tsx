@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { HodObnovleniya, OtkazNaEkrane, ProverkaSeti, RezultatProverki, ShagObnovleniya, Sostoyanie, StatusOtvet } from "../protokol";
 import { otlozhenaDo } from "./Pravila";
 import { Udalenie } from "./Udalenie";
-import { Knopka, Neudacha, Panel, Pole, Polosa, Ryad, RyadRazdela, Tumbler } from "./ui";
+import { Gruppa, Knopka, Neudacha, Panel, Pole, Polosa, Ryad, RyadRazdela, Tumbler } from "./ui";
 import {
   IkArhiv, IkDiagnostika, IkMonitor, IkObnovit,
   IkProfil, IkProksi, IkPusk, IkShchit, IkStrelkaVpravo,
@@ -814,21 +814,6 @@ export function Nastroyki({
           }
         />
       </div>
-    </section>
-  );
-}
-
-/** Группа настроек: заголовок, одна строка о том, что внутри, и панель. Три
- *  группы вместо одного длинного списка: человек ищет глазами раздел, а не
- *  двадцать четвёртую строку подряд. */
-function Gruppa({ nazvanie, poyasnenie, children }: { nazvanie: string; poyasnenie: string; children: ReactNode }) {
-  return (
-    <section aria-label={nazvanie} className="flex flex-col gap-3">
-      <div>
-        <h3 className="text-foreground text-[17px] font-semibold leading-tight">{nazvanie}</h3>
-        <p className="text-fg-muted mt-1 text-[13px]">{poyasnenie}</p>
-      </div>
-      {children}
     </section>
   );
 }

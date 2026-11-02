@@ -31,13 +31,14 @@ const BEZ_EKRANA = new Set(["not-implemented"]);
 const VSE_DEYSTVIYA: Deystvie[] = [
   "povtorit", "perepodklyuchitsya", "otkryt-servery", "obnovit-podpisku",
   "obnovit-programmu", "postavit-sluzhbu", "zaprosit-prava", "proverit-set",
-  "pokazat-vinovnika", "nastroit-vremya", "nichego",
+  "pokazat-vinovnika", "nastroit-vremya", "prinyat-klyuch-hosta", "pereustanovit-os",
+  "vzyat-pod-upravlenie", "otkryt-port-u-hostera", "poprosit-drugoy-adres", "nichego",
 ];
 
 describe("экраны отказов", () => {
   const kody = kodyIzGo().filter((k) => !BEZ_EKRANA.has(k));
 
-  it("коды прочитаны из kody.go, и их сорок девять", () => {
+  it("коды прочитаны из kody.go, и их шестьдесят шесть", () => {
     // Pinning the count is deliberate: a new code must fail here until the
     // screen for it exists, and an empty read must not pass as "all covered".
     // Тридцать восьмой это internal-error, заведён 04.09.2026 полосой З:
@@ -65,7 +66,10 @@ describe("экраны отказов", () => {
     // антивирусом, называлось несозданным адаптером и звало повторять.
     // Сорок девятый в тот же день: clock-skew. Со сбитыми часами серверы
     // отказывают при любом ключе, а человек шёл чинить сеть или подписку.
-    expect(kody.length).toBe(49);
+    // С пятидесятого по шестьдесят шестой заведены планом «Свой VPN»
+    // (2026-11-01): семнадцать кодов vps-* про свой сервер. Чинятся они
+    // по-разному: вход, ключ хоста, порты у хостера, занятость службы.
+    expect(kody.length).toBe(66);
   });
 
   it.each(kody)("у кода %s есть свой текст и действие из словаря", (kod) => {

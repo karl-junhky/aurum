@@ -57,6 +57,8 @@ export interface GlavnyyProps {
   spisokOtkaz?: OtkazNaEkrane | null;
   naDeystvie?: () => void;
   naServery?: () => void;
+  /** Раздел «Свой VPN»: второй путь к первому серверу из пустого списка. */
+  naSvoyServer?: () => void;
   naRezhim?: (r: Rezhim) => void;
   /** Ведёт к карточке обновления в настройках. Без него плашки в подвале нет
    *  вовсе: подпись, которая никуда не ведёт, хуже её отсутствия. */
@@ -188,6 +190,7 @@ export function Glavnyy({
   spisokOtkaz = null,
   naDeystvie,
   naServery,
+  naSvoyServer,
   naRezhim,
   pravila = null,
   zaderzhki = [],
@@ -491,9 +494,16 @@ export function Glavnyy({
                       : "Вставь ссылку на сервер или подписку"}
                   </span>
                   {!query && (
-                    <Knopka rang="glavnaya" className="mt-1" onClick={naServery}>
-                      Добавить сервер
-                    </Knopka>
+                    <div className="mt-1 flex flex-wrap justify-center gap-2">
+                      <Knopka rang="glavnaya" onClick={naServery}>
+                        Добавить сервер
+                      </Knopka>
+                      {naSvoyServer && (
+                        <Knopka rang="vtoraya" testId="glavnyy-svoy-server" onClick={naSvoyServer}>
+                          Поставить на свой сервер
+                        </Knopka>
+                      )}
+                    </div>
                   )}
                 </li>
               )}

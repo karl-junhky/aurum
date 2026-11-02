@@ -2,7 +2,7 @@ import { useRef } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { VKLADKI, nazvanieVkladki, type Vkladka } from "./vkladki";
 import { sleduyushchayaVkladka } from "./klavishi-vkladok";
-import { IkNastroyki, IkPodklyuchenie, IkPravila, IkRazvernut, IkSvernut, IkZakryt } from "../ikonki";
+import { IkNastroyki, IkPodklyuchenie, IkPravila, IkRazvernut, IkServer, IkSvernut, IkZakryt } from "../ikonki";
 import { ZnachokServisa } from "./ui";
 import sphere from "../assets/affory-sphere.png";
 import github from "../assets/github-white.svg";
@@ -11,7 +11,7 @@ import github from "../assets/github-white.svg";
 // tabs. Pure over props like every screen; minimise, maximise and close are
 // calls UP to App, which owns the bridge. This file never imports the runtime.
 //
-// Разделов в полосе три: «Серверы» остались вкладкой в коде, но в полосу не
+// Разделов в полосе четыре: «Серверы» остались вкладкой в коде, но в полосу не
 // выходят и открываются кнопкой «Управлять» на экране подключения.
 
 export interface KarkasProps {
@@ -24,6 +24,9 @@ export interface KarkasProps {
   /** First run (§9.2): tabs are disabled until the service exists. The
    *  window controls stay live so the window can still be closed. */
   zablokirovany?: boolean;
+  /** Точка у «Свой VPN», пока свой сервер «нужно внимание» (warn) или «не
+   *  работает» (danger): общий статус виден с любой вкладки (план, §4). */
+  metkaSvoegoVpn?: "warn" | "danger";
   children: ReactNode;
 }
 
@@ -36,6 +39,7 @@ const NE_TASHCHIT: CSSProperties = { ["--wails-draggable" as string]: "no-drag" 
 const ZNACHKI: Partial<Record<Vkladka, typeof IkPodklyuchenie>> = {
   podklyuchenie: IkPodklyuchenie,
   pravila: IkPravila,
+  "svoy-vpn": IkServer,
   nastroyki: IkNastroyki,
 };
 
@@ -43,7 +47,9 @@ const ZNACHKI: Partial<Record<Vkladka, typeof IkPodklyuchenie>> = {
 // поэтому и порядок для стрелок берётся отсюда, а не из общего VKLADKI.
 const VIDIMYE = VKLADKI.filter((v) => v !== "servery");
 
-export function Karkas({ vkladka, naVkladku, naSvernut, naRazvernut, naZakryt, naGitHub, zablokirovany = false, children }: KarkasProps) {
+const SLOVO_METKI = { warn: "нужно внимание", danger: "не работает" } as const;
+
+export function Karkas({ vkladka, naVkladku, naSvernut, naRazvernut, naZakryt, naGitHub, zablokirovany = false, metkaSvoegoVpn, children }: KarkasProps) {
   const knopki = useRef<(HTMLButtonElement | null)[]>([]);
   return (
     <div className="flex h-screen min-w-0 flex-col">
@@ -94,6 +100,14 @@ export function Karkas({ vkladka, naVkladku, naSvernut, naRazvernut, naZakryt, n
                   {aktivna && <span aria-hidden className="bg-fill-subtle absolute inset-x-1 inset-y-[7px] -z-10 rounded-md" />}
                   {Znachok && <Znachok className="h-[18px] w-[18px]" />}
                   <span className={aktivna ? "text-foreground" : undefined}>{nazvanieVkladki(v)}</span>
+                  {/* Точка, а не заливка: цвет здесь только меткой. Голосом
+                      состояние читается вместе с именем вкладки. */}
+                  {v === "svoy-vpn" && metkaSvoegoVpn && (
+                    <>
+                      <span aria-hidden data-testid="metka-svoego-vpn" className={`absolute top-[15px] right-2 h-1.5 w-1.5 rounded-full ${metkaSvoegoVpn === "warn" ? "bg-warn" : "bg-danger"}`} />
+                      <span className="sr-only">{`, ${SLOVO_METKI[metkaSvoegoVpn]}`}</span>
+                    </>
+                  )}
                   {aktivna && <span aria-hidden className="bg-accent-ink absolute inset-x-1 bottom-0 h-[2px] rounded-t" />}
                 </button>
               );

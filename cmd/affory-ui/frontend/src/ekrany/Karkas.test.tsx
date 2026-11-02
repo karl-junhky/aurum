@@ -8,9 +8,10 @@ afterEach(cleanup);
 const nichego = () => undefined;
 
 describe("каркас окна", () => {
-  it("вкладок ровно четыре и ровно те, что в §8.3", () => {
-    expect([...VKLADKI]).toEqual(["podklyuchenie", "pravila", "servery", "nastroyki"]);
-    expect(VKLADKI.map(nazvanieVkladki)).toEqual(["Подключение", "Правила", "Серверы", "Настройки"]);
+  // Четыре вкладки §8.3 и пятая «Свой VPN» по решению владельца 30.09.2026.
+  it("вкладок пять, «Свой VPN» между «Серверами» и «Настройками»", () => {
+    expect([...VKLADKI]).toEqual(["podklyuchenie", "pravila", "servery", "svoy-vpn", "nastroyki"]);
+    expect(VKLADKI.map(nazvanieVkladki)).toEqual(["Подключение", "Правила", "Серверы", "Свой VPN", "Настройки"]);
   });
 
   it("активная вкладка отмечена чернилами, не заливкой", () => {
@@ -83,16 +84,27 @@ it("GitHub opens through the shell without making the title bar draggable", () =
   expect(button.style.getPropertyValue("--wails-draggable")).toBe("no-drag");
 });
 
-// Редизайн 16.09.2026: разделов в полосе три. «Серверы» остались вкладкой в
-// коде (на них уводит кнопка «Управлять»), но собственной кнопки в полосе у
-// них больше нет: набор серверов живёт на экране подключения.
-describe("каркас: три раздела и третья кнопка окна", () => {
-  it("в полосе три раздела, «Серверы» в неё не выходят", () => {
+// Редизайн 16.09.2026: «Серверы» остались вкладкой в коде (на них уводит
+// кнопка «Управлять»), но собственной кнопки в полосе у них больше нет: набор
+// серверов живёт на экране подключения. С 1.11.0 в полосе четыре раздела.
+describe("каркас: разделы полосы и третья кнопка окна", () => {
+  it("в полосе четыре раздела, «Серверы» в неё не выходят", () => {
     render(<Karkas vkladka="podklyuchenie" naVkladku={nichego} naSvernut={nichego} naZakryt={nichego}>x</Karkas>);
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
-      "Подключение", "Правила", "Настройки",
+      "Подключение", "Правила", "Свой VPN", "Настройки",
     ]);
     expect(screen.queryByRole("tab", { name: "Серверы" })).toBeNull();
+  });
+
+  it("метка своего сервера видна точкой и слышна голосом", () => {
+    render(<Karkas vkladka="podklyuchenie" naVkladku={nichego} naSvernut={nichego} naZakryt={nichego} metkaSvoegoVpn="danger">x</Karkas>);
+    const vkladka = screen.getByRole("tab", { name: /Свой VPN/ });
+    expect(vkladka).toHaveAccessibleName("Свой VPN, не работает");
+    expect(screen.getByTestId("metka-svoego-vpn").className).toMatch(/bg-danger/);
+    cleanup();
+    render(<Karkas vkladka="podklyuchenie" naVkladku={nichego} naSvernut={nichego} naZakryt={nichego}>x</Karkas>);
+    expect(screen.queryByTestId("metka-svoego-vpn")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Свой VPN" })).toBeTruthy();
   });
 
   it("на вкладке серверов подсвечено «Подключение»: полоса не теряет место", () => {
@@ -107,14 +119,16 @@ describe("каркас: три раздела и третья кнопка ок�
     const na = vi.fn();
     render(<Karkas vkladka="podklyuchenie" naVkladku={na} naSvernut={nichego} naZakryt={nichego}>x</Karkas>);
     const vkladki = screen.getAllByRole("tab");
-    expect(vkladki.map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+    expect(vkladki.map((t) => t.tabIndex)).toEqual([0, -1, -1, -1]);
     fireEvent.keyDown(vkladki[0], { key: "ArrowRight" });
     expect(na).toHaveBeenLastCalledWith("pravila");
+    fireEvent.keyDown(vkladki[1], { key: "ArrowRight" });
+    expect(na).toHaveBeenLastCalledWith("svoy-vpn");
     fireEvent.keyDown(vkladki[0], { key: "ArrowLeft" });
     expect(na).toHaveBeenLastCalledWith("nastroyki");
     fireEvent.keyDown(vkladki[0], { key: "End" });
     expect(na).toHaveBeenLastCalledWith("nastroyki");
-    fireEvent.keyDown(vkladki[2], { key: "Home" });
+    fireEvent.keyDown(vkladki[3], { key: "Home" });
     expect(na).toHaveBeenLastCalledWith("podklyuchenie");
     na.mockClear();
     fireEvent.keyDown(vkladki[0], { key: "a" });

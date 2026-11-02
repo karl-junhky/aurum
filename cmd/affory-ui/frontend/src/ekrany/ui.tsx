@@ -293,13 +293,17 @@ export function Segment<T extends string>({ znacheniya, vybrano, naVybor, aktive
  *
  *  `priv` exists so a screen can put the caret where the human is about to
  *  type. Nothing else reaches into the input from outside. */
-export function Pole({ testId, znachenie, naVvod, placeholder, aktiven = true, tip = "text", priv, "aria-label": podpis, className = "" }: {
+export function Pole({ testId, znachenie, naVvod, placeholder, aktiven = true, tip = "text", oshibka = false, priv, "aria-label": podpis, className = "" }: {
   testId?: string;
   znachenie: string;
   naVvod: (v: string) => void;
   placeholder?: string;
   aktiven?: boolean;
-  tip?: "text" | "search";
+  /** password прячет знаки и не зовёт браузерную память паролей. */
+  tip?: "text" | "search" | "password";
+  /** Значение не годится: поле так и объявляется голосом. Текст ошибки
+   *  экран ставит рядом сам. */
+  oshibka?: boolean;
   priv?: Ref<HTMLInputElement>;
   "aria-label"?: string;
   className?: string;
@@ -310,6 +314,8 @@ export function Pole({ testId, znachenie, naVvod, placeholder, aktiven = true, t
       ref={priv}
       data-testid={testId}
       aria-label={podpis}
+      aria-invalid={oshibka || undefined}
+      autoComplete={tip === "password" ? "off" : undefined}
       value={znachenie}
       disabled={!aktiven}
       placeholder={placeholder}

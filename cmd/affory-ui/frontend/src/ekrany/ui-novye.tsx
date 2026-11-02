@@ -150,6 +150,73 @@ export function Svorachivaemyy({ zagolovok, poyasnenie, deti, otkrytPoUmolchaniy
   );
 }
 
+/** Группа раздела: заголовок, строка о том, что внутри, и панель. Одна на
+ *  настройки и «Свой VPN»: раздел в полосе читается одной грамматикой. */
+export function Gruppa({ nazvanie, poyasnenie, children }: { nazvanie: string; poyasnenie?: string; children: ReactNode }) {
+  return (
+    <section aria-label={nazvanie} className="flex flex-col gap-3">
+      <div>
+        <h3 className="text-foreground text-[17px] font-semibold leading-tight">{nazvanie}</h3>
+        {poyasnenie && <p className="text-fg-muted mt-1 text-[13px]">{poyasnenie}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Окно подтверждения поверх экрана: вопрос, что случится, и ответы. Та же
+ *  подложка и тот же порядок, что у окна ключа (Vygruzka.tsx): Esc и щелчок
+ *  мимо закрывают, фокус встаёт в окно. */
+export function OknoPodtverzhdeniya({ zagolovok, children, otvety, naOtmenu, testId }: {
+  zagolovok: string;
+  children: ReactNode;
+  /** Кнопки ответов, «Отмена» окно ставит само последней. */
+  otvety: ReactNode;
+  naOtmenu: () => void;
+  testId?: string;
+}) {
+  const okno = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const naKlavishu = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") naOtmenu();
+    };
+    document.addEventListener("keydown", naKlavishu);
+    okno.current?.focus();
+    return () => document.removeEventListener("keydown", naKlavishu);
+  }, [naOtmenu]);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) naOtmenu();
+      }}
+    >
+      <div
+        ref={okno}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={zagolovok}
+        data-testid={testId}
+        className="border-border bg-surface flex max-h-[85vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-xl border p-5 focus-visible:outline-none"
+      >
+        <h3 className="text-foreground text-base font-semibold">{zagolovok}</h3>
+        <div className="text-fg-secondary flex flex-col gap-2 text-[13px] leading-relaxed">{children}</div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {otvety}
+          <button
+            type="button"
+            onClick={naOtmenu}
+            className="text-fg-muted hover:text-foreground inline-flex h-8 items-center px-1.5 text-[13px] font-medium"
+          >
+            Отмена
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Строка-раздел: значок, название, пояснение, содержимое под ней. */
 export function RyadRazdela({ znachok, nazvanie, poyasnenie, otkryt, naZhmyh, deti, testId }: {
   znachok: ReactNode;

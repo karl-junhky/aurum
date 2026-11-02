@@ -108,7 +108,7 @@ export const podpisDeystviya: Record<Deystvie, string | null> = {
   "proverit-set": "Проверить сеть",
   "pokazat-vinovnika": null,
   "nastroit-vremya": "Настроить время",
-  "prinyat-klyuch-hosta": "Я переустановил систему",
+  "prinyat-klyuch-hosta": "Систему переустановили",
   "pereustanovit-os": null,
   "vzyat-pod-upravlenie": "Взять под управление",
   "otkryt-port-u-hostera": null,

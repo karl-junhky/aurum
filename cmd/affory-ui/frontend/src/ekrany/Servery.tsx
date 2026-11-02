@@ -349,7 +349,8 @@ export function Servery({ status, spisok, spisokOtkaz = null, obnovitSpisok, naK
   // это одним словом, а хвост строки («пропал из подписки», «добавлен вручную»)
   // после него не нужен: он говорил то же самое на каждой строке.
   //
-  // Порядок полос задан смыслом, а не алфавитом: подписка, её остатки, ручные.
+  // Порядок полос задан смыслом, а не алфавитом: подписка, её остатки, свои
+  // серверы по адресу, ручные.
   // Порядок ВНУТРИ полосы оставлен тот, что прислала служба: его задаёт сама
   // подписка, и своя сортировка меняла бы список под руками на каждом обходе.
   const polosy = useMemo(() => {
@@ -366,10 +367,15 @@ export function Servery({ status, spisok, spisokOtkaz = null, obnovitSpisok, naK
         podpis: "Пропали из подписки, работают до переподключения",
         servery: vidimye.filter((s) => s.uderzhan),
       },
+      ...[...new Set(vidimye.filter((s) => s.svoy && !s.iz_podpiski && !s.uderzhan).map((s) => s.host))].map((host) => ({
+        klyuch: `svoy:${host}`,
+        podpis: `Свой сервер ${host}`,
+        servery: vidimye.filter((s) => s.svoy && !s.iz_podpiski && !s.uderzhan && s.host === host),
+      })),
       {
         klyuch: "ruchnye",
         podpis: "Добавлены вручную",
-        servery: vidimye.filter((s) => !s.iz_podpiski && !s.uderzhan),
+        servery: vidimye.filter((s) => !s.iz_podpiski && !s.uderzhan && !s.svoy),
       },
     ].filter((p) => p.servery.length > 0);
   }, [vidimye, stroki]);

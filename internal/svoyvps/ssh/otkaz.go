@@ -91,7 +91,7 @@ type Otkaz struct {
 	Podrobno string
 	// Predyavlen это ключ хоста, который показал сервер, когда причина
 	// PrichinaKlyuchHostaSmenilsya: его отпечаток человек сверяет перед
-	// «Я переустановил систему».
+	// «Систему переустановили».
 	Predyavlen *KlyuchHosta
 	// Podozhdat это сколько ждать до следующей попытки при
 	// PrichinaRanoPovtoryat, в секундах.

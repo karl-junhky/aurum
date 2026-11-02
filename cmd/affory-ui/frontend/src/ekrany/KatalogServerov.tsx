@@ -13,7 +13,13 @@ export function gruppyServerov(servery: Server[], podpiski: PodpiskaNaEkrane[], 
   if (!podpiski.length && aktualnye.some(s => s.iz_podpiski)) {
     gruppy.push({ id: "podpiska", imya: uzel || "Подписка", servery: aktualnye.filter(s => s.iz_podpiski) });
   }
-  const ruchnye = aktualnye.filter(s => !s.iz_podpiski);
+  // Ключи своего сервера полосой по адресу, а не среди ручных: их поставил
+  // раздел «Свой VPN», и откуда они, видно по заголовку (план 2026-11-01, §4.1).
+  const svoi = aktualnye.filter(s => !s.iz_podpiski && s.svoy);
+  for (const host of new Set(svoi.map(s => s.host))) {
+    gruppy.push({ id: `svoy:${host}`, imya: `Свой сервер ${host}`, servery: svoi.filter(s => s.host === host) });
+  }
+  const ruchnye = aktualnye.filter(s => !s.iz_podpiski && !s.svoy);
   if (ruchnye.length) gruppy.push({ id: "ruchnye", imya: "Добавлены вручную", servery: ruchnye });
   return gruppy;
 }

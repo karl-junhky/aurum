@@ -48,6 +48,9 @@ type Most interface {
 	VybratOtkuda() (string, error)
 	SohranitProfil(put string, profil string) error
 	ProchitatProfil(put string) (string, error)
+	// Ключ SSH для своего сервера (1.11.0): окно читает файл само, путь
+	// службе не уходит.
+	VybratKlyuchSsh() (*klyuchSsh, error)
 	// Rules form (§5 п.1): processes of THIS session, which the service in
 	// session 0 cannot see.
 	SpisokProtsessov() ([]Protsess, error)
@@ -684,7 +687,7 @@ func kanalZakrytKadr() string {
 // пришёл в канал, и разовое повышение одной команды ей не показать никак.
 // vkladkiOkna это ЗАКРЫТЫЙ набор: строка уходит в командную строку нового
 // процесса, и принимать сюда что угодно значит пускать чужой текст в запуск.
-var vkladkiOkna = map[string]bool{"podklyuchenie": true, "pravila": true, "servery": true, "nastroyki": true}
+var vkladkiOkna = map[string]bool{"podklyuchenie": true, "pravila": true, "servery": true, "svoy-vpn": true, "nastroyki": true}
 
 // StartovayaVkladka читает флаг вкладки из своей же командной строки.
 func (m *most) StartovayaVkladka() string {

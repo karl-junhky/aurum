@@ -45,6 +45,7 @@ export const IkObnovit = (p: P) => (<Shtrih {...p}><path d="M20 12a8 8 0 11-2.6-
 export const IkArhiv = (p: P) => (<Shtrih {...p}><rect x="4" y="4" width="16" height="16" rx="2.2" /><path d="M11 4v6l1.5-1.3L14 10V4" /></Shtrih>);
 export const IkZakrepit = (p: P) => (<Shtrih {...p}><path d="M8 3h8l-1 7 3 3v2H6v-2l3-3-1-7zM12 15v6" /></Shtrih>);
 export const IkServer = (p: P) => (<Shtrih {...p}><rect x="3.8" y="4.5" width="16.4" height="6" rx="1.8" /><rect x="3.8" y="13.5" width="16.4" height="6" rx="1.8" /><path d="M7.3 7.5h.01M7.3 16.5h.01" /></Shtrih>);
+export const IkVnimanie = (p: P) => (<Shtrih strokeWidth={1.8} {...p}><circle cx="12" cy="12" r="8.4" /><path d="M12 7.8v5M12 16.2h.01" /></Shtrih>);
 export const IkPitanie = (p: P) => (<Shtrih {...p}><path d="M12 3.8v7.4" /><path d="M17.2 6.6a7 7 0 11-10.4 0" /></Shtrih>);
 export const IkPlyus = (p: P) => (<Shtrih strokeWidth={1.9} {...p}><path d="M12 5.5v13M5.5 12h13" /></Shtrih>);
 export const IkTochki = (p: P) => (<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}><circle cx="6" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="18" cy="12" r="1.6" /></svg>);

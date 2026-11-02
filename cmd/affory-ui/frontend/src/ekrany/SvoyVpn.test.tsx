@@ -1,0 +1,474 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useCallback, useState } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
+  punktyOsmotra, teloDostupa, zanyatyeDlyaReality,
+} from "./SvoyVpn";
+import {
+  PUSTAYA_FORMA, type HodVps, type ItogKomandy, type Master, type OsmotrVps, type SvoyServer, type SvoyVps,
+} from "../svoyVps";
+
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+
+const SEYCHAS = () => new Date().toISOString();
+
+function server(dop: Partial<SvoyServer> = {}): SvoyServer {
+  return {
+    id: "svoy-1", imya: "Мой сервер", adres: "203.0.113.40", port_ssh: 22, polzovatel: "root",
+    parol_vyklyuchen: false, maska: "www.example.net", reality: 2087, hy2: 5443, porty_ruchnye: false,
+    prodlenie: "80", servery: ["k-r", "k-h"], sert_trevoga: false, klyuch_upravleniya: true,
+    proveren: SEYCHAS(), ...dop,
+  };
+}
+
+function hod(dop: Partial<HodVps>): HodVps {
+  return { id: 1, vid: "proverka", faza: "gotovo", proverki: [], otseyany: [], preduprezhdeniya: [], ...dop };
+}
+
+function osmotr(dop: Partial<OsmotrVps> = {}): OsmotrVps {
+  return {
+    put: "напрямую через Ethernet", root: true, klyuch_hosta_tip: "ssh-ed25519", klyuch_hosta: "S0g=",
+    otpechatok: "SHA256:abc", sistema: "Ubuntu 24.04, x86_64", zamechaniya: [], mozhno_stavit: true, ...dop,
+  };
+}
+
+type Otvety = Record<string, (telo: Record<string, unknown>) => ItogKomandy>;
+
+/** Раздел с подставным useSvoyVps: мастер и ход живут в состоянии обёртки,
+ *  команды пишутся в журнал и отвечают по таблице. */
+function stend({ servery = [], hody = [], master = null, otvety = {} }: {
+  servery?: SvoyServer[] | null;
+  hody?: HodVps[];
+  master?: Master | null;
+  otvety?: Otvety;
+} = {}) {
+  const vyzovy: [string, Record<string, unknown>][] = [];
+  const naPodklyuchit = vi.fn();
+  const ochistitBufer = vi.fn(async () => true);
+  const vybratKlyuch = vi.fn(async () => ({ imya: "id_ed25519", base64: "a2V5" }));
+  const skopirovat = vi.fn(async () => {});
+  const obnovit = vi.fn();
+  const skryt = vi.fn();
+  const sostoyanie: { master: Master | null; zadatHody: (f: (h: HodVps[]) => HodVps[]) => void } = { master, zadatHody: () => {} };
+
+  function Obertka() {
+    const [m, zadatMaster] = useState<Master | null>(master);
+    const [h, zadatHody] = useState<HodVps[]>(hody);
+    // Как в окне: открытие раздела перечитывает список, и приходит новый снимок.
+    const [sp, zadatSp] = useState<SvoyServer[] | null>(servery);
+    const perechitat = useCallback(() => {
+      obnovit();
+      zadatSp((x) => (x === null ? x : [...x]));
+    }, []);
+    sostoyanie.master = m;
+    sostoyanie.zadatHody = zadatHody;
+    const svoy: SvoyVps = {
+      servery: sp, spisokOtkaz: null, hody: h, master: m, zadatMaster, skryty: [], skryt, obnovit: perechitat,
+      komanda: async (imya, telo) => {
+        const t = (telo ?? {}) as Record<string, unknown>;
+        vyzovy.push([imya, t]);
+        const r = otvety[imya]?.(t) ?? { telo: {} };
+        if ("hod" in r) zadatHody((pr) => [...pr.filter((x) => x.id !== r.hod.id), r.hod]);
+        return r;
+      },
+      adresServera: () => "203.0.113.40",
+    };
+    return (
+      <SvoyVpn
+        svoy={svoy} trevogi={[]} aktiven naPodklyuchit={naPodklyuchit} naServery={vi.fn()} skopirovat={skopirovat}
+        kodyQr={async () => []} vybratKlyuch={vybratKlyuch} ochistitBufer={ochistitBufer} versiya="Affory 1.11.0"
+      />
+    );
+  }
+  render(<Obertka />);
+  return {
+    vyzovy, naPodklyuchit, ochistitBufer, vybratKlyuch, skopirovat,
+    master: () => sostoyanie.master,
+    imena: () => vyzovy.map(([i]) => i),
+    prishyol: (x: HodVps) => act(() => sostoyanie.zadatHody((pr) => [...pr.filter((y) => y.id !== x.id), x])),
+  };
+}
+
+const PISMO = ["Your server is ready", "", "IP address: 203.0.113.10", "Username: root", "Password: primer-parolya", "SSH port: 22"].join("\n");
+
+describe("пустой раздел", () => {
+  it("ведёт в мастер на шаг «Доступ»", () => {
+    const s = stend();
+    fireEvent.click(screen.getByTestId("svoy-postavit"));
+    expect(s.master()).toMatchObject({ shag: "dostup", cel: "postavit" });
+    expect(screen.getByRole("list", { name: "Шаги установки" })).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Шаги установки" })).getByText("Доступ").closest("li")).toHaveAttribute("aria-current", "step");
+  });
+});
+
+describe("шаг «Доступ»", () => {
+  const nachalo: Master = { shag: "dostup", cel: "postavit", forma: PUSTAYA_FORMA };
+
+  it("письмо хостера разбирается по полям, пароль из буфера предлагается стереть", async () => {
+    const s = stend({ master: nachalo });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO } });
+    expect(screen.getByTestId("svoy-adres")).toHaveValue("203.0.113.10");
+    expect(screen.getByTestId("svoy-parol")).toHaveValue("primer-parolya");
+    expect(screen.getByText("Пароль остался в буфере обмена")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("svoy-ochistit-bufer"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Буфер очищен"));
+    expect(s.ochistitBufer).toHaveBeenCalledWith("primer-parolya");
+  });
+
+  it("правка письма не затирает поле, поправленное руками", () => {
+    stend({ master: nachalo });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO } });
+    fireEvent.change(screen.getByTestId("svoy-parol"), { target: { value: "ispravlennyy" } });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO.replace("Your server is ready", "") } });
+    expect(screen.getByTestId("svoy-parol")).toHaveValue("ispravlennyy");
+    // Адрес руками не трогали: исправление в письме до него доходит.
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO.replace("203.0.113.10", "203.0.113.11") } });
+    expect(screen.getByTestId("svoy-adres")).toHaveValue("203.0.113.11");
+  });
+
+  it("письмо, вставленное после очистки поля, берёт всё заново", () => {
+    stend({ master: nachalo });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO } });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: "" } });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), {
+      target: { value: PISMO.replace("203.0.113.10", "203.0.113.12").replace("primer-parolya", "drugoy-parol") },
+    });
+    expect(screen.getByTestId("svoy-adres")).toHaveValue("203.0.113.12");
+    expect(screen.getByTestId("svoy-parol")).toHaveValue("drugoy-parol");
+  });
+
+  it("набор по знаку не считается вставкой", () => {
+    stend({ master: { ...nachalo, forma: { ...PUSTAYA_FORMA, soobshchenie: PISMO.slice(0, -1) } } });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO } });
+    expect(screen.queryByText("Пароль остался в буфере обмена")).toBeNull();
+  });
+
+  it("переход на ключ стирает пароль и письмо, файл выбирается окном", async () => {
+    const s = stend({ master: nachalo });
+    fireEvent.change(screen.getByTestId("svoy-soobshchenie"), { target: { value: PISMO } });
+    fireEvent.click(screen.getByRole("radio", { name: "Ключ" }));
+    expect(screen.getByTestId("svoy-soobshchenie")).toHaveValue("");
+    expect(screen.queryByTestId("svoy-parol")).toBeNull();
+    expect(s.master()).toMatchObject({ forma: { parol: "", soobshchenie: "", sposob: "klyuch" } });
+    fireEvent.click(screen.getByTestId("svoy-vybrat-klyuch"));
+    await waitFor(() => expect(screen.getByText("id_ed25519")).toBeInTheDocument());
+  });
+
+  it("имя вместо адреса и reality на порту SSH не пускают дальше", () => {
+    stend({ master: { ...nachalo, forma: { ...PUSTAYA_FORMA, adres: "vps.example.net", parol: "x" } } });
+    expect(screen.getByText("нужен IP-адрес из письма хостера, а не имя")).toBeInTheDocument();
+    expect(screen.getByTestId("svoy-dalshe")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("svoy-adres"), { target: { value: "203.0.113.10" } });
+    expect(screen.getByTestId("svoy-dalshe")).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /Дополнительно/ }));
+    fireEvent.change(screen.getByLabelText("reality, TCP"), { target: { value: "22" } });
+    expect(screen.getByText("22 занят входом по SSH")).toBeInTheDocument();
+    expect(screen.getByTestId("svoy-dalshe")).toBeDisabled();
+  });
+
+  it("в службу уходят только поля входа, письмо остаётся в окне", async () => {
+    const s = stend({
+      master: { ...nachalo, forma: { ...PUSTAYA_FORMA, soobshchenie: PISMO, adres: "203.0.113.10", parol: "primer-parolya" } },
+      otvety: { svoyVpsOsmotret: () => ({ hod: hod({ id: 10, vid: "osmotr", faza: "idyot", shag: "vhod" }) }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-dalshe"));
+    await waitFor(() => expect(s.master()?.shag).toBe("proverka"));
+    expect(s.vyzovy[0]).toEqual(["svoyVpsOsmotret", { adres: "203.0.113.10", port: 22, polzovatel: "root", parol: "primer-parolya" }]);
+    expect(s.master()).toMatchObject({ forma: { soobshchenie: "" } });
+  });
+
+  it("отказ осмотра возвращает на доступ с причиной", async () => {
+    const s = stend({
+      master: { ...nachalo, forma: { ...PUSTAYA_FORMA, adres: "203.0.113.10", parol: "x" } },
+      otvety: { svoyVpsOsmotret: () => ({ otkaz: { kod: "vps-busy", tekst: "служба занята" } }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-dalshe"));
+    await waitFor(() => expect(s.master()).toMatchObject({ shag: "dostup", otkaz: { kod: "vps-busy" } }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Служба занята");
+  });
+});
+
+describe("шаг «Проверка»", () => {
+  const forma = { ...PUSTAYA_FORMA, adres: "203.0.113.10", parol: "primer-parolya" };
+
+  it("пункты осмотра, согласие на пустой сервер и установка", async () => {
+    const s = stend({
+      master: { shag: "proverka", forma, id: 10, pustoy: false },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr({ zamechaniya: [{ kod: "net-bbr", stop: false, tekst: "ядро без BBR" }] }) })],
+      otvety: { svoyVpsUstanovit: () => ({ hod: hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "zagruzka" }) }) },
+    });
+    const punkty = screen.getByTestId("svoy-punkty");
+    expect(punkty).toHaveTextContent("Ubuntu 24.04");
+    expect(punkty).toHaveTextContent("Скорость");
+    expect(punkty).toHaveTextContent("есть замечание");
+    expect(screen.getByTestId("svoy-postavit-vpn")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("svoy-pustoy"));
+    fireEvent.click(screen.getByTestId("svoy-postavit-vpn"));
+    await waitFor(() => expect(s.master()).toMatchObject({ shag: "ustanovka", id: 11 }));
+    const [imya, telo] = s.vyzovy[0];
+    expect(imya).toBe("svoyVpsUstanovit");
+    expect(telo).toMatchObject({ adres: "203.0.113.10", pustoy: true, klyuch_hosta_tip: "ssh-ed25519", klyuch_hosta: "S0g=", imya: "" });
+    expect(telo).not.toHaveProperty("soobshchenie");
+  });
+
+  it("свой Affory без ключа этого компьютера: только взять под управление", async () => {
+    const s = stend({
+      master: { shag: "proverka", forma, id: 10, pustoy: false },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr({ mozhno_stavit: false, zamechaniya: [{ kod: "uzhe-stoit", stop: true, tekst: "Affory уже стоит" }] }) })],
+      otvety: { svoyVpsVzyat: () => ({ hod: hod({ id: 12, vid: "vzyat", faza: "idyot", server: "svoy-1" }) }) },
+    });
+    expect(screen.queryByTestId("svoy-postavit-vpn")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Взять под управление" }));
+    await waitFor(() => expect(s.master()).toBeNull());
+    expect(s.vyzovy[0]).toEqual(["svoyVpsVzyat", expect.objectContaining({ adres: "203.0.113.10", klyuch_hosta: "S0g=" })]);
+  });
+
+  it("путь через свой VPN называется VPN, а не словом службы", () => {
+    const p = punktyOsmotra(hod({ vid: "osmotr", osmotr: osmotr({ put: "через т" + "уннель" }) }), "parol", 22);
+    expect(p.find((x) => x.imya === "Путь")).toMatchObject({ itog: "vnimanie", podrobno: expect.stringContaining("через VPN") });
+  });
+});
+
+describe("шаг «Установка»", () => {
+  it("фишки подбора с причинами, отмена идущей установки", async () => {
+    const s = stend({
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({
+        id: 11, vid: "ustanovka", faza: "idyot", shag: "podbor",
+        otseyany: [{ proto: "tcp", port: 22, prichina: "ssh" }],
+        proverki: [{ transport: "reality-tcp", port: 443, vid: "net-otveta" }, { transport: "reality-tcp", port: 2087, vid: "vezyot" }],
+        klyuch: { transport: "hy2", port: 5443 },
+      })],
+    });
+    const reality = screen.getByRole("list", { name: "Порты reality, TCP" });
+    expect(within(reality).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "22не прошёл: на нём вход SSH", "443не прошёл: не ответил", "2087прошёл",
+    ]);
+    expect(within(screen.getByRole("list", { name: "Порты hysteria2, UDP" })).getByText(/проверяется/)).toBeInTheDocument();
+    expect(screen.getByText("Пробую 5443 по UDP для hysteria2")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("svoy-otmenit-ustanovku"));
+    await waitFor(() => expect(s.imena()).toContain("svoyVpsOtmenit"));
+  });
+
+  it("отмена, не дошедшая до службы, видна", async () => {
+    stend({
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "zagruzka" })],
+      otvety: { svoyVpsOtmenit: () => ({ otkaz: { kod: "oshibka-obolochki", tekst: "служба не отвечает" } }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-otmenit-ustanovku"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Служба не отвечает"));
+  });
+
+
+  it("на проверке готовых ключей прошедший порт не крутится снова", () => {
+    stend({
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({
+        id: 11, vid: "ustanovka", faza: "idyot", shag: "proverka",
+        proverki: [{ transport: "reality-tcp", port: 2087, vid: "vezyot" }],
+        klyuch: { transport: "reality-tcp", port: 2087 },
+      })],
+    });
+    expect(within(screen.getByRole("list", { name: "Порты reality, TCP" })).getByRole("listitem")).toHaveTextContent("2087прошёл");
+    expect(screen.queryByText(/Пробую/)).toBeNull();
+    expect(screen.getByText("reality 2087: 2 МБ через ключ")).toBeInTheDocument();
+  });
+
+  it("упавшая установка без пароля в памяти ведёт ввести доступ заново", () => {
+    const s = stend({
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({ id: 11, vid: "ustanovka", faza: "oshibka", shag: "podbor", server: "svoy-1", otkaz: { kod: "vps-ports-failed", tekst: "ни один порт не прошёл" } })],
+    });
+    expect(screen.getByText(/Для повтора введи доступ к серверу заново/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ввести доступ" }));
+    expect(s.master()).toMatchObject({ shag: "dostup", forma: { adres: "203.0.113.40" } });
+    // Итог увиден: окно, открытое заново, к нему не вернётся.
+    expect(localStorage.getItem("affory.svoy-vps.uvidennaya-ustanovka")).toBe("11");
+  });
+
+  it("готово: подключение к ключу, который провёз проверку, и ключи для телефона", async () => {
+    const s = stend({
+      servery: [server()],
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({
+        id: 11, vid: "ustanovka", faza: "gotovo",
+        ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087, vid: "net-otveta" }, { transport: "hy2", port: 5443, vid: "vezyot" }], ids: ["k-r", "k-h"] },
+      })],
+      otvety: {
+        exportServers: () => ({ telo: { tekst: "hy2://x@203.0.113.40:5443", base64: "aA==", servery: [{ id: "k-h", imya: "Мой сервер hy2", transport: "hy2", adres: "203.0.113.40:5443", ssylka: "hy2://x@203.0.113.40:5443" }] } }),
+      },
+    });
+    fireEvent.click(screen.getByTestId("svoy-klyuchi-telefona"));
+    await waitFor(() => expect(s.vyzovy).toContainEqual(["exportServers", { ids: ["k-r", "k-h"] }]));
+    fireEvent.click(screen.getByTestId("svoy-podklyuchit"));
+    expect(s.naPodklyuchit).toHaveBeenCalledWith("k-h");
+    expect(s.master()).toBeNull();
+  });
+});
+
+describe("карточка сервера", () => {
+  it("свежая проверка видела мёртвый VPN: «не работает» с причиной", () => {
+    stend({
+      servery: [server()],
+      hody: [hod({ server: "svoy-1", proverka: { yadro_zhivo: false, oshibka_yadra: "порт занят", porty: [], maska: "godna", pamyat_mb: 1, disk_mb: 1 } })],
+    });
+    expect(screen.getByTestId("svoy-sostoyanie")).toHaveTextContent("не работает");
+    expect(screen.getByText("VPN на сервере не запущен")).toBeInTheDocument();
+  });
+
+  it("сменившийся ключ хоста: принять и сразу проверить", async () => {
+    const s = stend({
+      servery: [server({ novyy_otpechatok: "SHA256:new" })],
+      otvety: { svoyVpsProverit: () => ({ hod: hod({ id: 5, server: "svoy-1", faza: "idyot" }) }) },
+    });
+    expect(screen.getByTestId("svoy-klyuch-hosta")).toHaveTextContent("SHA256:new");
+    fireEvent.click(screen.getByRole("button", { name: "Систему переустановили" }));
+    await waitFor(() => expect(s.imena()).toEqual(["svoyVpsPrinyatKlyuchHosta", "svoyVpsProverit"]));
+    expect(s.vyzovy[0][1]).toEqual({ id: "svoy-1", otpechatok: "SHA256:new" });
+  });
+
+  it("ключ управления на другом компьютере: захват через мастер с адресом", () => {
+    const s = stend({ servery: [server({ klyuch_upravleniya: false, port_ssh: 2222 })] });
+    expect(screen.getByTestId("svoy-proverit")).toBeDisabled();
+    fireEvent.click(within(screen.getByTestId("svoy-bez-klyucha")).getByRole("button", { name: "Взять под управление" }));
+    expect(s.master()).toMatchObject({ shag: "dostup", cel: "vzyat", forma: { adres: "203.0.113.40", portSshPolya: "2222" } });
+    expect(screen.getByTestId("svoy-dalshe")).toHaveTextContent("Взять под управление");
+  });
+
+  it("снос только после подтверждения", async () => {
+    const s = stend({ servery: [server()] });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Снести с сервера" }));
+    expect(s.vyzovy).toEqual([]);
+    expect(screen.getByRole("dialog")).toHaveTextContent("Снести VPN с сервера 203.0.113.40?");
+    fireEvent.click(screen.getByTestId("svoy-snesti-da"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsSnesti", { id: "svoy-1" }]]));
+  });
+
+  it("«забыть» спрашивает, снимать ли ключ с сервера", async () => {
+    const s = stend({ servery: [server()] });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Забыть сервер" }));
+    fireEvent.click(screen.getByTestId("svoy-zabyt-snyat"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsOtpustit", { id: "svoy-1" }]]));
+  });
+
+  it("порты руками: reality на порту SSH сервера не пускается", () => {
+    stend({ servery: [server({ port_ssh: 2222 })] });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Задать порты" }));
+    fireEvent.change(within(screen.getByTestId("svoy-zadat-porty")).getByLabelText("reality, TCP"), { target: { value: "2222" } });
+    expect(screen.getByText("2222 занят входом по SSH")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Поставить порты" })).toBeDisabled();
+  });
+
+  it("при открытии проверяет давно не проверенный сервер, и только его", async () => {
+    const s = stend({
+      servery: [server({ id: "svoy-1" }), server({ id: "svoy-2", adres: "203.0.113.41", proveren: new Date(Date.now() - 3600_000).toISOString() })],
+    });
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsProverit", { id: "svoy-2" }]]));
+  });
+
+  it("при открытом мастере проверки при открытии нет", async () => {
+    const s = stend({
+      servery: [server({ proveren: new Date(Date.now() - 3600_000).toISOString() })],
+      master: { shag: "dostup", cel: "postavit", forma: PUSTAYA_FORMA },
+    });
+    await act(async () => {});
+    expect(s.vyzovy).toEqual([]);
+  });
+
+  it("«Повторить» повторяет упавшее дело, а не проверку", async () => {
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 5, vid: "podbor", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-ports-failed", tekst: "не прошёл" } })],
+    });
+    const delo = screen.getByTestId("svoy-delo");
+    expect(delo).toHaveTextContent("Подбор портов: не вышло");
+    fireEvent.click(within(delo).getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsPodobratPorty", { id: "svoy-1" }]]));
+  });
+
+  it("пока идёт другое дело, «Повторить» погашен", () => {
+    stend({
+      servery: [server(), server({ id: "svoy-2", adres: "203.0.113.41" })],
+      hody: [
+        hod({ id: 5, vid: "proverka", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-unreachable", tekst: "нет ответа" } }),
+        hod({ id: 6, vid: "proverka", faza: "idyot", server: "svoy-2", planovaya: true }),
+      ],
+    });
+    expect(within(screen.getByTestId("svoy-server-svoy-1")).getByRole("button", { name: "Повторить" })).toBeDisabled();
+  });
+
+  it("последний вход root: рядом «Забыть, не снимая ключа»", async () => {
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 7, vid: "otpusk", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-last-login", tekst: "других входов нет" } })],
+    });
+    fireEvent.click(screen.getByTestId("svoy-zabyt-bez-snyatiya"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsZabyt", { id: "svoy-1" }]]));
+  });
+
+  it("итог сноса виден и после ухода сервера из списка", () => {
+    stend({ servery: [], hody: [hod({ id: 4, vid: "snos", server: "svoy-1", snyat: { parol_vernulsya: true } })] });
+    expect(screen.getByText("VPN снесён с сервера 203.0.113.40")).toBeInTheDocument();
+    expect(screen.getByText(/Вход по паролю снова такой/)).toBeInTheDocument();
+    expect(screen.getByTestId("svoy-postavit")).toBeInTheDocument();
+  });
+});
+
+describe("проверки полей и тексты", () => {
+  it("адрес: IPv4 и IPv6 в скобках годятся, имя нет", () => {
+    expect(oshibkaAdresa("203.0.113.10")).toBeNull();
+    expect(oshibkaAdresa(" [2001:db8::1] ")).toBeNull();
+    expect(chistyyAdres(" [2001:db8::1] ")).toBe("2001:db8::1");
+    expect(oshibkaAdresa("vps.example.net")).not.toBeNull();
+    expect(oshibkaAdresa("203.0.113.256")).not.toBeNull();
+  });
+
+  it("порт: число 1-65535 без нулей впереди, занятые с причиной", () => {
+    expect(oshibkaPorta("")).toBeNull();
+    expect(oshibkaPorta("0443")).not.toBeNull();
+    expect(oshibkaPorta("65536")).not.toBeNull();
+    expect(oshibkaPorta("80", zanyatyeDlyaReality(22))).toBe("80 нужен выпуску сертификата");
+    expect(oshibkaPorta("2222", zanyatyeDlyaReality(22))).toBeNull();
+  });
+
+  it("тело входа по ключу без пароля, по паролю без ключа", () => {
+    const k = teloDostupa({ ...PUSTAYA_FORMA, adres: "203.0.113.10", sposob: "klyuch", parol: "ostalsya", klyuch: { imya: "id", base64: "a2V5" }, parolKlyucha: "pk" });
+    expect(k).toEqual({ adres: "203.0.113.10", port: 22, polzovatel: "root", klyuch: "a2V5", parol_klyucha: "pk" });
+    const p = teloDostupa({ ...PUSTAYA_FORMA, adres: "203.0.113.10", portSshPolya: "2222", parol: "x", klyuch: { imya: "id", base64: "a2V5" } });
+    expect(p).toEqual({ adres: "203.0.113.10", port: 2222, polzovatel: "root", parol: "x" });
+  });
+
+  it("отчёт без логина и секретов", () => {
+    const t = otchyotDela(hod({ vid: "ustanovka", faza: "oshibka", shag: "podbor", otkaz: { kod: "vps-ports-failed", tekst: "не прошёл" } }), "203.0.113.10", "Affory 1.11.0");
+    expect(t).toContain("сервер: 203.0.113.10");
+    expect(t).toContain("vps-ports-failed");
+    expect(t).not.toMatch(/root|парол/i);
+  });
+
+  it("этапы установки: идущий, пройденные и впереди", () => {
+    const e = etapyUstanovki(hod({ vid: "ustanovka", faza: "idyot", shag: "sertifikat" }));
+    expect(e.map((x) => x.itog)).toEqual(["da", "idyot", "zhdyot", "zhdyot"]);
+    const g = etapyUstanovki(hod({ vid: "ustanovka", faza: "gotovo", preduprezhdeniya: [{ kod: "vps-cert-blocked", tekst: "80 и 443 закрыты" }] }));
+    expect(g.find((x) => x.id === "sertifikat")).toMatchObject({ itog: "vnimanie", podrobno: "80 и 443 закрыты" });
+  });
+
+  it("порт, пробованный дважды, одной фишкой с последним итогом", () => {
+    const p = probyPortov(hod({ proverki: [{ transport: "hy2", port: 443, vid: "net-otveta" }, { transport: "hy2", port: 443, vid: "vezyot" }] }));
+    expect(p.hy2).toEqual([{ port: 443, itog: "proshyol", prichina: undefined }]);
+  });
+
+  it("итоги дел словами", () => {
+    expect(itogDela(hod({ vid: "otpusk", otpushchen: { klyucha_ne_bylo: true } }), "203.0.113.10")?.tekst).toContain("уже не было");
+    expect(itogDela(hod({ vid: "parol", parol: { vyklyuchen: false, snaruzhi: "vyklyuchen_chuzhim", fayly: ["/etc/ssh/sshd_config.d/50-cloud-init.conf"] } }), undefined))
+      .toMatchObject({ ton: "warn", tekst: expect.stringContaining("50-cloud-init.conf") });
+    expect(itogDela(hod({ vid: "proverka", faza: "idyot" }), undefined)).toBeNull();
+  });
+});
