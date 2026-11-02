@@ -553,6 +553,8 @@ type Sluzhba struct {
 	vpsVzyat           func(context.Context, upravlenie.Vzyatie) (upravlenie.Itog, error)
 	vpsProverit        func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error)
 	vpsOtpustit        func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.OtpuskItog, error)
+	vpsVyklyuchitParol func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error)
+	vpsVklyuchitParol  func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error)
 	programmaUzla      func(context.Context) (io.ReadSeekCloser, error)
 	fizicheskiyAdapter func() (set.Adapter, error)
 
@@ -643,6 +645,8 @@ func NovayaSluzhba() *Sluzhba {
 	s.vpsVzyat = upravlenie.Vzyat
 	s.vpsProverit = upravlenie.ProveritServer
 	s.vpsOtpustit = upravlenie.Otpustit
+	s.vpsVyklyuchitParol = upravlenie.VyklyuchitParol
+	s.vpsVklyuchitParol = upravlenie.VklyuchitParol
 	s.programmaUzla = s.programmaIzKataloga
 	s.fizicheskiyAdapter = ssh.FizicheskiyAdapter
 	s.fonCtx, s.fonOtmena = context.WithCancel(context.Background())

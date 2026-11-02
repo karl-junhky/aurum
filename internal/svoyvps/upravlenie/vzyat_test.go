@@ -155,8 +155,14 @@ func TestVzyat(t *testing.T) {
 			t.Fatalf("ключ %d перевыпущен", i)
 		}
 	}
-	if it.Prodlenie != porty.Cherez80 || it.Sert != z.sert || it.Versiya != "0.6.0" || it.Adres != "203.0.113.10" {
+	if it.Prodlenie != porty.Cherez80 || it.Sert != z.sert || it.Versiya != "0.6.0" || it.Adres != "203.0.113.10" || it.ParolVyklyuchen {
 		t.Fatalf("итог захвата: %+v", it)
+	}
+	// Наш файл sshd на сервере: пароль выключали из программы.
+	z = novyyZahvat(t, sek, vh)
+	z.osm.SshdFayly = []string{"00-billpanel.conf", server.FaylParolya}
+	if it, err := Vzyat(context.Background(), vzyatie(t)); err != nil || !it.ParolVyklyuchen {
+		t.Fatalf("наш файл sshd: %v %v", it.ParolVyklyuchen, err)
 	}
 }
 

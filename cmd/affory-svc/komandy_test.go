@@ -112,6 +112,12 @@ func podstavnaya(t *testing.T, zamerOtvet error) *Sluzhba {
 	s.vpsOtpustit = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.OtpuskItog, error) {
 		return upravlenie.OtpuskItog{}, errors.New("ssh disabled in service fixture")
 	}
+	s.vpsVyklyuchitParol = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+		return upravlenie.ParolItog{}, errors.New("ssh disabled in service fixture")
+	}
+	s.vpsVklyuchitParol = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+		return upravlenie.ParolItog{}, errors.New("ssh disabled in service fixture")
+	}
 	// Настоящий замер пинга поднимает sing-box. Тесты пинга ставят своё ядро.
 	s.yadroZamera = func(context.Context) (vremennoeYadro, error) {
 		return vremennoeYadro{}, errors.New("core disabled in service fixture")

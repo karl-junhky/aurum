@@ -269,6 +269,7 @@ func TestSvoyVpsVzyat(t *testing.T) {
 	kh := klyuchHostaDlyaTesta(t)
 	id, starye := postavitSvoy(t, s, kh, false)
 	novyy := itogSvoego(t, kh, 443, 9443)
+	novyy.ParolVyklyuchen = true
 	var v upravlenie.Vzyatie
 	s.vpsVzyat = func(_ context.Context, x upravlenie.Vzyatie) (upravlenie.Itog, error) {
 		v = x
@@ -302,7 +303,7 @@ func TestSvoyVpsVzyat(t *testing.T) {
 			t.Fatal("прежний ключ hy2 остался рядом с новым")
 		}
 	}
-	if n.SvoiServery[0].Hy2 != 9443 {
+	if n.SvoiServery[0].Hy2 != 9443 || !n.SvoiServery[0].ParolVyklyuchen {
 		t.Fatalf("запись: %+v", n.SvoiServery[0])
 	}
 }
@@ -412,5 +413,145 @@ func TestOtkazVpsZapisi(t *testing.T) {
 	}
 	if !errors.Is(&oshibkaZapisi{err: ErrKandidatZanyat}, ErrKandidatZanyat) {
 		t.Fatal("отказ записи не разворачивается")
+	}
+}
+
+// parolNeZhdali подставляет переключение пароля, которого тест не ждёт.
+func parolNeZhdali(t *testing.T, chto string) func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+	return func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+		t.Errorf("%s не ждали", chto)
+		return upravlenie.ParolItog{}, errors.New("не ждали")
+	}
+}
+
+func TestSvoyVpsParol(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh := klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, true)
+	nash, _, err := s.klyuchUpravleniya(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var zapros ssh.Zapros
+	s.vpsVyklyuchitParol = func(_ context.Context, _ upravlenie.Puti, z ssh.Zapros) (upravlenie.ParolItog, error) {
+		zapros = z
+		return upravlenie.ParolItog{Vhod: upravlenie.Svedeniya{Put: "напрямую"}}, nil
+	}
+	s.vpsVklyuchitParol = parolNeZhdali(t, "включение")
+	if otv := s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": true})); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	h := dozhdatsyaVps(t, s)
+	if h.Vid != vidParol || h.Faza != fazaGotovo || h.Parol == nil || !h.Parol.Vyklyuchen || h.Parol.Snaruzhi != "" ||
+		h.Server != id || h.Put != "напрямую" || len(h.Preduprezhdeniya) != 0 {
+		t.Fatalf("выключение: %+v %+v", h, h.Parol)
+	}
+	if zapros.Adres != adresSvoego || zapros.Port != 2222 || zapros.Vhod.Podpis == nil ||
+		!bytes.Equal(zapros.Vhod.Podpis.PublicKey().Marshal(), nash.PublicKey().Marshal()) ||
+		zapros.Izvesten == nil || !bytes.Equal(zapros.Izvesten.Telo, kh.Telo) {
+		t.Fatalf("вход: %+v", zapros)
+	}
+	if !zapisPoId(t, s, id).ParolVyklyuchen {
+		t.Fatal("выключение не отмечено в записи")
+	}
+
+	// Включение: пароль всё равно выключен другой настройкой.
+	fayl := "/etc/ssh/sshd_config.d/50-cloud-init.conf"
+	s.vpsVyklyuchitParol = parolNeZhdali(t, "выключение")
+	s.vpsVklyuchitParol = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+		return upravlenie.ParolItog{Vhod: upravlenie.Svedeniya{Put: "через VPN"},
+			Posle: server.Vklyuchenie{Parol: "vyklyuchen_chuzhim", Fayly: []string{fayl}}}, nil
+	}
+	if otv := s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": false})); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	h = dozhdatsyaVps(t, s)
+	if h.Faza != fazaGotovo || h.Parol == nil || h.Parol.Vyklyuchen || h.Parol.Snaruzhi != "vyklyuchen_chuzhim" ||
+		len(h.Parol.Fayly) != 1 || h.Parol.Fayly[0] != fayl || h.Put != "через VPN" {
+		t.Fatalf("включение: %+v %+v", h, h.Parol)
+	}
+	if zapisPoId(t, s, id).ParolVyklyuchen {
+		t.Fatal("включение не снято с записи")
+	}
+}
+
+func TestSvoyVpsParolOtkaz(t *testing.T) {
+	for _, c := range []struct {
+		imya       string
+		vyklyuchit bool
+		err        error
+		kod        string
+		tekst      []string
+		// Отметка в записи после отказа, если до него она стояла.
+		otmetka bool
+	}{
+		{"чужая настройка", true, &server.ParolChuzhoy{Fayly: []string{"/etc/ssh/sshd_config"}}, protokol.KodVpsParolChuzhoy,
+			[]string{"в /etc/ssh/sshd_config", "осталось как было"}, false},
+		{"чужая настройка без файла", true, &server.ParolChuzhoy{}, protokol.KodVpsParolChuzhoy,
+			[]string{"найти не вышло"}, false},
+		{"ключ не пустил", true, &upravlenie.KlyuchNePustil{Vhod: &ssh.Otkaz{Prichina: ssh.PrichinaKlyuchNePrinyat}},
+			protokol.KodVpsParol, []string{"сервер не принял ключ SSH", "включён обратно"}, false},
+		{"ключ не пустил, пароль не вернулся", true,
+			&upravlenie.KlyuchNePustil{Vhod: errors.New("обрыв"), Vozvrat: errors.New("обрыв")},
+			protokol.KodVpsParol, []string{"таймер на сервере через 5 минут"}, false},
+		{"скрипт выключения", true, &server.Oshibka{Shag: "parol", Kod: 1, Tekst: "sshd -t не принял настройку"},
+			protokol.KodVpsParol, []string{"вход по паролю не переключился: sshd -t не принял"}, false},
+		{"сервер молчит при выключении", true, &upravlenie.Molchanie{Pryamo: errors.New("тишина")},
+			protokol.KodVpsNeOtvechaet, nil, false},
+		// Неудачное включение оставляет наш файл, как был.
+		{"скрипт включения", false, &server.Oshibka{Shag: "parol", Kod: 1}, protokol.KodVpsParol,
+			[]string{"вход по паролю не переключился"}, true},
+	} {
+		t.Run(c.imya, func(t *testing.T) {
+			s := sPustymNaborom(t)
+			id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+			if err := s.otmetitProverku(id, func(x *SvoyServer) { x.ParolVyklyuchen = true }); err != nil {
+				t.Fatal(err)
+			}
+			otkazParolya := func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+				return upravlenie.ParolItog{}, c.err
+			}
+			if c.vyklyuchit {
+				s.vpsVyklyuchitParol, s.vpsVklyuchitParol = otkazParolya, parolNeZhdali(t, "включение")
+			} else {
+				s.vpsVyklyuchitParol, s.vpsVklyuchitParol = parolNeZhdali(t, "выключение"), otkazParolya
+			}
+			s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": c.vyklyuchit}))
+			h := dozhdatsyaVps(t, s)
+			if h.Otkaz == nil || h.Otkaz.Kod != c.kod || h.Parol != nil {
+				t.Fatalf("отказ: %+v %+v", h, h.Otkaz)
+			}
+			for _, tk := range c.tekst {
+				if !strings.Contains(h.Otkaz.Tekst, tk) {
+					t.Fatalf("в тексте нет %q: %s", tk, h.Otkaz.Tekst)
+				}
+			}
+			if z := zapisPoId(t, s, id); z.ParolVyklyuchen != c.otmetka {
+				t.Fatalf("отметка пароля после отказа: %v", z.ParolVyklyuchen)
+			}
+		})
+	}
+	// Срок ожидания вложенного отказа доходит до окна, строка о нашем ключе
+	// входа - нет: она про другое дело.
+	o := otkazVps(&upravlenie.KlyuchNePustil{Vhod: &ssh.Otkaz{Prichina: ssh.PrichinaPodozhdi, Podozhdat: 30}})
+	if o.Kod != protokol.KodVpsParol || o.Podozhdat != 30 || !strings.HasPrefix(o.Tekst, "пароль не выключен") {
+		t.Fatalf("срок ожидания: %+v", o)
+	}
+	o = otkazVps(&upravlenie.KlyuchNePustil{Vhod: &ssh.Otkaz{Prichina: ssh.PrichinaKlyuchNePrinyat, KlyuchOstalsya: true}})
+	if o.Kod != protokol.KodVpsParol || o.KlyuchOstalsya {
+		t.Fatalf("строка о нашем ключе: %+v", o)
+	}
+	s := sPustymNaborom(t)
+	id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+	for _, telo := range []any{map[string]any{"id": id}, map[string]any{"id": id, "vyklyuchit": "da"}} {
+		if kod := kodOtkaza(s.svoyVpsParol(kadrVps(t, "svoyVpsParol", telo))); kod != protokol.KodTeloNegodno {
+			t.Fatalf("тело %v: %q", telo, kod)
+		}
+	}
+	// Без ключа управления входить нечем.
+	s = sPustymNaborom(t)
+	id, _ = postavitSvoy(t, s, klyuchHostaDlyaTesta(t), false)
+	if kod := kodOtkaza(s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": true}))); kod != protokol.KodVpsVzyat {
+		t.Fatalf("без ключа управления: %q", kod)
 	}
 }

@@ -194,6 +194,7 @@ type HodVps struct {
 	Ustanovlen       *UstanovkaVps `json:"ustanovlen,omitempty"`
 	Snyat            *SnosVps      `json:"snyat,omitempty"`
 	Otpushchen       *OtpuskVps    `json:"otpushchen,omitempty"`
+	Parol            *ParolVps     `json:"parol,omitempty"`
 	Proverka         *ProverkaVps  `json:"proverka,omitempty"`
 	Otkaz            *OtkazVps     `json:"otkaz,omitempty"`
 	Preduprezhdeniya []OtkazVps    `json:"preduprezhdeniya,omitempty"`
@@ -662,7 +663,7 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		Id: id, Imya: osn.Imya, Adres: it.Adres, PortSsh: port, Polzovatel: osn.Polzovatel,
 		KlyuchHostaTip: it.Vhod.KlyuchHosta.Tip, KlyuchHosta: it.Vhod.KlyuchHosta.TeloBase64(),
 		Versiya: it.Versiya, Maska: it.Sekrety.Maska, PortyRuchnye: osn.PortyRuchnye,
-		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: time.Now().UTC(),
+		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: time.Now().UTC(), ParolVyklyuchen: it.ParolVyklyuchen,
 	}
 	if len(it.Vhody.Reality) > 0 {
 		zapis.Reality = it.Vhody.Reality[0]

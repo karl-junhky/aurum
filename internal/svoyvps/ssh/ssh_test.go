@@ -638,7 +638,18 @@ func TestTunnelCherezEtotZheServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("проверка через этот же сервер: %v", err)
 	}
-	s.Zakryt()
+	defer s.Zakryt()
+	// Новый вход тем же путём (Perevoyti) пускают так же.
+	podpis := novyyKlyuch(t)
+	p.polozhit(putKlyuchaRoot, fayl{dannye: gossh.MarshalAuthorizedKey(podpis.PublicKey()), rezhim: "600"})
+	r, err := s.Perevoyti(kontekst(t), podpis)
+	if err != nil || !r.Root || r.KlyuchHosta.Otpechatok() != s.KlyuchHosta.Otpechatok() {
+		t.Fatalf("новый вход через этот же сервер: %v", err)
+	}
+	r.Zakryt()
+	if _, err := s.Perevoyti(kontekst(t), nil); err == nil {
+		t.Fatal("новый вход без ключа")
+	}
 }
 
 func TestKlyuchCheloveka(t *testing.T) {

@@ -33,8 +33,35 @@ func otkazVps(err error) OtkazVps {
 		otsev   porty.Otsev
 		zapis   *oshibkaZapisi
 		ostatok *upravlenie.NeChisto
+		chuzhoy *server.ParolChuzhoy
+		klyuch  *upravlenie.KlyuchNePustil
 	)
 	switch {
+	case errors.As(err, &chuzhoy):
+		t := "пароль не выключен: вход по паролю держит включённым другая настройка SSH на сервере"
+		if len(chuzhoy.Fayly) > 0 {
+			t += ", в " + ssh.Obrezat(strings.Join(chuzhoy.Fayly, ", "), dlinaSoServera)
+		} else {
+			t += ", а в каком файле, найти не вышло"
+		}
+		return OtkazVps{Kod: protokol.KodVpsParolChuzhoy, Tekst: t + ". На сервере всё осталось как было"}
+	case errors.As(err, &klyuch):
+		// Отпечаток и срок ожидания вложенного отказа окну так же нужны.
+		o := otkazVps(klyuch.Vhod)
+		o.Kod, o.KlyuchOstalsya = protokol.KodVpsParol, false
+		o.Tekst = "пароль не выключен: после выключения сервер не пустил ключом этого компьютера (" + o.Tekst + ")"
+		if klyuch.Vozvrat != nil {
+			o.Tekst += ", а сразу вернуть пароль не вышло: его вернёт таймер на сервере через 5 минут"
+		} else {
+			o.Tekst += ", и пароль включён обратно"
+		}
+		return o
+	case errors.As(err, &osh) && osh.Shag == "parol":
+		t := "вход по паролю не переключился"
+		if osh.Tekst != "" {
+			t += ": " + ssh.Obrezat(osh.Tekst, dlinaSoServera)
+		}
+		return OtkazVps{Kod: protokol.KodVpsParol, Tekst: t}
 	case errors.As(err, &zapis):
 		return OtkazVps{Kod: kodSohraneniya(zapis.err), Tekst: sboi.DlyaCheloveka(zapis.err)}
 	case errors.As(err, &ostatok):

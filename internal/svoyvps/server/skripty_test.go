@@ -86,13 +86,17 @@ func est(put string) bool {
 // podstavaSistemy заменяет утилиты, которые трогают систему: правки пишутся
 // в $LOG, sysctl живёт в файле $SYSCTL, показ tc берётся из $TC, показ
 // iptables и ip6tables - из $IPT, ответ sshd -T - из $SSHD_T (строки через
-// точку с запятой), состояние пароля root в passwd -S - из $PASSWD_S (по
-// умолчанию P, задан; другие вызовы passwd отказывают). Служба vpn-uzel
-// работает, если задана AKTIVNA. Сбои
-// задаются переменными SSHD_T_SBOY, SSHD_T_OBORVAN (ответ напечатан, а код
-// отказа), SSHD_RELOAD_SBOY, PASSWD_SBOY,
-// SYSCTL_SBOY (имя ключа, запись которого падает) и TC_SBOY (replace или
-// del).
+// точку с запятой; пока лежит файл $SSHD_T_FAYL - из $SSHD_T_S_FAYLOM, для
+// пользователя $SSHD_T_POLZOVATEL - из $SSHD_T_U), sshd -t отвергает настройку, пока
+// лежит файл $SSHD_PROTIV, состояние пароля root в passwd -S - из $PASSWD_S
+// (по умолчанию P, задан), у остальных P, а у $PASSWD_L - L; другие вызовы
+// passwd отказывают. systemctl
+// is-active (служба vpn-uzel, таймер отката пароля) отвечает «работает»,
+// если задана AKTIVNA. Сбои задаются переменными SSHD_T_SBOY, SSHD_T_OBORVAN
+// (ответ напечатан, а код отказа), SSHD_RELOAD_SBOY, SSHD_RELOAD_BEZ_FAYLA
+// (перечитать не выходит, пока файла $SSHD_T_FAYL нет), SYSTEMD_RUN_SBOY,
+// PASSWD_SBOY, SYSCTL_SBOY (имя ключа, запись которого падает) и TC_SBOY
+// (replace или del).
 const podstavaSistemy = `id() { echo 0; }
 uname() { if [ "$1" = -m ]; then echo x86_64; else echo 6.8.0-test; fi; }
 chown() { :; }
@@ -100,7 +104,10 @@ systemctl() {
     echo "systemctl $*" >> "$LOG"
     case "$1" in
     is-active) [ -n "${AKTIVNA:-}" ] ;;
-    try-reload-or-restart) [ -z "${SSHD_RELOAD_SBOY:-}" ] ;;
+    try-reload-or-restart)
+        [ -z "${SSHD_RELOAD_SBOY:-}" ] || return 1
+        [ -z "${SSHD_RELOAD_BEZ_FAYLA:-}" ] || [ -e "$SSHD_T_FAYL" ]
+        ;;
     esac
 }
 sysctl() {
@@ -133,14 +140,32 @@ ipt() {
 sshd() {
     echo "sshd $*" >> "$LOG"
     [ -z "${SSHD_T_SBOY:-}" ] || return 1
-    [ "$1" != -T ] || printf '%s\n' "${SSHD_T:-}" | tr ';' '\n'
+    if [ "$1" = -t ]; then
+        [ -z "${SSHD_PROTIV:-}" ] || [ ! -e "$SSHD_PROTIV" ]
+        return
+    fi
+    if [ "$1" = -T ]; then
+        local o="${SSHD_T:-}"
+        if [ -n "${SSHD_T_FAYL:-}" ] && [ -e "$SSHD_T_FAYL" ]; then o="${SSHD_T_S_FAYLOM:-}"; fi
+        case "$3" in "user=${SSHD_T_POLZOVATEL:-},"*) o="$SSHD_T_U" ;; esac
+        printf '%s\n' "$o" | tr ';' '\n'
+    fi
     [ -z "${SSHD_T_OBORVAN:-}" ]
+}
+systemd-run() {
+    echo "systemd-run $*" >> "$LOG"
+    [ -z "${SYSTEMD_RUN_SBOY:-}" ]
 }
 passwd() {
     echo "passwd $*" >> "$LOG"
-    [ "$*" = "-S root" ] || return 2
+    [ "$1" = -S ] && [ $# -eq 2 ] || return 2
     [ -z "${PASSWD_SBOY:-}" ] || return 1
-    echo "root ${PASSWD_S:-P} 11/02/2026 0 99999 7 -1"
+    local s="${PASSWD_S:-P}"
+    if [ "$2" != root ]; then
+        s=P
+        [ "$2" != "${PASSWD_L:-}" ] || s=L
+    fi
+    echo "$2 $s 11/02/2026 0 99999 7 -1"
 }
 `
 
@@ -885,6 +910,220 @@ func TestOtpuskSkript(t *testing.T) {
 			if vyvod, kod := prognat(t, k, telo); kod != 1 || len(vyvod) != 0 || len(chitat(t, k.f(ak))) != 2 {
 				t.Fatalf("%q: код %d %q", telo, kod, vyvod)
 			}
+		}
+	})
+}
+
+func TestParolSkript(t *testing.T) {
+	const (
+		fsshd = "/etc/ssh/sshd_config.d/0-affory.conf"
+		da    = "passwordauthentication yes;kbdinteractiveauthentication no"
+		net   = "passwordauthentication no;kbdinteractiveauthentication no"
+		otkat = "systemctl stop affory-parol-otkat.timer affory-parol-otkat.service"
+	)
+	prognat := func(t *testing.T, k koren, deystvie string, env ...string) ([]string, int) {
+		t.Helper()
+		return k.prognat(t, skriptParolya, env, deystvie)
+	}
+	pustoyKoren := func(t *testing.T) koren {
+		t.Helper()
+		k := pustoyKoren(t)
+		if err := os.MkdirAll(k.f("/etc/ssh/sshd_config.d"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	// S nashim: sshd -T видит то, что даст наш файл, пока он лежит.
+	sNashim := func(k koren, sFaylom string, env ...string) []string {
+		return append([]string{"SSHD_T=" + da, "SSHD_T_FAYL=" + k.f(fsshd), "SSHD_T_S_FAYLOM=" + sFaylom}, env...)
+	}
+	poryadok := func(zhurnal []string, stroki ...string) bool {
+		i := 0
+		for _, s := range zhurnal {
+			if i < len(stroki) && strings.HasPrefix(s, stroki[i]) {
+				i++
+			}
+		}
+		return i == len(stroki)
+	}
+	t.Run("выключение и подтверждение", func(t *testing.T) {
+		k := pustoyKoren(t)
+		zapisat(t, k.f("/etc/passwd"), "root:x:0:0:root:/root:/bin/bash", "www-data:x:33:33::/var/www:/usr/sbin/nologin",
+			"deploy:x:1001:1001::/home/deploy:/bin/bash", "spit:x:1002:1002::/home/spit:/bin/false", "nobody:x:65534:65534::/:/bin/sh",
+			"zamok:x:1003:1003::/home/zamok:/bin/bash")
+		// Паролем zamok пустили бы, но он заблокирован.
+		vyvod, kod := prognat(t, k, "vyklyuchit", sNashim(k, net, "PASSWD_L=zamok", "SSHD_T_POLZOVATEL=zamok", "SSHD_T_U="+da)...)
+		if kod != 0 || !slices.Equal(vyvod, []string{"parol vyklyuchen"}) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+		if f := chitat(t, k.f(fsshd)); len(f) != 3 || f[1] != "PasswordAuthentication no" || f[2] != "KbdInteractiveAuthentication no" || est(k.f(fsshd+".affory-chast")) {
+			t.Fatalf("файл %q", f)
+		}
+		// Таймер отката заведён до того, как sshd перечитал настройку, и
+		// снимает именно наш файл; sshd -T спрошен за root и за человека с
+		// оболочкой входа.
+		zhurnal := chitat(t, k.log)
+		if !poryadok(zhurnal, "sshd -t", "systemd-run --quiet --unit=affory-parol-otkat --on-active=300 ", "systemctl try-reload-or-restart ssh.service") ||
+			!slices.ContainsFunc(zhurnal, func(s string) bool {
+				return strings.HasPrefix(s, "systemd-run") && strings.Contains(s, "/bin/sh -c rm -f "+k.f(fsshd)+"; systemctl try-reload-or-restart ssh.service")
+			}) {
+			t.Fatalf("журнал %q", zhurnal)
+		}
+		if !poryadok(zhurnal, "sshd -T -C user=root,host=192.0.2.1,addr=192.0.2.1", "sshd -T -C user=deploy,host=192.0.2.1,addr=192.0.2.1") ||
+			len(slices.DeleteFunc(slices.Clone(zhurnal), func(s string) bool { return !strings.HasPrefix(s, "sshd -T -C ") })) != 2 {
+			t.Fatalf("sshd -T: %q", zhurnal)
+		}
+		if poryadok(zhurnal, "systemd-run", otkat) {
+			t.Fatalf("таймер снят до входа ключом: %q", zhurnal)
+		}
+		vyvod, kod = prognat(t, k, "podtverdit")
+		if kod != 0 || !slices.Equal(vyvod, []string{"otkat snyat"}) || !slices.Contains(chitat(t, k.log), otkat) {
+			t.Fatalf("подтверждение: код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("имя не передать в sshd -T", func(t *testing.T) {
+		// Запятая сломала бы данные входа: такого человека не проверить, и это
+		// отказ, а не «чисто».
+		k := pustoyKoren(t)
+		zapisat(t, k.f("/etc/passwd"), "root:x:0:0:root:/root:/bin/bash", "kto,to:x:1003:1003::/home/x:/bin/bash")
+		vyvod, kod := prognat(t, k, "vyklyuchit", sNashim(k, net)...)
+		if kod != 2 || !slices.Equal(vyvod, []string{"parol chuzhoy"}) || est(k.f(fsshd)) ||
+			slices.ContainsFunc(chitat(t, k.log), func(s string) bool { return strings.Contains(s, "user=kto") }) {
+			t.Fatalf("код %d %q, журнал %q", kod, vyvod, chitat(t, k.log))
+		}
+	})
+	t.Run("подтверждение не вышло", func(t *testing.T) {
+		// Таймер успел вернуть пароль: файла нет.
+		k := pustoyKoren(t)
+		if vyvod, kod := prognat(t, k, "podtverdit"); kod != 1 || len(vyvod) != 0 {
+			t.Fatalf("файла нет: код %d %q", kod, vyvod)
+		}
+		// Таймер не снимается: через 5 минут он вернёт пароль.
+		zapisat(t, k.f(fsshd), "PasswordAuthentication no")
+		if vyvod, kod := prognat(t, k, "podtverdit", "AKTIVNA=1"); kod != 1 || len(vyvod) != 0 {
+			t.Fatalf("таймер: код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("выключение не вышло", func(t *testing.T) {
+		for _, s := range []struct {
+			imya string
+			env  func(k koren) []string
+			// Таймер снят: sshd перечитал настройку без нашего файла.
+			snyat bool
+			kod   int
+		}{
+			// До записи файла не тронуто ничего, и таймер тоже.
+			{"sshd -t отвергает настройку до нас", func(k koren) []string { return sNashim(k, net, "SSHD_T_SBOY=1") }, false, 1},
+			{"таймер прошлого раза не снялся", func(k koren) []string { return sNashim(k, net, "AKTIVNA=1") }, false, 1},
+			{"sshd -t отвергает наш файл", func(k koren) []string { return sNashim(k, net, "SSHD_PROTIV="+k.f(fsshd)) }, false, 1},
+			{"таймер не завёлся", func(k koren) []string { return sNashim(k, net, "SYSTEMD_RUN_SBOY=1") }, false, 1},
+			{"sshd не перечитал", func(k koren) []string { return sNashim(k, net, "SSHD_RELOAD_SBOY=1") }, false, 1},
+			{"sshd -T не ответил", func(k koren) []string { return sNashim(k, "") }, true, 1},
+			{"пароль держит чужое", func(k koren) []string { return sNashim(k, da) }, true, 2},
+			// Match User включает пароль человеку, а не root.
+			{"пароль у человека", func(k koren) []string {
+				return sNashim(k, net, "SSHD_T_POLZOVATEL=deploy", "SSHD_T_U="+da)
+			}, true, 2},
+			{"sshd -T за человека не ответил", func(k koren) []string {
+				return sNashim(k, net, "SSHD_T_POLZOVATEL=deploy", "SSHD_T_U=port 22")
+			}, true, 1},
+			{"keyboard-interactive включён", func(k koren) []string {
+				return sNashim(k, "passwordauthentication no;kbdinteractiveauthentication yes")
+			}, true, 2},
+			// Без нашего файла sshd не перечитал: таймер остаётся и перечитает.
+			{"чужое, и без файла не перечитал", func(k koren) []string { return sNashim(k, da, "SSHD_RELOAD_BEZ_FAYLA=1") }, false, 2},
+		} {
+			k := pustoyKoren(t)
+			zapisat(t, k.f("/etc/passwd"), "root:x:0:0:root:/root:/bin/bash", "deploy:x:1001:1001::/home/deploy:/bin/bash")
+			zapisat(t, k.f("/etc/ssh/sshd_config.d/00-billpanel.conf"), "# хостер", "PasswordAuthentication yes")
+			// sshd принимает и «слово=значение».
+			zapisat(t, k.f("/etc/ssh/sshd_config.d/10-match.conf"), "Match User deploy", "    PasswordAuthentication=yes")
+			zapisat(t, k.f("/etc/ssh/sshd_config"), "Include /etc/ssh/sshd_config.d/*.conf", "PasswordAuthentication no")
+			vyvod, kod := prognat(t, k, "vyklyuchit", s.env(k)...)
+			if kod != s.kod || est(k.f(fsshd)) || est(k.f(fsshd+".affory-chast")) {
+				t.Fatalf("%s: код %d %q, файл остался %v", s.imya, kod, vyvod, est(k.f(fsshd)))
+			}
+			zhurnal := chitat(t, k.log)
+			if s.snyat != poryadok(zhurnal, "systemd-run", otkat) {
+				t.Fatalf("%s: таймер снят %v: %q", s.imya, !s.snyat, zhurnal)
+			}
+			if strings.HasSuffix(s.imya, "до нас") && !slices.Equal(zhurnal, []string{"sshd -t"}) {
+				t.Fatalf("%s: журнал %q", s.imya, zhurnal)
+			}
+			// Чужая настройка называется файлом, где пароль включён.
+			zhdu := []string{}
+			if s.kod == 2 {
+				zhdu = []string{"parol chuzhoy", "vklyuchaet " + k.f("/etc/ssh/sshd_config.d/00-billpanel.conf"),
+					"vklyuchaet " + k.f("/etc/ssh/sshd_config.d/10-match.conf")}
+			}
+			if !slices.Equal(vyvod, zhdu) {
+				t.Fatalf("%s: вывод %q", s.imya, vyvod)
+			}
+		}
+	})
+	t.Run("включение", func(t *testing.T) {
+		k := pustoyKoren(t)
+		zapisat(t, k.f(fsshd), "PasswordAuthentication no")
+		vyvod, kod := prognat(t, k, "vklyuchit", sNashim(k, net)...)
+		if kod != 0 || !slices.Equal(vyvod, []string{"parol vklyuchen"}) || est(k.f(fsshd)) || est(k.f(fsshd+".snos")) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+		if !poryadok(chitat(t, k.log), "sshd -t", "systemctl try-reload-or-restart ssh.service", otkat) {
+			t.Fatalf("журнал %q", chitat(t, k.log))
+		}
+		// Пароль выключен не нами: так и говорится, с файлом.
+		k = pustoyKoren(t)
+		zapisat(t, k.f("/etc/ssh/sshd_config.d/60-cloudimg-settings.conf"), "PasswordAuthentication no")
+		vyvod, kod = prognat(t, k, "vklyuchit", "SSHD_T="+net)
+		if kod != 0 || !slices.Equal(vyvod, []string{"parol vyklyuchen_chuzhim", "vyklyuchaet " + k.f("/etc/ssh/sshd_config.d/60-cloudimg-settings.conf")}) {
+			t.Fatalf("чужое: код %d %q", kod, vyvod)
+		}
+		// Включение отвечает про root: пароль у человека через Match его не
+		// меняет.
+		k = pustoyKoren(t)
+		zapisat(t, k.f("/etc/passwd"), "root:x:0:0:root:/root:/bin/bash", "deploy:x:1001:1001::/home/deploy:/bin/bash")
+		vyvod, kod = prognat(t, k, "vklyuchit", "SSHD_T="+net, "SSHD_T_POLZOVATEL=deploy", "SSHD_T_U="+da)
+		if kod != 0 || len(vyvod) == 0 || vyvod[0] != "parol vyklyuchen_chuzhim" ||
+			slices.ContainsFunc(chitat(t, k.log), func(s string) bool { return strings.Contains(s, "user=deploy") }) {
+			t.Fatalf("только root: код %d %q", kod, vyvod)
+		}
+		k = pustoyKoren(t)
+		if vyvod, kod = prognat(t, k, "vklyuchit"); kod != 0 || !slices.Equal(vyvod, []string{"parol neizvestno"}) {
+			t.Fatalf("sshd -T молчит: код %d %q", kod, vyvod)
+		}
+		// Отодвинутый файл от оборванного сноса или включения возвращается и
+		// уходит как положено.
+		k = pustoyKoren(t)
+		zapisat(t, k.f(fsshd+".snos"), "PasswordAuthentication no")
+		if vyvod, kod = prognat(t, k, "vklyuchit", "SSHD_T="+da); kod != 0 || est(k.f(fsshd)) || est(k.f(fsshd+".snos")) ||
+			!slices.Contains(chitat(t, k.log), "systemctl try-reload-or-restart ssh.service") {
+			t.Fatalf("отодвинутый: код %d %q", kod, vyvod)
+		}
+	})
+	t.Run("включение не вышло", func(t *testing.T) {
+		for imya, env := range map[string]string{
+			"sshd -t отвергает": "SSHD_T_SBOY=1",
+			"sshd не перечитал": "SSHD_RELOAD_SBOY=1",
+		} {
+			k := pustoyKoren(t)
+			zapisat(t, k.f(fsshd), "PasswordAuthentication no")
+			if vyvod, kod := prognat(t, k, "vklyuchit", env); kod != 1 || len(vyvod) != 0 || !est(k.f(fsshd)) || est(k.f(fsshd+".snos")) {
+				t.Fatalf("%s: код %d %q", imya, kod, vyvod)
+			}
+		}
+	})
+	t.Run("неизвестное действие", func(t *testing.T) {
+		if _, kod := prognat(t, pustoyKoren(t), "snesti"); kod != 1 {
+			t.Fatalf("код %d", kod)
+		}
+	})
+	t.Run("нет каталога sshd_config.d", func(t *testing.T) {
+		k := pustoyKoren(t)
+		if err := os.RemoveAll(k.f("/etc/ssh/sshd_config.d")); err != nil {
+			t.Fatal(err)
+		}
+		if vyvod, kod := prognat(t, k, "vyklyuchit", sNashim(k, net)...); kod != 1 || len(vyvod) != 0 || len(chitat(t, k.log)) != 0 {
+			t.Fatalf("код %d %q, журнал %q", kod, vyvod, chitat(t, k.log))
 		}
 	})
 }

@@ -40,8 +40,12 @@ var (
 	skriptPortov string
 	//go:embed skripty/snos.sh
 	tekstSnosa string
+	//go:embed skripty/sshd_snaruzhi.sh
+	obshcheeSshd string
 	//go:embed skripty/otpusk.sh
-	skriptOtpuska string
+	tekstOtpuska string
+	//go:embed skripty/parol.sh
+	tekstParolya string
 	//go:embed skripty/vpn-uzel.service
 	yunit []byte
 
@@ -49,6 +53,9 @@ var (
 	// общий кусок идёт перед каждым из них.
 	skriptUstanovki = obshcheeOcheredi + tekstUstanovki
 	skriptSnosa     = obshcheeOcheredi + tekstSnosa
+	// Снятие ключа и пароль одинаково смотрят на sshd снаружи.
+	skriptOtpuska = obshcheeSshd + tekstOtpuska
+	skriptParolya = obshcheeSshd + tekstParolya
 )
 
 const (
@@ -66,7 +73,7 @@ type Mashina interface {
 
 // Oshibka это отказ скрипта на сервере.
 type Oshibka struct {
-	// Shag: nastroyka, osmotr, ustanovka, porty, snos, otpusk, chtenie.
+	// Shag: nastroyka, osmotr, ustanovka, porty, snos, otpusk, parol, chtenie.
 	Shag string
 	Kod  int
 	// Tekst это последняя строка stderr, очищенная.
@@ -282,6 +289,103 @@ func SnyatKlyuch(ctx context.Context, m Mashina, klyuch gossh.PublicKey) (snyat 
 		return false, oshibkaSkripta("otpusk", it)
 	}
 	return snyat, nil
+}
+
+// FaylParolya это наш файл в /etc/ssh/sshd_config.d: он лежит, пока вход по
+// паролю выключен из программы.
+const FaylParolya = "0-affory.conf"
+
+// ParolChuzhoy: наш файл лёг, а снаружи всё равно пускают паролем root или
+// человека с оболочкой входа, его держит включённым чужая настройка sshd.
+// Fayly это файлы sshd_config и sshd_config.d, где пароль включён, в том
+// числе в блоке Match; пусто - найти не вышло. Наш файл снят.
+type ParolChuzhoy struct {
+	Fayly []string
+}
+
+func (p *ParolChuzhoy) Error() string {
+	s := "вход по паролю держит включённым чужая настройка sshd"
+	if len(p.Fayly) > 0 {
+		s += ": " + strings.Join(p.Fayly, ", ")
+	}
+	return s
+}
+
+// VyklyuchitParol кладёт наш файл sshd, заводит на сервере таймер, который
+// через 5 минут снимет его сам, и сверяет sshd -T снаружи. Таймер снимает
+// PodtverditParol, когда вход ключом новым соединением прошёл.
+func VyklyuchitParol(ctx context.Context, m Mashina) (err error) {
+	defer zashchita("VyklyuchitParol", &err)
+	it, err := m.Skript(ctx, skriptParolya, "vyklyuchit")
+	if err != nil {
+		return err
+	}
+	vyklyuchen, chuzhoy := false, false
+	var fayly []string
+	stroki(it.Vyvod, func(k, z string) {
+		switch {
+		case k == "parol" && z == "vyklyuchen":
+			vyklyuchen = true
+		case k == "parol" && z == "chuzhoy":
+			chuzhoy = true
+		case k == "vklyuchaet" && z != "":
+			fayly = append(fayly, chisto(z))
+		}
+	})
+	// Код 2 без своей строки - сбой, а не чужая настройка: с ним мог выйти
+	// и упавший шаг скрипта.
+	switch {
+	case it.Kod == 2 && chuzhoy:
+		return &ParolChuzhoy{Fayly: fayly}
+	case it.Kod != 0 || !vyklyuchen:
+		return oshibkaSkripta("parol", it)
+	}
+	return nil
+}
+
+// PodtverditParol снимает таймер отката после удачного входа ключом.
+func PodtverditParol(ctx context.Context, m Mashina) (err error) {
+	defer zashchita("PodtverditParol", &err)
+	it, err := m.Skript(ctx, skriptParolya, "podtverdit")
+	if err != nil {
+		return err
+	}
+	snyat := false
+	stroki(it.Vyvod, func(k, z string) { snyat = snyat || k == "otkat" && z == "snyat" })
+	if it.Kod != 0 || !snyat {
+		return oshibkaSkripta("parol", it)
+	}
+	return nil
+}
+
+// Vklyuchenie это вход по паролю после снятия нашего файла.
+type Vklyuchenie struct {
+	// Parol: vklyuchen, vyklyuchen_chuzhim (выключен не нашей настройкой,
+	// Fayly) или neizvestno (sshd -T не ответил).
+	Parol string
+	Fayly []string
+}
+
+// VklyuchitParol снимает наш файл sshd: вход по паролю становится таким,
+// каким его держат остальные настройки сервера.
+func VklyuchitParol(ctx context.Context, m Mashina) (v Vklyuchenie, err error) {
+	defer zashchita("VklyuchitParol", &err)
+	it, err := m.Skript(ctx, skriptParolya, "vklyuchit")
+	if err != nil {
+		return v, err
+	}
+	stroki(it.Vyvod, func(k, z string) {
+		switch {
+		case k == "parol" && (z == "vklyuchen" || z == "vyklyuchen_chuzhim" || z == "neizvestno"):
+			v.Parol = z
+		case k == "vyklyuchaet" && z != "":
+			v.Fayly = append(v.Fayly, chisto(z))
+		}
+	})
+	if it.Kod != 0 || v.Parol == "" {
+		return Vklyuchenie{}, oshibkaSkripta("parol", it)
+	}
+	return v, nil
 }
 
 func teloKlyucha(k gossh.PublicKey) string {

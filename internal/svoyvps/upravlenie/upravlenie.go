@@ -27,6 +27,8 @@ type Svyaz interface {
 	// KlyuchRoot кладёт ключ управления в authorized_keys root и входит им
 	// новым соединением той же дорогой. pustoy это галочка «Сервер пустой».
 	KlyuchRoot(ctx context.Context, podpis gossh.Signer, kommentariy string, pustoy bool) (Svyaz, error)
+	// Perevoyti входит root ключом podpis новым соединением той же дорогой.
+	Perevoyti(ctx context.Context, podpis gossh.Signer) (Svyaz, error)
 	Zakryt()
 }
 
@@ -55,6 +57,14 @@ func (s soedinenie) Svedeniya() Svedeniya {
 
 func (s soedinenie) KlyuchRoot(ctx context.Context, podpis gossh.Signer, kommentariy string, pustoy bool) (Svyaz, error) {
 	r, err := s.PolozhitKlyuchRoot(ctx, podpis, kommentariy, pustoy)
+	if err != nil {
+		return nil, err
+	}
+	return soedinenie{r, s.tunnel}, nil
+}
+
+func (s soedinenie) Perevoyti(ctx context.Context, podpis gossh.Signer) (Svyaz, error) {
+	r, err := s.Soedinenie.Perevoyti(ctx, podpis)
 	if err != nil {
 		return nil, err
 	}

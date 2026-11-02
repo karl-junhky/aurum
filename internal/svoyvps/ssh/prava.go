@@ -167,6 +167,34 @@ true`
 // srokOtkata: уборка своей строки идёт и после отмены операции.
 var srokOtkata = 30 * time.Second
 
+// Perevoyti входит root ключом podpis новым соединением тем же путём, со
+// сверкой ключа хоста этого соединения: так проверяется, что вход ключом
+// жив после правки сервера (укладка ключа, выключение пароля). Отдаёт новое
+// соединение, старое закрывает вызывающий.
+func (s *Soedinenie) Perevoyti(ctx context.Context, podpis gossh.Signer) (r *Soedinenie, err error) {
+	defer zashchita("Perevoyti", &err)
+	if podpis == nil {
+		return nil, otkaz(PrichinaSboy, "ключ управления не задан", nil)
+	}
+	izvesten := s.KlyuchHosta
+	r, err = Podklyuchit(ctx, Zapros{
+		Adres:          s.adres,
+		Port:           s.port,
+		Vhod:           Vhod{Polzovatel: "root", Podpis: podpis},
+		Izvesten:       &izvesten,
+		Put:            s.put,
+		BezPerezapuska: s.bezPerezapuska,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !r.Root {
+		r.Zakryt()
+		return nil, otkaz(PrichinaSboy, "вход ключом root дал не root", nil)
+	}
+	return r, nil
+}
+
 // PolozhitKlyuchRoot кладёт открытую часть ключа управления podpis в
 // authorized_keys root и входит им тем же путём новым соединением. Отдаёт
 // это соединение root; старое закрывает вызывающий.
@@ -216,18 +244,7 @@ func (s *Soedinenie) PolozhitKlyuchRoot(ctx context.Context, podpis gossh.Signer
 	}
 	dobavlen := strings.TrimSpace(string(it.Vyvod)) == "dobavlen"
 
-	izvesten := s.KlyuchHosta
-	r, err = Podklyuchit(ctx, Zapros{
-		Adres:    s.adres,
-		Port:     s.port,
-		Vhod:     Vhod{Polzovatel: "root", Podpis: podpis},
-		Izvesten: &izvesten,
-		Put:      s.put,
-	})
-	if err == nil && !r.Root {
-		r.Zakryt()
-		r, err = nil, otkaz(PrichinaSboy, "вход ключом root дал не root", nil)
-	}
+	r, err = s.Perevoyti(ctx, podpis)
 	if err == nil {
 		return r, nil
 	}

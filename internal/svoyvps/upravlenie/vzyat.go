@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -69,6 +70,7 @@ func Vzyat(ctx context.Context, v Vzyatie) (itog Itog, err error) {
 	if o.Otmetka == nil {
 		return Itog{}, server.ErrNetUstanovki
 	}
+	itog.ParolVyklyuchen = slices.Contains(o.SshdFayly, server.FaylParolya)
 
 	// «Взять под управление» это то же согласие менять машину, что галочка
 	// «Сервер пустой» при установке. Ключ кладётся и тогда, когда он уже есть

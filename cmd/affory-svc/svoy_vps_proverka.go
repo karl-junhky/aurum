@@ -10,6 +10,7 @@ import (
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
 )
@@ -129,6 +130,8 @@ func (s *Sluzhba) deloProverki(z SvoyServer, zapros ssh.Zapros) func(context.Con
 		p := proverkaDlyaEkrana(z, zd)
 		zapisana := s.otmetitProverku(z.Id, func(x *SvoyServer) {
 			x.Proveren, x.ProverkaOtkaz = seychas, ""
+			// Пароль могли выключить и включить с другого компьютера или руками.
+			x.ParolVyklyuchen = slices.Contains(zd.Osmotr.SshdFayly, server.FaylParolya)
 			if p.Versiya != "" {
 				x.Versiya = p.Versiya
 			}

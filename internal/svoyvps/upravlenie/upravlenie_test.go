@@ -19,12 +19,18 @@ import (
 // svyaz это подставной вход: операции на сервере подменяются целиком, а
 // здесь видно, каким входом их позвали и закрыт ли он.
 type svyaz struct {
-	imya     string
-	sv       Svedeniya
-	zakryt   int
-	root     *svyaz
-	errRoot  error
-	klyuchom struct {
+	imya    string
+	sv      Svedeniya
+	zakryt  int
+	root    *svyaz
+	errRoot error
+	// Новый вход тем же путём (Perevoyti): errNovyy на первые errNovyyRaz
+	// входов, а 0 - на все.
+	novyy       *svyaz
+	errNovyy    error
+	errNovyyRaz int
+	novyhVhodov int
+	klyuchom    struct {
 		bylo   bool
 		pustoy bool
 		komm   string
@@ -51,6 +57,17 @@ func (s *svyaz) KlyuchRoot(_ context.Context, _ gossh.Signer, komm string, pusto
 		return nil, s.errRoot
 	}
 	return s.root, nil
+}
+
+func (s *svyaz) Perevoyti(context.Context, gossh.Signer) (Svyaz, error) {
+	s.novyhVhodov++
+	if s.errNovyy != nil && (s.errNovyyRaz == 0 || s.novyhVhodov <= s.errNovyyRaz) {
+		return nil, s.errNovyy
+	}
+	if s.novyy == nil {
+		return nil, errors.New("подставной вход: нового входа не ждали")
+	}
+	return s.novyy, nil
 }
 
 func (s *svyaz) Zakryt() { s.zakryt++ }

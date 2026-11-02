@@ -137,6 +137,9 @@ type Itog struct {
 	// ожидания; nil - программа о нём ничего не сказала.
 	Sert             *server.SertUzla
 	Preduprezhdeniya []Preduprezhdenie
+	// ParolVyklyuchen: на сервере лежит наш файл sshd, вход по паролю
+	// выключали из программы (З6).
+	ParolVyklyuchen bool
 }
 
 // Ostanovka: осмотр нашёл то, с чем установка не идёт. Своя отметка
@@ -206,6 +209,7 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	if p := Prepyatstviya(o, u.Upravlenie.PublicKey()); p != nil {
 		return Itog{}, p
 	}
+	itog.ParolVyklyuchen = slices.Contains(o.SshdFayly, server.FaylParolya)
 
 	hod(Hod{Shag: ShagKlyuch})
 	r, err := s.KlyuchRoot(ctx, u.Upravlenie, u.Kommentariy, u.Pustoy)

@@ -44,6 +44,8 @@ func imyaSkripta(tekst string) string {
 		return "snos"
 	case skriptOtpuska:
 		return "otpusk"
+	case skriptParolya:
+		return "parol"
 	}
 	return "?"
 }
@@ -351,6 +353,67 @@ func TestPanikaNeRonyaet(t *testing.T) {
 	proverit("ProchitatUstanovku", err)
 	_, err = SnyatKlyuch(ctx, m, pk)
 	proverit("SnyatKlyuch", err)
+	proverit("VyklyuchitParol", VyklyuchitParol(ctx, m))
+	proverit("PodtverditParol", PodtverditParol(ctx, m))
+	_, err = VklyuchitParol(ctx, m)
+	proverit("VklyuchitParol", err)
+}
+
+func TestParol(t *testing.T) {
+	ctx := context.Background()
+	m := novaya()
+	m.otvety["parol vyklyuchit"] = ssh.Itog{Vyvod: []byte("parol\tvyklyuchen\n")}
+	m.otvety["parol podtverdit"] = ssh.Itog{Vyvod: []byte("otkat\tsnyat\n")}
+	if err := VyklyuchitParol(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := PodtverditParol(ctx, m); err != nil || !slices.Equal(m.vyzovy, []string{"parol vyklyuchit", "parol podtverdit"}) {
+		t.Fatalf("%v %q", err, m.vyzovy)
+	}
+	// Чужая настройка держит пароль: файлы называются.
+	m.otvety["parol vyklyuchit"] = ssh.Itog{Kod: 2, Vyvod: []byte("parol\tchuzhoy\nvklyuchaet\t/etc/ssh/sshd_config.d/00-billpanel.conf\nvklyuchaet\t\n")}
+	var ch *ParolChuzhoy
+	if err := VyklyuchitParol(ctx, m); !errors.As(err, &ch) || !slices.Equal(ch.Fayly, []string{"/etc/ssh/sshd_config.d/00-billpanel.conf"}) {
+		t.Fatalf("чужая настройка: %v", err)
+	}
+	// Код 2 без своей строки мог дать и упавший шаг: это сбой.
+	m.otvety["parol vyklyuchit"] = ssh.Itog{Kod: 2, Vyvod: []byte("vklyuchaet\t/etc/ssh/sshd_config\n")}
+	if err := VyklyuchitParol(ctx, m); errors.As(err, &ch) || err == nil {
+		t.Fatalf("код 2 без строки: %v", err)
+	}
+	m.otvety["parol vklyuchit"] = ssh.Itog{Vyvod: []byte("parol\tvyklyuchen_chuzhim\nvyklyuchaet\t/etc/ssh/sshd_config.d/60-cloudimg-settings.conf\n")}
+	if v, err := VklyuchitParol(ctx, m); err != nil || v.Parol != "vyklyuchen_chuzhim" || !slices.Equal(v.Fayly, []string{"/etc/ssh/sshd_config.d/60-cloudimg-settings.conf"}) {
+		t.Fatalf("включение: %+v %v", v, err)
+	}
+	// Отказ скрипта и успех без итоговой строки - сбой шага parol.
+	var o *Oshibka
+	for imya, it := range map[string]ssh.Itog{
+		"parol vyklyuchit": {Kod: 1, Oshibki: "sshd не перечитал настройку, файл снят"},
+		"parol podtverdit": {},
+		"parol vklyuchit":  {Vyvod: []byte("parol\tmozhet\n")},
+	} {
+		m.otvety[imya] = it
+		var err error
+		switch imya {
+		case "parol vyklyuchit":
+			err = VyklyuchitParol(ctx, m)
+		case "parol podtverdit":
+			err = PodtverditParol(ctx, m)
+		default:
+			_, err = VklyuchitParol(ctx, m)
+		}
+		if !errors.As(err, &o) || o.Shag != "parol" {
+			t.Fatalf("%s: %v", imya, err)
+		}
+	}
+	m.otvety["parol vyklyuchit"] = ssh.Itog{Kod: 1, Oshibki: "sshd не перечитал настройку, файл снят"}
+	if err := VyklyuchitParol(ctx, m); !errors.As(err, &o) || o.Tekst != "sshd не перечитал настройку, файл снят" {
+		t.Fatalf("текст отказа: %v", err)
+	}
+	m.otvety["parol podtverdit"] = ssh.Itog{Vyvod: []byte("otkat\tmozhet\n")}
+	if err := PodtverditParol(ctx, m); !errors.As(err, &o) {
+		t.Fatalf("подтверждение без «снят»: %v", err)
+	}
 }
 
 func TestSnyatKlyuch(t *testing.T) {

@@ -24,7 +24,19 @@ const (
 	vidSnos   = "snos"
 	vidVzyat  = "vzyat"
 	vidOtpusk = "otpusk"
+	vidParol  = "parol"
 )
+
+// ParolVps это итог «Выключить вход по паролю» и «Включить» для окна.
+type ParolVps struct {
+	// Vyklyuchen: наш файл sshd на сервере лежит, паролем не пускают.
+	Vyklyuchen bool `json:"vyklyuchen"`
+	// Snaruzhi это вход по паролю после включения: vklyuchen,
+	// vyklyuchen_chuzhim (его держит выключенным другая настройка, файлы в
+	// Fayly) или neizvestno (sshd не ответил на проверку настроек).
+	Snaruzhi string   `json:"snaruzhi,omitempty"`
+	Fayly    []string `json:"fayly,omitempty"`
+}
 
 // SnosVps это итог сноса для окна.
 type SnosVps struct {
@@ -219,6 +231,63 @@ func (s *Sluzhba) svoyVpsOtpustit(k protokol.Kadr) protokol.Kadr {
 			h.Put, h.Otpushchen = it.Vhod.Put, &OtpuskVps{KlyuchaNeBylo: !it.Snyat}
 			if otstali != nil {
 				h.Preduprezhdeniya = append(h.Preduprezhdeniya, *otstali)
+			}
+		})
+		return nil
+	})
+}
+
+// svoyVpsParol выключает или включает вход по паролю на своём сервере (З6)
+// ключом управления. Запись помнит, лежит ли наш файл sshd. После неудачного
+// выключения он снят или его снимет таймер на сервере, поэтому запись
+// говорит «не выключен» при любом отказе: ошибается она тогда только в
+// безопасную сторону, а следующая проверка поправит. Неудачное включение
+// оставляет файл как был, и запись не трогается.
+func (s *Sluzhba) svoyVpsParol(k protokol.Kadr) protokol.Kadr {
+	var telo struct {
+		Vyklyuchit *bool `json:"vyklyuchit"`
+	}
+	if err := json.Unmarshal(k.Telo, &telo); err != nil || telo.Vyklyuchit == nil {
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "тело команды не разобрано")
+	}
+	vyklyuchit := *telo.Vyklyuchit
+	z, o := s.zapisSvoego(k)
+	if o != nil {
+		return *o
+	}
+	zapros, kod, err := s.vhodUpravleniya(z)
+	if err != nil {
+		return otkazIz(k, kod, err)
+	}
+	return s.zapustitVps(k, vidParol, func(ctx context.Context, zad *zadanieVps) error {
+		s.pravitHod(zad, func(h *HodVps) { h.Shag, h.Server = string(upravlenie.ShagVhod), z.Id })
+		p := ParolVps{Vyklyuchen: vyklyuchit}
+		var (
+			it  upravlenie.ParolItog
+			err error
+		)
+		if vyklyuchit {
+			it, err = s.vpsVyklyuchitParol(ctx, s.putiVps(), zapros)
+		} else {
+			it, err = s.vpsVklyuchitParol(ctx, s.putiVps(), zapros)
+			p.Snaruzhi, p.Fayly = it.Posle.Parol, it.Posle.Fayly
+		}
+		if err != nil {
+			if vyklyuchit {
+				if err := s.otmetitProverku(z.Id, func(x *SvoyServer) { x.ParolVyklyuchen = false }); err != nil {
+					log.Printf("свой сервер %s: отметка пароля не записана: %v", z.Id, err)
+				}
+			}
+			return err
+		}
+		zapisana := s.otmetitProverku(z.Id, func(x *SvoyServer) { x.ParolVyklyuchen = vyklyuchit })
+		if zapisana != nil {
+			log.Printf("свой сервер %s: отметка пароля не записана: %v", z.Id, zapisana)
+		}
+		s.pravitHod(zad, func(h *HodVps) {
+			h.Put, h.Parol = it.Vhod.Put, &p
+			if zapisana != nil {
+				h.Preduprezhdeniya = append(h.Preduprezhdeniya, OtkazVps{Kod: kodSohraneniya(zapisana), Tekst: sboi.DlyaCheloveka(zapisana)})
 			}
 		})
 		return nil

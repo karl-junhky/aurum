@@ -98,6 +98,9 @@ type Soedinenie struct {
 	adres string
 	port  int
 	put   Put
+	// bezPerezapuska из запроса: новый вход тем же путём (Perevoyti) несёт
+	// его дальше.
+	bezPerezapuska bool
 	// otkuda это адрес, с которого сервер видит подключение (SSH_CLIENT),
 	// svoi это адреса самого сервера (hostname -I).
 	otkuda netip.Addr
@@ -198,6 +201,7 @@ func Podklyuchit(ctx context.Context, z Zapros) (s *Soedinenie, err error) {
 		adres:                adres,
 		port:                 port,
 		put:                  z.Put,
+		bezPerezapuska:       z.BezPerezapuska,
 	}
 	fon.Zapustit("svoyvps/ssh.puls", s.puls)
 	pctx, otmena := context.WithTimeout(ctx, srokProverok)

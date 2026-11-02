@@ -11,7 +11,8 @@
 # войти, разве что другим пользователем с sudo или консолью хостера. Это
 # «posledniy_vhod da» и код 3; sshd -T не ответил и проверить входы не
 # вышло - «posledniy_vhod neizvestno» и код 3. Печатает строки
-# «ключ<TAB>значение»: «klyuch snyat» или «klyucha net».
+# «ключ<TAB>значение»: «klyuch snyat» или «klyucha net». Сам по себе не
+# запускается: функцию sshd_snaruzhi Go ставит перед ним из sshd_snaruzhi.sh.
 set -euo pipefail
 
 v() { printf '%s\t%s\n' "$1" "$2"; }
@@ -30,19 +31,10 @@ telo="${1:-}"
 # Пустое тело совпало бы с каждой строкой и стёрло бы файл целиком.
 [[ "$telo" =~ $telo_re ]] || otkaz "нужно тело ключа"
 
-# Входы root судит sshd -T с данными входа root снаружи: так применяются
-# блоки Match. Адрес из документационного диапазона не попадёт ни под какой
-# Match Address местных сетей, как и человек снаружи. Свой адрес и порт sshd
-# берутся из SSH_CONNECTION этого входа, чтобы сработали Match LocalAddress
-# и LocalPort. Сомнение везде решается отказом: лишний отказ лучше сервера
-# без входа. Поэтому sshd -T не ответил - ключ не снимается.
-spec=user=root,host=192.0.2.1,addr=192.0.2.1
-read -r _ _ la lp _ <<< "${SSH_CONNECTION:-}" || true
-if [[ "${la:-}" =~ ^[0-9A-Fa-f:.]+$ && "${lp:-}" =~ ^[0-9]+$ ]]; then
-    spec="$spec,laddr=$la,lport=$lp"
-fi
-sshd="$(command -v sshd || echo /usr/sbin/sshd)"
-nastroyki="$("$sshd" -T -C "$spec" 2>/dev/null)" || nastroyki=""
+# Входы root судит sshd -T с данными входа root снаружи (sshd_snaruzhi).
+# Сомнение везде решается отказом: лишний отказ лучше сервера без входа.
+# Поэтому sshd -T не ответил - ключ не снимается.
+nastroyki="$(sshd_snaruzhi)" || nastroyki=""
 # Первая строка: пускает ли root ключом и паролем; дальше файлы ключей root
 # из AuthorizedKeysFile. Вход одним способом нужен в AuthenticationMethods
 # отдельным списком: «publickey,password» один ключ не пускает.

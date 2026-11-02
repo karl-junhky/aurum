@@ -252,6 +252,15 @@ func TestUstanovit(t *testing.T) {
 	if itog.Sert == nil || !itog.Sert.Est || itog.Sert.Sposob != "http-01" {
 		t.Fatalf("выпуск в итоге %+v", itog.Sert)
 	}
+	if itog.ParolVyklyuchen {
+		t.Fatal("пароль выключен на сервере без нашего файла sshd")
+	}
+	// Установка поверх своей, где пароль выключали из программы.
+	m = novayaMashina(t)
+	m.osm.SshdFayly = []string{server.FaylParolya}
+	if itog, err := Ustanovit(context.Background(), m.ustanovka()); err != nil || !itog.ParolVyklyuchen {
+		t.Fatalf("наш файл sshd: %v %v", itog.ParolVyklyuchen, err)
+	}
 }
 
 // Без ключа управления на этом компьютере любая отметка чужая.

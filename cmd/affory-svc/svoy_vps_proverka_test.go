@@ -168,6 +168,50 @@ func TestSvoyVpsProveritZapisNeProshla(t *testing.T) {
 	}
 }
 
+// Отметку пароля проверка берёт с сервера: его могли переключить с другого
+// компьютера или руками.
+func TestSvoyVpsProveritParol(t *testing.T) {
+	for _, vyklyuchen := range []bool{true, false} {
+		s := sPustymNaborom(t)
+		id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+		if err := s.otmetitProverku(id, func(x *SvoyServer) { x.ParolVyklyuchen = !vyklyuchen }); err != nil {
+			t.Fatal(err)
+		}
+		s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+			o := osmotrChistyy()
+			o.SshdFayly = []string{"50-cloud-init.conf"}
+			if vyklyuchen {
+				o.SshdFayly = append(o.SshdFayly, server.FaylParolya)
+			}
+			return upravlenie.ZdorovyeServera{Osmotr: o, Uzel: server.SostoyanieUzla{Versiya: "0.6.1"}}, nil
+		}
+		s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+		if h := dozhdatsyaVps(t, s); h.Faza != fazaGotovo {
+			t.Fatalf("проверка: %+v", h)
+		}
+		if z := zapisPoId(t, s, id); z.ParolVyklyuchen != vyklyuchen {
+			t.Fatalf("наш файл sshd %v, отметка %v", vyklyuchen, z.ParolVyklyuchen)
+		}
+	}
+}
+
+// Пароль выключен, а отметка не записалась: дело удалось, запись поправит
+// следующая проверка.
+func TestSvoyVpsParolZapisNeProshla(t *testing.T) {
+	s := sPustymNaborom(t)
+	id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+	s.vpsVyklyuchitParol = func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error) {
+		s.sekretyPisat = func([]byte) error { return errors.New("тест: диск полон") }
+		return upravlenie.ParolItog{}, nil
+	}
+	s.svoyVpsParol(kadrVps(t, "svoyVpsParol", map[string]any{"id": id, "vyklyuchit": true}))
+	h := dozhdatsyaVps(t, s)
+	if h.Faza != fazaGotovo || h.Parol == nil || !h.Parol.Vyklyuchen ||
+		len(h.Preduprezhdeniya) != 1 || h.Preduprezhdeniya[0].Tekst == "" {
+		t.Fatalf("выключение с незаписанной отметкой: %+v", h)
+	}
+}
+
 // Установка и захват записывают сертификат, каким его видела программа, и
 // считаются визитом: плановая проверка не идёт следом.
 func TestZapisatSvoySert(t *testing.T) {

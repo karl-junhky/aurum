@@ -86,7 +86,7 @@ var resheniyeOPravah = map[string]bool{
 	"svoyVpsOsmotret": false, "svoyVpsUstanovit": false,
 	"svoyVpsHod": false, "svoyVpsOtmenit": false, "svoyVpsSpisok": false,
 	"svoyVpsSnesti": false, "svoyVpsVzyat": false, "svoyVpsZabyt": false, "svoyVpsProverit": false,
-	"svoyVpsOtpustit": false,
+	"svoyVpsOtpustit": false, "svoyVpsParol": false,
 }
 
 // Команда без прав администратора обязана получить отказ, а не выполниться.

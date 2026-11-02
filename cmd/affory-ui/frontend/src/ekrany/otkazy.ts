@@ -92,6 +92,8 @@ export const tekstOtkaza: Record<string, ZapisOtkaza> = {
   "vps-network-limited": { deystvie: "proverit-set", tekst: "твоя сеть сейчас пускает не всё" },
   "vps-busy": { deystvie: "nichego", tekst: "со своим сервером уже идёт другое дело" },
   "vps-last-login": { deystvie: "nichego", tekst: "ключ не снят, чтобы не остаться без входа на сервер" },
+  "vps-password-failed": { deystvie: "povtorit", tekst: "вход по паролю не переключился" },
+  "vps-password-other": { deystvie: "nichego", tekst: "пароль включён другой настройкой сервера" },
 };
 
 /** Button label per action; null means the screen only informs. */
