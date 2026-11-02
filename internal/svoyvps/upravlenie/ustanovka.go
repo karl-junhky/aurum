@@ -126,6 +126,11 @@ type Preduprezhdenie struct {
 	// Otkaz для журнала: отказ выпуска или проверки, без секретов.
 	Otkaz    string
 	Detektor *blok.Itog
+	// Kandidaty у NeProshyol: порты вида, что пробовались на подборе.
+	// Служба по ним судит, мог ли отказ дать перехват порта на компьютере.
+	Kandidaty []int
+	// Proba у NeVezyot: чем кончилась проверка ключа.
+	Proba proverka.Vid
 }
 
 // Itog это поставленный сервер.
@@ -409,7 +414,7 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 		hod(Hod{Shag: ShagDetektor})
 		d, err := detektor(ctx, opciiDetektora(p, final, sek.Maska, itog.Vhod.Tunnel, s))
 		for _, t := range neProshli {
-			pr := Preduprezhdenie{Vid: NeProshyol, Transport: t, Port: portVida(final, t)}
+			pr := Preduprezhdenie{Vid: NeProshyol, Transport: t, Port: portVida(final, t), Kandidaty: kandidatyVida(v, t)}
 			if err != nil {
 				pr.Otkaz = err.Error()
 			} else {
@@ -445,7 +450,7 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 			})
 		case it.Vid != proverka.Vezyot && !slices.Contains(neProshli, t):
 			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NeVezyot,
-				Transport: t, Port: it.Server.Port, Otkaz: it.Otkaz})
+				Transport: t, Port: it.Server.Port, Otkaz: it.Otkaz, Proba: it.Vid})
 			if !slices.Contains(itog.NeProshli, t) {
 				itog.NeProshli = append(itog.NeProshli, t)
 			}
@@ -616,6 +621,14 @@ func portVida(v konfig.Vhody, transport string) int {
 		return 0
 	}
 	return p[0]
+}
+
+// kandidatyVida это порты вида transport во входах v, копией.
+func kandidatyVida(v konfig.Vhody, transport string) []int {
+	if transport == "reality-tcp" {
+		return slices.Clone(v.Reality)
+	}
+	return slices.Clone(v.Hy2)
 }
 
 // opciiDetektora: стук в 80 и 443 и порты ключей, на порту reality

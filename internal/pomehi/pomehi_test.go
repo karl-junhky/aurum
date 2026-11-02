@@ -274,6 +274,40 @@ func TestLomayushchieIdutPervymi(t *testing.T) {
 	}
 }
 
+func TestPerehvatPorta(t *testing.T) {
+	n := []Nahodka{
+		{Imya: "Kaspersky", Vid: VidAntivirus, Gruppa: Meshaet},
+		{Imya: "Avast", Vid: VidAntivirus, Gruppa: Meshaet},
+	}
+	for _, c := range []struct {
+		n    []Nahodka
+		port int
+		kto  string
+	}{
+		{n, 993, "Avast"},
+		{n, 465, "Avast"},
+		{n, 443, ""},
+		{n, 2053, ""},
+		{n[:1], 993, ""},
+		{nil, 993, ""},
+	} {
+		if kto := PerehvatPorta(c.n, c.port); kto != c.kto {
+			t.Errorf("порт %d при %+v: %q, ждали %q", c.port, c.n, kto, c.kto)
+		}
+	}
+	// Перехват ищется по названию находки: переименованная в izvestnye
+	// программа молча перестала бы называться.
+	for imya := range perehvatPortov {
+		est := false
+		for _, p := range izvestnye {
+			est = est || p.imya == imya
+		}
+		if !est {
+			t.Errorf("перехват порта у %q, а среди известных программ такого названия нет", imya)
+		}
+	}
+}
+
 func TestPodskazka(t *testing.T) {
 	n := []Nahodka{
 		{Imya: "zapret", Vid: VidObhod, Gruppa: Lomaet},

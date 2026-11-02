@@ -3,7 +3,7 @@ import { useCallback, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
-  punktyOsmotra, sostoyanieKlyucha, teloDostupa, zanyatyeDlyaReality,
+  punktyOsmotra, sostoyanieKlyucha, strokaPerehvata, teloDostupa, zanyatyeDlyaReality,
 } from "./SvoyVpn";
 import {
   PUSTAYA_FORMA, type HodVps, type ItogKomandy, type Master, type OsmotrVps, type SvoyServer, type SvoyVps,
@@ -271,6 +271,40 @@ describe("шаг «Установка»", () => {
     expect(screen.getByText("Пробую 5443 по UDP для hysteria2")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("svoy-otmenit-ustanovku"));
     await waitFor(() => expect(s.imena()).toContain("svoyVpsOtmenit"));
+  });
+
+  it("подбор под Avast называет его на фишке, строкой под портами и в итоге", () => {
+    const otkaz = "нет ответа через ключ: соединение не установилось";
+    const proverki = [
+      { transport: "reality-tcp", port: 465, vid: "net-otveta", otkaz, pomeha: "Avast" },
+      { transport: "reality-tcp", port: 993, vid: "net-otveta", otkaz, pomeha: "Avast" },
+      { transport: "reality-tcp", port: 2053, vid: "vezyot" },
+    ];
+    const stroka = "Avast на этом компьютере перехватывает порты 465 и 993, VPN через них не проходит";
+    stend({ master: { shag: "ustanovka", forma: null, id: 11 }, hody: [hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "proverka", proverki })] });
+    const reality = screen.getByRole("list", { name: "Порты reality, TCP" });
+    expect(within(reality).getAllByRole("listitem")[1]).toHaveTextContent("993не прошёл: не ответил: порт перехватывает Avast на этом компьютере");
+    expect(screen.getByText(stroka)).toBeInTheDocument();
+    cleanup();
+
+    // Фишек на «Готово» уже нет: строка остаётся под ключами.
+    const ustanovlen = { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2053, vid: "vezyot" }], ids: ["k-r"], ne_iz_seti: [] };
+    stend({ servery: [server()], master: { shag: "ustanovka", forma: null, id: 11 }, hody: [hod({ id: 11, vid: "ustanovka", faza: "gotovo", proverki, ustanovlen })] });
+    expect(screen.getByText(stroka)).toBeInTheDocument();
+    expect(itogDela(hod({ vid: "podbor", faza: "gotovo", proverki, ustanovlen }), undefined)?.tekst).toBe(`reality 2053. ${stroka}`);
+
+    // Ключ сам упёрся в Avast: о нём говорят его строка и предупреждение.
+    const svoy = { ...ustanovlen, klyuchi: [{ transport: "reality-tcp", port: 993, vid: "net-otveta", otkaz, pomeha: "Avast" }] };
+    expect(itogDela(hod({ vid: "podbor", faza: "gotovo", proverki, ustanovlen: svoy }), undefined)?.tekst).toBe("reality 993");
+  });
+
+  it("строка о перехвате судит порт по последней пробе", () => {
+    const k = (port: number, vid: string, pomeha?: string) => ({ transport: "reality-tcp", port, vid, pomeha });
+    expect(strokaPerehvata(hod({ proverki: [k(993, "net-otveta", "Avast")] }))).toBe("Avast на этом компьютере перехватывает порт 993, VPN через него не проходит");
+    expect(strokaPerehvata(hod({ proverki: [k(110, "zamerz", "Avast"), k(465, "net-otveta", "Avast"), k(993, "net-otveta", "Avast")] })))
+      .toBe("Avast на этом компьютере перехватывает порты 110, 465 и 993, VPN через них не проходит");
+    expect(strokaPerehvata(hod({ proverki: [k(993, "net-otveta", "Avast"), k(993, "vezyot")] }))).toBe("");
+    expect(strokaPerehvata(hod({ proverki: [k(443, "net-otveta")] }))).toBe("");
   });
 
   it("отмена, не дошедшая до службы, видна", async () => {

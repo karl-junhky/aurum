@@ -80,6 +80,8 @@ const POVTOR_OTKAZA: Record<string, string> = {
 function itogKlyucha(k: KlyuchHoda): string {
   if (!k.vid) return "не проверялся";
   const slovo = ITOG_PROVERKI[k.vid] ?? k.vid;
+  // Перехват порта на этом компьютере объясняет отказ, а слово ядра нет.
+  if (k.pomeha && k.vid !== "vezyot") return `${slovo}: порт перехватывает ${k.pomeha} на этом компьютере`;
   // Адрес выхода нужен отчёту, а не подписи: слово итога и так говорит всё.
   if (!k.otkaz || k.vid === "vezyot" || k.vid === "chuzhoy-vyhod") return slovo;
   const nachalo = POVTOR_OTKAZA[k.vid];
@@ -912,14 +914,39 @@ function HodPodbora({ h }: { h: HodVps }) {
   const podborIdyot = h.faza === "idyot" && ETAP_SHAGA[h.shag ?? ""] === "porty";
   const p = probyPortov(h, podborIdyot);
   const seychas = podborIdyot ? chtoSeychas(h) : "";
+  const perehvat = strokaPerehvata(h);
   if (p.reality.length === 0 && p.hy2.length === 0 && !seychas) return null;
   return (
     <div className="flex flex-col gap-2.5 pr-4 pb-4 pl-[62px]">
       <RyadPortov imya="reality, TCP" proby={p.reality} />
       <RyadPortov imya="hysteria2, UDP" proby={p.hy2} />
+      {perehvat && <p className="text-fg-secondary text-xs">{perehvat}</p>}
       {seychas && <p aria-live="polite" className="text-fg-muted text-xs">{seychas}</p>}
     </div>
   );
+}
+
+/** Программа на этом компьютере, которая перехватывает порты подбора (П6):
+ *  без этой строки «не ответил» на 993 читается как беда сервера. Порт
+ *  судится по последней пробе, как его фишка. */
+export function strokaPerehvata(h: HodVps): string {
+  const posledniy = new Map<string, KlyuchHoda>();
+  for (const k of h.proverki) posledniy.set(`${k.transport} ${k.port}`, k);
+  const poProgrammam = new Map<string, number[]>();
+  for (const k of posledniy.values()) {
+    if (k.pomeha && k.vid !== "vezyot") poProgrammam.set(k.pomeha, [...(poProgrammam.get(k.pomeha) ?? []), k.port]);
+  }
+  return [...poProgrammam].map(([kto, porty]) => {
+    const mnogo = porty.length > 1;
+    const spisok = mnogo ? `${porty.slice(0, -1).join(", ")} и ${porty[porty.length - 1]}` : `${porty[0]}`;
+    return `${kto} на этом компьютере перехватывает ${mnogo ? "порты" : "порт"} ${spisok}, VPN через ${mnogo ? "них" : "него"} не проходит`;
+  }).join(". ");
+}
+
+/** Строка о перехвате для итога, где фишек подбора уже нет. Ключ, который
+ *  сам упёрся в перехват, называет его своей строкой и предупреждением. */
+function perehvatVItoge(h: HodVps): string {
+  return h.ustanovlen?.klyuchi.some((k) => k.pomeha) ? "" : strokaPerehvata(h);
 }
 
 /** Отчёт без секретов: адрес и порт можно, логин, пароль и ключи нельзя
@@ -935,7 +962,7 @@ export function otchyotDela(h: HodVps, adres: string | undefined, versiya: strin
     h.otkaz ? `отказ: ${h.otkaz.kod}: ${h.otkaz.tekst}` : "",
     ...h.preduprezhdeniya.map((p) => `предупреждение: ${p.kod}: ${p.tekst}`),
     ...h.otseyany.map((o) => `отсеян: ${o.proto} ${o.port}: ${o.prichina}${o.process ? ` (${o.process})` : ""}`),
-    ...h.proverki.map((k) => `проверка: ${k.transport} ${k.port}: ${k.vid ?? "идёт"}${k.otkaz ? `: ${k.otkaz}` : ""}`),
+    ...h.proverki.map((k) => `проверка: ${k.transport} ${k.port}: ${k.vid ?? "идёт"}${k.otkaz ? `: ${k.otkaz}` : ""}${k.pomeha ? ` (порт перехватывает ${k.pomeha})` : ""}`),
     h.krug ? `круг детектора: ${h.krug}` : "",
     versiya ?? "",
   ];
@@ -1050,6 +1077,7 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
   // телефона, а не подключаться отсюда.
   const proshli = klyuchi.some((k) => k.vid === "vezyot");
   const vseProshli = klyuchi.length > 0 && klyuchi.every((k) => k.vid === "vezyot");
+  const perehvat = perehvatVItoge(h);
   // Выгрузка открывается под ключами: окно само доводит её до глаз.
   const kVygruzke = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1095,6 +1123,7 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
             <Knopka rang="tekst" onClick={naZakryt}>Готово</Knopka>
           </div>
         </Panel>
+        {perehvat && <p className="text-fg-muted text-xs">{perehvat}</p>}
         {vseProshli && (
           <p className="text-fg-muted text-xs">
             Affory подбирал порты из сети этого компьютера. С мобильного интернета на телефоне какой-то из ключей может не открыться
@@ -1163,7 +1192,8 @@ export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlash
     case "podbor":
       return {
         zagolovok: "Порты подобраны заново",
-        tekst: h.ustanovlen?.klyuchi.map((k) => `${vidKlyucha(k.transport).imya} ${k.port}`).join(", "),
+        tekst: [h.ustanovlen?.klyuchi.map((k) => `${vidKlyucha(k.transport).imya} ${k.port}`).join(", ") ?? "", perehvatVItoge(h)]
+          .filter(Boolean).join(". ") || undefined,
       };
     case "parol": {
       const p = h.parol;

@@ -23,6 +23,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/pomehi"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/blok"
@@ -907,11 +908,97 @@ func TestPreduprezhdenieVps(t *testing.T) {
 		"глушат":        {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Detektor: s(blok.Glushat)}, protokol.KodVpsPorty, "глушат"},
 		"без детектора": {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443}, protokol.KodVpsPorty, "reality на порту 443"},
 	} {
-		o := preduprezhdenieVps([]upravlenie.Preduprezhdenie{c.p})
+		o := preduprezhdenieVps([]upravlenie.Preduprezhdenie{c.p}, nil)
 		iz := c.p.Vid == upravlenie.NeProshyol || c.p.Vid == upravlenie.NeVezyot
 		if o.Kod != c.kod || !strings.Contains(o.Tekst, c.est) || o.Tekst == "" || o.IzSeti != iz {
 			t.Errorf("%s: %+v", imya, o)
 		}
+	}
+}
+
+// Avast на этом компьютере перехватывает почтовые порты (П6): предупреждение
+// о reality на них называет его, а не дорогу. Не называет, когда отказ
+// Avast не объясняет: упали и обычные кандидаты, адрес закрыт, сервер
+// молчит, ключ ушёл не тем выходом; hy2 идёт по UDP.
+func TestPreduprezhdenieVpsAvast(t *testing.T) {
+	avast := pomehiKompyutera{{Imya: "Avast", Vid: pomehi.VidAntivirus, Gruppa: pomehi.Meshaet}}
+	s := func(v blok.Vid) *blok.Itog { return &blok.Itog{Vid: v} }
+	neProshyol := func(port int, d *blok.Itog, kandidaty ...int) upravlenie.Preduprezhdenie {
+		return upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: port, Detektor: d, Kandidaty: kandidaty}
+	}
+	for imya, c := range map[string]struct {
+		p     upravlenie.Preduprezhdenie
+		avast bool
+	}{
+		"руками":                 {neProshyol(993, s(blok.Glushat), 993), true},
+		"подбор по почтовым":     {neProshyol(465, s(blok.Dostupen), 465, 993), true},
+		"без детектора":          {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 465, Otkaz: "детектор не дошёл", Kandidaty: []int{465}}, true},
+		"не везёт":               {upravlenie.Preduprezhdenie{Vid: upravlenie.NeVezyot, Transport: "reality-tcp", Port: 995, Proba: proverka.NetOtveta}, true},
+		"упали и обычные":        {neProshyol(993, s(blok.Glushat), 443, 993, 2053), false},
+		"адрес закрыт":           {neProshyol(993, s(blok.NeDohodit), 993), false},
+		"сервер молчит":          {neProshyol(993, s(blok.ServerMolchit), 993), false},
+		"молчит напрямую":        {neProshyol(993, s(blok.MolchitNapryamuyu), 993), false},
+		"не почтовый":            {neProshyol(443, s(blok.Glushat), 443), false},
+		"не везёт, не тот выход": {upravlenie.Preduprezhdenie{Vid: upravlenie.NeVezyot, Transport: "reality-tcp", Port: 995, Proba: proverka.ChuzhoyVyhod}, false},
+		"hy2 по UDP":             {upravlenie.Preduprezhdenie{Vid: upravlenie.NeVezyot, Transport: "hy2", Port: 993, Proba: proverka.NetOtveta}, false},
+	} {
+		o := preduprezhdenieVps([]upravlenie.Preduprezhdenie{c.p}, avast)
+		if strings.Contains(o.Tekst, "Avast") != c.avast || !o.IzSeti {
+			t.Errorf("%s: %+v", imya, o)
+		}
+		if bez := preduprezhdenieVps([]upravlenie.Preduprezhdenie{c.p}, nil); strings.Contains(bez.Tekst, "Avast") {
+			t.Errorf("%s без Avast: %+v", imya, bez)
+		}
+	}
+	// Общий вердикт не склеивает reality под Avast с hy2: у reality своя
+	// причина, и она же идёт в запись о сервере.
+	d := s(blok.Glushat)
+	pr := []upravlenie.Preduprezhdenie{
+		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 993, Detektor: d, Kandidaty: []int{993}},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 443, Detektor: d, Kandidaty: []int{443}},
+	}
+	if o := preduprezhdeniyaVps(pr, avast); len(o) != 2 || !strings.Contains(o[0].Tekst, "Avast") || strings.Contains(o[1].Tekst, "Avast") {
+		t.Fatalf("раздельно: %+v", o)
+	}
+	obshchaya, poVidam := prichinySeti(pr, []string{"reality-tcp", "hy2"}, avast)
+	if !strings.Contains(obshchaya, "Avast") || !strings.Contains(poVidam["reality-tcp"], "Avast") || strings.Contains(poVidam["hy2"], "Avast") {
+		t.Fatalf("причины %q %+v", obshchaya, poVidam)
+	}
+}
+
+// Проба reality на почтовом порту под Avast называет его в ходе и в ключах
+// итога; провёзший ключ, чужой выход, неверный ответ цели и hy2 его не
+// называют.
+func TestHodNazyvaetAvast(t *testing.T) {
+	avast := pomehiKompyutera{{Imya: "Avast", Vid: pomehi.VidAntivirus, Gruppa: pomehi.Meshaet}}
+	proba := func(transport string, port int, vid proverka.Vid) proverka.Itog {
+		return proverka.Itog{Server: protokol.Server{Id: transport + strconv.Itoa(port), Transport: transport, Port: port}, Vid: vid}
+	}
+	var x HodVps
+	for _, it := range []proverka.Itog{
+		proba("reality-tcp", 993, proverka.NetOtveta),
+		proba("reality-tcp", 465, proverka.ChuzhoyVyhod),
+		proba("reality-tcp", 2053, proverka.Vezyot),
+		proba("hy2", 993, proverka.Zamerz),
+		proba("reality-tcp", 995, proverka.Cel),
+		proba("reality-tcp", 110, proverka.Zamerz),
+	} {
+		primenitHod(&x, upravlenie.Hod{Shag: upravlenie.ShagPodbor, Klyuch: &it}, avast)
+	}
+	var pomehiHoda []string
+	for _, k := range x.Proverki {
+		pomehiHoda = append(pomehiHoda, k.Pomeha)
+	}
+	if !slices.Equal(pomehiHoda, []string{"Avast", "", "", "", "", "Avast"}) {
+		t.Fatalf("ход: %+v", x.Proverki)
+	}
+	k := proba("reality-tcp", 993, proverka.NetOtveta)
+	itog := upravlenie.Itog{Klyuchi: []konfig.Klyuch{{Server: k.Server}}, Proverki: []proverka.Itog{k}}
+	if kl := klyuchiHoda(itog, avast); len(kl) != 1 || kl[0].Pomeha != "Avast" {
+		t.Fatalf("ключи итога: %+v", kl)
+	}
+	if kl := klyuchiHoda(itog, nil); kl[0].Pomeha != "" {
+		t.Fatalf("ключи без Avast: %+v", kl)
 	}
 }
 
@@ -925,7 +1012,7 @@ func TestPreduprezhdeniyaVpsVmeste(t *testing.T) {
 		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 50443, Detektor: d},
 		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 40443, Detektor: d},
 		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: drugoy},
-	})
+	}, nil)
 	if len(pr) != 3 || pr[0].Kod != protokol.KodVpsNetSerta || pr[0].IzSeti {
 		t.Fatalf("предупреждения %+v", pr)
 	}
@@ -938,17 +1025,17 @@ func TestPreduprezhdeniyaVpsVmeste(t *testing.T) {
 	g := preduprezhdenieVps([]upravlenie.Preduprezhdenie{
 		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: drugoy},
 		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: drugoy},
-	})
+	}, nil)
 	if !strings.HasSuffix(g.Tekst, "reality на порту 443 и hysteria2 на порту 8443 не прошли") {
 		t.Fatalf("два ключа: %q", g.Tekst)
 	}
 	// Адрес закрыт для одного вида: проверять с телефона только его.
 	zakryt := &blok.Itog{Vid: blok.NeDohodit}
-	odin := preduprezhdenieVps([]upravlenie.Preduprezhdenie{{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: zakryt}})
+	odin := preduprezhdenieVps([]upravlenie.Preduprezhdenie{{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: zakryt}}, nil)
 	oba := preduprezhdenieVps([]upravlenie.Preduprezhdenie{
 		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: zakryt},
 		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: zakryt},
-	})
+	}, nil)
 	if !strings.Contains(odin.Tekst, "Проверь hysteria2 с телефона") || !strings.Contains(odin.Tekst, "не откроется,") ||
 		!strings.Contains(oba.Tekst, "Проверь их с телефона") || !strings.Contains(oba.Tekst, "не откроются,") {
 		t.Fatalf("адрес закрыт: %q / %q", odin.Tekst, oba.Tekst)
@@ -965,12 +1052,12 @@ func TestPreduprezhdeniyaVpsVmeste(t *testing.T) {
 	obshchaya, poVidam := prichinySeti([]upravlenie.Preduprezhdenie{
 		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: d},
 		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 8443, Detektor: d},
-	}, []string{"reality-tcp", "hy2"})
+	}, []string{"reality-tcp", "hy2"}, nil)
 	if !strings.Contains(obshchaya, "порты 443 (TCP) и 8443 (UDP)") || !strings.HasSuffix(poVidam["reality-tcp"], "порт 443 (TCP)") ||
 		!strings.HasSuffix(poVidam["hy2"], "порт 8443 (UDP)") {
 		t.Fatalf("причины %q %+v", obshchaya, poVidam)
 	}
-	if _, poVidam := prichinySeti(nil, []string{"hy2"}); poVidam != nil {
+	if _, poVidam := prichinySeti(nil, []string{"hy2"}, nil); poVidam != nil {
 		t.Fatalf("свои причины одного вида: %+v", poVidam)
 	}
 	if tekst := tekstVidov([]string{"reality-tcp", "hy2"}, map[string]string{"reality-tcp": "a", "hy2": "a"}); tekst != "a" {

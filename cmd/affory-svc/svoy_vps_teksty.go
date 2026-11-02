@@ -346,8 +346,9 @@ func chuzhoeDlyaCheloveka(chto []string) string {
 
 // preduprezhdeniyaVps переводит «не так» установки, дошедшей до ключей.
 // «Не прошёл» одного детектора называет все виды разом: вердикт у них
-// общий, и иначе одна и та же строка стояла бы дважды.
-func preduprezhdeniyaVps(pr []upravlenie.Preduprezhdenie) []OtkazVps {
+// общий, и иначе одна и та же строка стояла бы дважды. Вид, чей порт
+// перехватывает программа на этом компьютере, идёт своей строкой.
+func preduprezhdeniyaVps(pr []upravlenie.Preduprezhdenie, pom pomehiKompyutera) []OtkazVps {
 	out := make([]OtkazVps, 0, len(pr))
 	vzyato := make([]bool, len(pr))
 	for i, p := range pr {
@@ -356,21 +357,23 @@ func preduprezhdeniyaVps(pr []upravlenie.Preduprezhdenie) []OtkazVps {
 		}
 		gruppa := []upravlenie.Preduprezhdenie{p}
 		if p.Vid == upravlenie.NeProshyol {
+			kto := pom.perehvatchik(p)
 			for j := i + 1; j < len(pr); j++ {
 				q := pr[j]
-				if !vzyato[j] && q.Vid == upravlenie.NeProshyol && q.Detektor == p.Detektor && q.Otkaz == p.Otkaz {
+				if !vzyato[j] && q.Vid == upravlenie.NeProshyol && q.Detektor == p.Detektor && q.Otkaz == p.Otkaz &&
+					pom.perehvatchik(q) == kto {
 					gruppa, vzyato[j] = append(gruppa, q), true
 				}
 			}
 		}
-		out = append(out, preduprezhdenieVps(gruppa))
+		out = append(out, preduprezhdenieVps(gruppa, pom))
 	}
 	return out
 }
 
 // preduprezhdenieVps пишет одно предупреждение. Виды в gruppa отличаются
 // только ключом: вид и вердикт берутся у первого.
-func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie) OtkazVps {
+func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie, pom pomehiKompyutera) OtkazVps {
 	p := gruppa[0]
 	var klyuchi, porty []string
 	for _, x := range gruppa {
@@ -386,11 +389,15 @@ func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie) OtkazVps {
 	if len(gruppa) > 1 {
 		neProshyol = " не прошли"
 	}
+	kto := pom.perehvatchik(p)
 	switch p.Vid {
 	case upravlenie.NetSerta:
 		return OtkazVps{Kod: protokol.KodVpsNetSerta,
 			Tekst: "сертификат на адрес не выпущен: у хостера закрыты порты 80 и 443. Поставлен только reality; открой у хостера порт 80 и подбери порты заново, тогда встанет hysteria2"}
 	case upravlenie.NeVezyot:
+		if kto != "" {
+			return OtkazVps{Kod: protokol.KodVpsPorty, IzSeti: true, Tekst: tekstPerehvata(klyuch, neProshyol, kto)}
+		}
 		return OtkazVps{Kod: protokol.KodVpsPorty, IzSeti: true, Tekst: "ключ " + klyuch + " не провёз проверку из твоей сети"}
 	case upravlenie.NeProvereno:
 		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "ключи поставлены, но проверить их не вышло"}
@@ -402,6 +409,14 @@ func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie) OtkazVps {
 		vid = p.Detektor.Vid
 	}
 	o := OtkazVps{Kod: protokol.KodVpsPorty, IzSeti: true}
+	// Перехватчик встаёт посреди соединения, и детектор мог принять это за
+	// глушение или подмену, а сервер для него доступен. Белые списки,
+	// молчащую сеть или сервер, закрытый адрес и брандмауэр хостера он не
+	// объясняет: о них слово детектора.
+	if kto != "" && slices.Contains([]blok.Vid{"", blok.Dostupen, blok.Glushat, blok.Podmena}, vid) {
+		o.Tekst = tekstPerehvata(klyuch, neProshyol, kto)
+		return o
+	}
 	switch vid {
 	case blok.BelyeSpiski:
 		o.Kod, o.Tekst = protokol.KodVpsSetOgranichena, "твоя сеть пускает только разрешённые сайты: свой сервер из неё не виден. Ключи стоят, проверь их с телефона по мобильному интернету"
@@ -424,6 +439,13 @@ func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie) OtkazVps {
 		o.Tekst = klyuch + neProshyol + " проверку из твоей сети"
 	}
 	return o
+}
+
+// tekstPerehvata: ключ не прошёл, а его порт на этом компьютере
+// перехватывает программа kto. Подбор заново возьмёт порт, который
+// прошёл, а Avast перехватывает только почтовые.
+func tekstPerehvata(klyuch, neProshyol, kto string) string {
+	return klyuch + neProshyol + ": порт перехватывает " + kto + " на этом компьютере. Подбери порты заново, подбор возьмёт другой порт"
 }
 
 func slovoPorta(n int) string {
@@ -477,15 +499,15 @@ func skleitPrichiny(chasti []string) string {
 // когда видов больше одного, своя у каждого. Своя нужна, когда проверка
 // снимет один вид: общая могла назвать и его, а своя сохранит совет
 // оставшемуся, например какой порт открыть у хостера.
-func prichinySeti(pr []upravlenie.Preduprezhdenie, vidy []string) (string, map[string]string) {
-	obshchaya := tekstSeti(preduprezhdeniyaVps(pr))
+func prichinySeti(pr []upravlenie.Preduprezhdenie, vidy []string, pom pomehiKompyutera) (string, map[string]string) {
+	obshchaya := tekstSeti(preduprezhdeniyaVps(pr, pom))
 	if len(vidy) < 2 {
 		return obshchaya, nil
 	}
 	poVidam := make(map[string]string, len(vidy))
 	for _, t := range vidy {
 		svoi := slices.DeleteFunc(slices.Clone(pr), func(p upravlenie.Preduprezhdenie) bool { return p.Transport != t })
-		poVidam[t] = tekstSeti(preduprezhdeniyaVps(svoi))
+		poVidam[t] = tekstSeti(preduprezhdeniyaVps(svoi, pom))
 	}
 	return obshchaya, poVidam
 }

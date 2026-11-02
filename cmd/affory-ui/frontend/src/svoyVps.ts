@@ -19,6 +19,9 @@ export interface KlyuchHoda {
   port: number;
   vid?: string;
   otkaz?: string;
+  /** Ключ не провёз, а его порт на этом компьютере перехватывает эта
+   *  программа (Avast на почтовых портах). */
+  pomeha?: string;
 }
 
 /** Кандидат подбора, выпавший до проверки. */

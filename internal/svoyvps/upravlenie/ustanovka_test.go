@@ -456,7 +456,7 @@ func TestUstanovitNeProshyol(t *testing.T) {
 		t.Fatalf("предупреждения %+v", itog.Preduprezhdeniya)
 	}
 	for _, p := range itog.Preduprezhdeniya {
-		if p.Vid != NeProshyol || p.Detektor == nil || p.Detektor.Vid != blok.NeDohodit || p.Port != 443 {
+		if p.Vid != NeProshyol || p.Detektor == nil || p.Detektor.Vid != blok.NeDohodit || p.Port != 443 || !slices.Contains(p.Kandidaty, 443) {
 			t.Fatalf("предупреждение %+v", p)
 		}
 	}
@@ -502,7 +502,7 @@ func TestUstanovitNeVezyot(t *testing.T) {
 	if err != nil || len(itog.Preduprezhdeniya) != 1 {
 		t.Fatalf("итог %+v, ошибка %v", itog, err)
 	}
-	if p := itog.Preduprezhdeniya[0]; p.Vid != NeVezyot || p.Transport != "reality-tcp" || p.Port != 443 || p.Otkaz != "встал на 16 КБ" {
+	if p := itog.Preduprezhdeniya[0]; p.Vid != NeVezyot || p.Transport != "reality-tcp" || p.Port != 443 || p.Otkaz != "встал на 16 КБ" || p.Proba != proverka.Zamerz {
 		t.Fatalf("предупреждение %+v", p)
 	}
 	if !slices.Equal(itog.NeProshli, []string{"reality-tcp"}) {

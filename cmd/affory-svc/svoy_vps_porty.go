@@ -50,8 +50,9 @@ func (s *Sluzhba) svoyVpsPodobratPorty(k protokol.Kadr) protokol.Kadr {
 		if err != nil {
 			return err
 		}
+		pom := pomehiKompyutera(s.obnovitPomehi())
 		osn := osnovaZapisi{Imya: z.Imya, Port: z.PortSsh, Polzovatel: z.Polzovatel,
-			PortyRuchnye: p.Reality != 0 || p.Hy2 != 0, Postavlen: z.Postavlen, ZapisEst: true}
+			PortyRuchnye: p.Reality != 0 || p.Hy2 != 0, Postavlen: z.Postavlen, ZapisEst: true, Pomehi: pom}
 		return s.zapisatPoHodu(zad, z.Id, osn, func(klyuchi func(upravlenie.Itog) error) (upravlenie.Itog, error) {
 			return s.vpsPodobratPorty(ctx, upravlenie.Podbor{
 				Puti: s.putiVps(), Vhod: zapros, Imya: z.Imya,
@@ -60,7 +61,7 @@ func (s *Sluzhba) svoyVpsPodobratPorty(k protokol.Kadr) protokol.Kadr {
 				Proverka: proverka.Opcii{Adapter: a.Imya},
 				Zapusk:   s.zapuskProverki,
 				Pryamo:   ssh.PutPryamo(a.Indeks, a.Imya).Dial,
-				Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h) }) },
+				Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h, pom) }) },
 				Klyuchi:  klyuchi,
 			})
 		})

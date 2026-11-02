@@ -22,6 +22,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/fon"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/pomehi"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
@@ -149,6 +150,9 @@ type KlyuchHoda struct {
 	// Vid пуст, пока ключ проверяется.
 	Vid   string `json:"vid,omitempty"`
 	Otkaz string `json:"otkaz,omitempty"`
+	// Pomeha: ключ не провёз, а его порт на этом компьютере перехватывает
+	// эта программа (Avast на почтовых портах).
+	Pomeha string `json:"pomeha,omitempty"`
 }
 
 // OtsevHoda это кандидат подбора, выпавший до проверки.
@@ -637,6 +641,7 @@ func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, 
 		return err
 	}
 	imyaPK, _ := os.Hostname()
+	pom := pomehiKompyutera(s.obnovitPomehi())
 	u := upravlenie.Ustanovka{
 		Puti: s.putiVps(), Vhod: zapros, Pustoy: z.Pustoy, Imya: z.Imya,
 		Upravlenie: podpis, Kommentariy: kommentariyKlyucha(imyaPK, time.Now()),
@@ -645,9 +650,9 @@ func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, 
 		Proverka: proverka.Opcii{Adapter: a.Imya},
 		Zapusk:   s.zapuskProverki,
 		Pryamo:   ssh.PutPryamo(a.Indeks, a.Imya).Dial,
-		Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h) }) },
+		Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h, pom) }) },
 	}
-	osn := osnovaZapisi{Imya: z.Imya, Port: z.Port, Polzovatel: z.Polzovatel, PortyRuchnye: z.Reality != 0 || z.Hy2 != 0}
+	osn := osnovaZapisi{Imya: z.Imya, Port: z.Port, Polzovatel: z.Polzovatel, PortyRuchnye: z.Reality != 0 || z.Hy2 != 0, Pomehi: pom}
 	return s.zapisatPoHodu(zad, id, osn, func(klyuchi func(upravlenie.Itog) error) (upravlenie.Itog, error) {
 		u.Klyuchi = klyuchi
 		return s.vpsUstanovit(ctx, u)
@@ -675,7 +680,7 @@ func (s *Sluzhba) zapisatPoHodu(zad *zadanieVps, id string, osn osnovaZapisi,
 	case !zapisano:
 		return s.zapisatIPokazat(zad, id, osn, itog)
 	}
-	s.dopisatProverku(zad, id, ranshe, itog)
+	s.dopisatProverku(zad, id, ranshe, itog, osn.Pomehi)
 	return nil
 }
 
@@ -683,10 +688,10 @@ func (s *Sluzhba) zapisatPoHodu(zad *zadanieVps, id string, osn osnovaZapisi,
 // записи: в запись о сервере - виды, что не прошли из сети человека, и
 // почему, в снимок - проверки ключей и новые предупреждения. ranshe это
 // сколько предупреждений итога уже показано при записи.
-func (s *Sluzhba) dopisatProverku(zad *zadanieVps, id string, ranshe int, itog upravlenie.Itog) {
+func (s *Sluzhba) dopisatProverku(zad *zadanieVps, id string, ranshe int, itog upravlenie.Itog, pom pomehiKompyutera) {
 	novye := itog.Preduprezhdeniya[min(ranshe, len(itog.Preduprezhdeniya)):]
 	zhurnalPreduprezhdeniy(id, novye)
-	tekst, poVidam := prichinySeti(itog.Preduprezhdeniya, itog.NeProshli)
+	tekst, poVidam := prichinySeti(itog.Preduprezhdeniya, itog.NeProshli, pom)
 	zapisana := s.otmetitProverku(id, func(x *SvoyServer) {
 		x.NeIzSeti, x.SetTekst, x.SetPoVidam = slices.Clone(itog.NeProshli), tekst, poVidam
 	})
@@ -697,10 +702,10 @@ func (s *Sluzhba) dopisatProverku(zad *zadanieVps, id string, ranshe int, itog u
 		// Новое значение, а не правка на месте: прежний снимок мог уйти окну.
 		if h.Ustanovlen != nil {
 			u := *h.Ustanovlen
-			u.Klyuchi, u.NeIzSeti = klyuchiHoda(itog), slices.Clone(itog.NeProshli)
+			u.Klyuchi, u.NeIzSeti = klyuchiHoda(itog, pom), slices.Clone(itog.NeProshli)
 			h.Ustanovlen = &u
 		}
-		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(novye)...)
+		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(novye, pom)...)
 		if zapisana != nil {
 			h.Preduprezhdeniya = append(h.Preduprezhdeniya, OtkazVps{Kod: kodSohraneniya(zapisana), Tekst: sboi.DlyaCheloveka(zapisana)})
 		}
@@ -709,13 +714,14 @@ func (s *Sluzhba) dopisatProverku(zad *zadanieVps, id string, ranshe int, itog u
 
 // klyuchiHoda это ключи итога с их проверкой; Vid пуст, пока ключ не
 // проверялся.
-func klyuchiHoda(itog upravlenie.Itog) []KlyuchHoda {
+func klyuchiHoda(itog upravlenie.Itog, pom pomehiKompyutera) []KlyuchHoda {
 	klyuchi := make([]KlyuchHoda, len(itog.Klyuchi))
 	for i, kl := range itog.Klyuchi {
 		klyuchi[i] = KlyuchHoda{Transport: kl.Server.Transport, Port: kl.Server.Port}
 		for _, p := range itog.Proverki {
 			if p.Server.Id == kl.Server.Id {
 				klyuchi[i].Vid, klyuchi[i].Otkaz = string(p.Vid), p.Otkaz
+				klyuchi[i].Pomeha = pom.vinovat(p.Vid, p.Server.Transport, p.Server.Port)
 			}
 		}
 	}
@@ -749,8 +755,8 @@ func (s *Sluzhba) zapisatIPokazat(zad *zadanieVps, id string, osn osnovaZapisi, 
 	}
 	s.pravitHod(zad, func(h *HodVps) {
 		h.Put = itog.Vhod.Put
-		h.Ustanovlen = &UstanovkaVps{Server: id, Klyuchi: klyuchiHoda(itog), Ids: ids, NeIzSeti: slices.Clone(itog.NeProshli)}
-		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(itog.Preduprezhdeniya)...)
+		h.Ustanovlen = &UstanovkaVps{Server: id, Klyuchi: klyuchiHoda(itog, osn.Pomehi), Ids: ids, NeIzSeti: slices.Clone(itog.NeProshli)}
+		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(itog.Preduprezhdeniya, osn.Pomehi)...)
 		if otstali != nil {
 			h.Preduprezhdeniya = append(h.Preduprezhdeniya, *otstali)
 		}
@@ -797,8 +803,51 @@ func zhurnalDetektora(id string, d *blok.Itog) {
 	}
 }
 
+// pomehiKompyutera это помехи этого компьютера на начало дела: по ним
+// отказ ключа называет программу, которая перехватывает его порт.
+type pomehiKompyutera []pomehi.Nahodka
+
+// vinovat называет программу, из-за которой ключ мог не провезти. Только
+// для «не ответил» и «встал»: при чужом выходе и неверном ответе цели ключ
+// запрос провёз, перехвата порта там нет.
+func (pom pomehiKompyutera) vinovat(vid proverka.Vid, transport string, port int) string {
+	if vid != proverka.NetOtveta && vid != proverka.Zamerz {
+		return ""
+	}
+	return pom.portKlyucha(transport, port)
+}
+
+// portKlyucha называет программу, которая перехватывает порт ключа.
+// Почтовые порты перехватывают по TCP, hy2 идёт по UDP.
+func (pom pomehiKompyutera) portKlyucha(transport string, port int) string {
+	if transport == "hy2" {
+		return ""
+	}
+	return pomehi.PerehvatPorta(pom, port)
+}
+
+// perehvatchik называет программу, которой обязано предупреждение p. У «не
+// провёз» проба кончилась «не ответил» или «встал». У «не прошёл» все
+// кандидаты вида должны быть её портами: упал и обычный порт - дело в
+// дороге, и причину называет детектор.
+func (pom pomehiKompyutera) perehvatchik(p upravlenie.Preduprezhdenie) string {
+	switch p.Vid {
+	case upravlenie.NeVezyot:
+		return pom.vinovat(p.Proba, p.Transport, p.Port)
+	case upravlenie.NeProshyol:
+		kto := pom.portKlyucha(p.Transport, p.Port)
+		for _, port := range p.Kandidaty {
+			if pom.portKlyucha(p.Transport, port) != kto {
+				return ""
+			}
+		}
+		return kto
+	}
+	return ""
+}
+
 // primenitHod переносит весть установки в снимок.
-func primenitHod(x *HodVps, h upravlenie.Hod) {
+func primenitHod(x *HodVps, h upravlenie.Hod, pom pomehiKompyutera) {
 	x.Shag = string(h.Shag)
 	switch {
 	case h.Klyuch != nil && h.Klyuch.Vid == "":
@@ -806,7 +855,7 @@ func primenitHod(x *HodVps, h upravlenie.Hod) {
 	case h.Klyuch != nil:
 		x.Klyuch = nil
 		x.Proverki = append(x.Proverki, KlyuchHoda{Transport: h.Klyuch.Server.Transport, Port: h.Klyuch.Server.Port,
-			Vid: string(h.Klyuch.Vid), Otkaz: h.Klyuch.Otkaz})
+			Vid: string(h.Klyuch.Vid), Otkaz: h.Klyuch.Otkaz, Pomeha: pom.vinovat(h.Klyuch.Vid, h.Klyuch.Server.Transport, h.Klyuch.Server.Port)})
 	case h.Otsev != nil:
 		x.Otseyany = append(x.Otseyany, OtsevHoda{Proto: h.Otsev.Proto, Port: h.Otsev.Port,
 			Prichina: string(h.Otsev.Prichina), Process: h.Otsev.Process})
@@ -834,6 +883,10 @@ type osnovaZapisi struct {
 	// ZapisEst: запись должна быть. Подбор заново не заводит её снова, если
 	// сервер забыли, пока он шёл: у забытого нет и ключа управления.
 	ZapisEst bool
+	// Pomehi это помехи этого компьютера на начало дела: причина, по
+	// которой ключи не прошли, называет Avast, если порт его. Взятие под
+	// управление ключи не проверяет и их не ищет.
+	Pomehi pomehiKompyutera
 }
 
 // errSvoyZabyt: запись о сервере убрали посреди дела, которое её только
@@ -858,7 +911,7 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: osn.Postavlen, ParolVyklyuchen: it.ParolVyklyuchen,
 		NeIzSeti: slices.Clone(it.NeProshli),
 	}
-	zapis.SetTekst, zapis.SetPoVidam = prichinySeti(it.Preduprezhdeniya, it.NeProshli)
+	zapis.SetTekst, zapis.SetPoVidam = prichinySeti(it.Preduprezhdeniya, it.NeProshli, osn.Pomehi)
 	if zapis.Postavlen.IsZero() {
 		zapis.Postavlen = seychas
 	}

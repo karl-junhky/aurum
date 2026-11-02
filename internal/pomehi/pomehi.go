@@ -319,6 +319,24 @@ func Lomayushchie(n []Nahodka) []Nahodka {
 	return itog
 }
 
+// perehvatPortov это TCP-порты, на которых программа встаёт посреди
+// соединения со своей проверкой почты, и reality через них не проходит.
+// Только снятое живьём: Avast Free режет 993, 995 и 110 (1.10.0,
+// 21.10.2026) и 465 (стенд, 02.11.2026). Порт, не проверенный руками, сюда
+// не идёт: отказ на нём назвал бы Avast зря.
+var perehvatPortov = map[string][]int{"Avast": {110, 465, 993, 995}}
+
+// PerehvatPorta называет программу из n, которая перехватывает TCP-порт
+// port. Пусто - такой среди n нет.
+func PerehvatPorta(n []Nahodka, port int) string {
+	for _, x := range n {
+		if slices.Contains(perehvatPortov[x.Imya], port) {
+			return x.Imya
+		}
+	}
+	return ""
+}
+
 // Podskazka это фраза для отказа «данные не пошли» по находкам группы «может
 // мешать». Пусто, если сказать нечего. Не больше трёх программ: длинный
 // список в отказе читается как сбой, а полный лежит в выгрузке.
