@@ -64,6 +64,8 @@ func otkazVps(err error) OtkazVps {
 		return OtkazVps{Kod: protokol.KodVpsParol, Tekst: t}
 	case errors.As(err, &zapis):
 		return OtkazVps{Kod: kodSohraneniya(zapis.err), Tekst: sboi.DlyaCheloveka(zapis.err)}
+	case errors.Is(err, errSvoyZabyt):
+		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: err.Error()}
 	case errors.As(err, &ostatok):
 		return OtkazVps{Kod: protokol.KodVpsUstanovka,
 			Tekst: "после сноса на сервере осталось: " + strings.Join(ostatok.Chto, ", ") + ". Ключи остались в списке, снос можно повторить"}
@@ -97,7 +99,9 @@ func otkazVps(err error) OtkazVps {
 	case errors.As(err, &otsev):
 		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: tekstOtseva(otsev)}
 	case errors.Is(err, porty.ErrNetKandidatov):
-		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "все подходящие порты на сервере заняты чужими программами: задай порт руками в «Дополнительно»"}
+		// Без «где»: при установке это «Дополнительно» мастера, при подборе
+		// заново «Задать порты» в карточке.
+		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "все подходящие порты на сервере заняты чужими программами: задай порт руками"}
 	case errors.Is(err, porty.ErrNeReshil):
 		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "подбор не нашёл порта, который проходит из твоей сети"}
 	case errors.Is(err, upravlenie.ErrNetMaski):
@@ -286,6 +290,8 @@ func preduprezhdenieVps(p upravlenie.Preduprezhdenie) OtkazVps {
 		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "ключ " + klyuch + " не провёз проверку"}
 	case upravlenie.NeProvereno:
 		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "ключи поставлены, но проверить их не вышло"}
+	case upravlenie.PortyNeOtkryty:
+		return OtkazVps{Kod: protokol.KodVpsPorty, Tekst: "ключи поставлены, но открыть их порты в брандмауэре сервера не вышло: подбери порты заново"}
 	}
 	var vid blok.Vid
 	if p.Detektor != nil {

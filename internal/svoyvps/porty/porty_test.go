@@ -29,6 +29,33 @@ func osmotr() *server.Osmotr {
 	}
 }
 
+// Godnyy судит рабочий порт сервера теми же правилами, что кандидатов.
+func TestGodnyy(t *testing.T) {
+	for _, c := range []struct {
+		proto    string
+		port     int
+		pr       Prodlenie
+		prichina Prichina
+	}{
+		{"tcp", 443, Cherez80, ""},
+		{"tcp", 12345, Cherez80, ""},
+		{"tcp", 443, Cherez443, PrichinaSert},
+		{"tcp", 2222, Cherez80, PrichinaSsh},
+		{"tcp", 8443, Cherez80, PrichinaZanyat},
+		{"udp", 22, Cherez80, ""},
+		{"udp", 0, Cherez80, PrichinaVne},
+	} {
+		err := Godnyy(osmotr(), c.pr, c.proto, c.port)
+		var ots Otsev
+		if (c.prichina == "") != (err == nil) || err != nil && (!errors.As(err, &ots) || ots.Prichina != c.prichina) {
+			t.Fatalf("%d/%s при %v: %v", c.port, c.proto, c.pr, err)
+		}
+	}
+	if Godnyy(nil, Cherez80, "tcp", 443) == nil {
+		t.Fatal("порт годен без осмотра")
+	}
+}
+
 func TestKandidaty(t *testing.T) {
 	nginx := Otsev{Proto: "tcp", Port: 8443, Prichina: PrichinaZanyat, Process: "nginx"}
 	neizvestno := Otsev{Proto: "udp", Port: 11444, Prichina: PrichinaZanyat, Process: "?"}

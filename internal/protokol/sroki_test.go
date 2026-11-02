@@ -109,6 +109,7 @@ func TestKomandyChitayushchieNaborNeUkladyvayutsyaVBystryySrok(t *testing.T) {
 		// Свой сервер: запись о сервере читается до запуска задания.
 		"svoyVpsSpisok", "svoyVpsOsmotret", "svoyVpsUstanovit", "svoyVpsSnesti", "svoyVpsVzyat",
 		"svoyVpsProverit", "svoyVpsOtpustit", "svoyVpsParol", "svoyVpsZabyt", "svoyVpsPrinyatKlyuchHosta",
+		"svoyVpsPodobratPorty",
 	} {
 		srok, est := dolgie[imya]
 		if !est {

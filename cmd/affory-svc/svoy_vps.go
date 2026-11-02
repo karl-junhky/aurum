@@ -26,6 +26,7 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/blok"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/porty"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
@@ -622,12 +623,15 @@ func (o *oshibkaZapisi) Unwrap() error { return o.err }
 // правила брандмауэра отстали - это предупреждение, а не отказ: ключи уже
 // в списке, и повтор установки их только задвоил бы.
 func (s *Sluzhba) zapisatIPokazat(zad *zadanieVps, id string, osn osnovaZapisi, itog upravlenie.Itog) error {
+	zhurnalPreduprezhdeniy(id, itog.Preduprezhdeniya)
 	ids, err := s.zapisatSvoy(id, osn, itog)
 	var otstali *OtkazVps
 	switch {
 	case errors.Is(err, errPravilaOtstali):
 		log.Printf("свой сервер %s: %v", id, err)
 		otstali = &OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
+	case errors.Is(err, errSvoyZabyt):
+		return err
 	case err != nil:
 		return &oshibkaZapisi{err}
 	}
@@ -653,6 +657,45 @@ func (s *Sluzhba) zapisatIPokazat(zad *zadanieVps, id string, osn osnovaZapisi, 
 	return nil
 }
 
+// zhurnalPreduprezhdeniy пишет причины предупреждений: окну они не идут, а
+// для разбора жалобы нужны. Детектор один на все виды, что не прошли, и
+// из чего сложен его вердикт, пишется раз.
+func zhurnalPreduprezhdeniy(id string, pr []upravlenie.Preduprezhdenie) {
+	var detektor *blok.Itog
+	for _, p := range pr {
+		switch {
+		case p.Detektor != nil:
+			log.Printf("свой сервер %s: %s, %s на порту %d: детектор %s", id, p.Vid, p.Transport, p.Port, p.Detektor.Vid)
+			if p.Detektor != detektor {
+				detektor = p.Detektor
+				zhurnalDetektora(id, detektor)
+			}
+		case p.Otkaz == "":
+		case p.Transport != "":
+			log.Printf("свой сервер %s: %s, %s на порту %d: %s", id, p.Vid, p.Transport, p.Port, p.Otkaz)
+		default:
+			log.Printf("свой сервер %s: %s: %s", id, p.Vid, p.Otkaz)
+		}
+	}
+}
+
+func zhurnalDetektora(id string, d *blok.Itog) {
+	log.Printf("свой сервер %s: детектор: сеть %s, кругов %d, стук дошёл %d, датаграммы %d", id, d.Set, d.Krugov, d.Doshlo, d.DoshloUDP)
+	if d.OtkazLovushki != "" {
+		log.Printf("свой сервер %s: детектор: ловушка: %s", id, d.OtkazLovushki)
+	}
+	for _, st := range d.Stuki {
+		chasti := []string{string(st.Ishod)}
+		if st.Otvet != "" {
+			chasti = append(chasti, "ответ "+string(st.Otvet))
+		}
+		if st.Podrobno != "" {
+			chasti = append(chasti, st.Podrobno)
+		}
+		log.Printf("свой сервер %s: детектор: порт %d: %s", id, st.Port, strings.Join(chasti, ", "))
+	}
+}
+
 // primenitHod переносит весть установки в снимок.
 func primenitHod(x *HodVps, h upravlenie.Hod) {
 	x.Shag = string(h.Shag)
@@ -672,28 +715,41 @@ func primenitHod(x *HodVps, h upravlenie.Hod) {
 }
 
 // osnovaZapisi это то, что запись о сервере берёт от человека, а не от
-// сервера.
+// сервера. Postavlen пуст - сервер ставится сейчас.
 type osnovaZapisi struct {
 	Imya         string
 	Port         int
 	Polzovatel   string
 	PortyRuchnye bool
+	Postavlen    time.Time
+	// ZapisEst: запись должна быть. Подбор заново не заводит её снова, если
+	// сервер забыли, пока он шёл: у забытого нет и ключа управления.
+	ZapisEst bool
 }
+
+// errSvoyZabyt: запись о сервере убрали посреди дела, которое её только
+// правит.
+var errSvoyZabyt = errors.New("сервер забыли, пока шёл подбор портов: новые ключи в список не записаны")
 
 // zapisatSvoy кладёт ключи группы и запись о сервере одной правкой набора
 // (Е6): дальше их берёт авто. Та же ссылка, вставленная руками раньше,
 // остаётся одной записью и получает пометку своего сервера. Ключи прежней
-// записи того же сервера, которых нет среди новых, уходят из набора.
+// записи того же сервера, которых нет среди новых, уходят из набора, а выбор
+// и исключение из авто с них переходят на новый ключ того же вида.
 func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (ids []string, err error) {
 	port := osn.Port
 	if port == 0 {
 		port = 22
 	}
+	seychas := time.Now().UTC()
 	zapis := SvoyServer{
 		Id: id, Imya: osn.Imya, Adres: it.Adres, PortSsh: port, Polzovatel: osn.Polzovatel,
 		KlyuchHostaTip: it.Vhod.KlyuchHosta.Tip, KlyuchHosta: it.Vhod.KlyuchHosta.TeloBase64(),
 		Versiya: it.Versiya, Maska: it.Sekrety.Maska, PortyRuchnye: osn.PortyRuchnye,
-		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: time.Now().UTC(), ParolVyklyuchen: it.ParolVyklyuchen,
+		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: osn.Postavlen, ParolVyklyuchen: it.ParolVyklyuchen,
+	}
+	if zapis.Postavlen.IsZero() {
+		zapis.Postavlen = seychas
 	}
 	if len(it.Vhody.Reality) > 0 {
 		zapis.Reality = it.Vhody.Reality[0]
@@ -707,9 +763,10 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		}
 		zapis.SertTrevoga, zapis.SertOtkaz = it.Sert.Trevoga, it.Sert.Otkaz
 	}
-	zapis.Proveren, zapis.SertProveren = zapis.Postavlen, zapis.Postavlen
+	zapis.Proveren, zapis.SertProveren = seychas, seychas
 	err = s.pravitNabor(func(n *Nabor) error {
 		ids = nil
+		poVidu := map[string]string{}
 		for _, k := range it.Klyuchi {
 			var itog protokol.Server
 			n.Servery, itog = ssylki.DobavitProfil(n.Servery, k.Server)
@@ -719,18 +776,51 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 				}
 			}
 			ids = append(ids, itog.Id)
+			poVidu[k.Server.Transport] = itog.Id
 		}
 		zapis.Servery = slices.Clone(ids)
-		if i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id }); i >= 0 {
-			ubratServery(n, slices.DeleteFunc(slices.Clone(n.SvoiServery[i].Servery), func(x string) bool {
+		i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id })
+		if i < 0 && osn.ZapisEst {
+			return errSvoyZabyt
+		}
+		if i >= 0 {
+			uhodyat := slices.DeleteFunc(slices.Clone(n.SvoiServery[i].Servery), func(x string) bool {
 				return slices.Contains(ids, x)
-			}))
+			})
+			perenestiVybor(n, uhodyat, poVidu)
+			ubratServery(n, uhodyat)
 			n.SvoiServery = slices.Delete(n.SvoiServery, i, i+1)
 		}
 		n.SvoiServery = append(n.SvoiServery, zapis)
 		return nil
 	})
 	return ids, err
+}
+
+// perenestiVybor переводит выбор и исключение из авто с ключей uhodyat на
+// новый ключ того же вида из poVidu (вид - id). Подбор портов заново меняет
+// у ключа порт, а с ним и id: без переноса выбор человека снимался бы, а
+// убранный из авто ключ возвращался бы в авто.
+func perenestiVybor(n *Nabor, uhodyat []string, poVidu map[string]string) {
+	for _, id := range uhodyat {
+		i := slices.IndexFunc(n.Servery, func(x protokol.Server) bool { return x.Id == id })
+		if i < 0 {
+			continue
+		}
+		novyy, ok := poVidu[n.Servery[i].Transport]
+		if !ok {
+			continue
+		}
+		if n.Vybran == id {
+			n.Vybran = novyy
+		}
+		if j := slices.Index(n.VneAvto, id); j >= 0 {
+			n.VneAvto = slices.Delete(n.VneAvto, j, j+1)
+			if !slices.Contains(n.VneAvto, novyy) {
+				n.VneAvto = append(n.VneAvto, novyy)
+			}
+		}
+	}
 }
 
 // ubratServery убирает ключи ids из набора так же, как removeServer: выбор,

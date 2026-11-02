@@ -103,17 +103,22 @@ func Vzyat(ctx context.Context, v Vzyatie) (itog Itog, err error) {
 	if err != nil {
 		return Itog{}, err
 	}
-	// Hy2 стоит - сертификат был. Путь его выпуска неизвестен, если программа
-	// о нём молчит: тогда считается, что продлению нужен 443.
-	switch {
-	case len(vh.Hy2) == 0:
-		itog.Prodlenie = porty.BezSerta
-	case st.Sert != nil:
-		itog.Sert, itog.Prodlenie = st.Sert, prodlenieIz(st.Sert.Sposob)
-	default:
-		itog.Prodlenie = porty.Cherez443
-	}
+	itog.Sert, itog.Prodlenie = prodlenieStoyashchego(vh, st)
 	itog.Adres, itog.Sekrety, itog.Vhody, itog.Klyuchi = adres.String(), sek, vh, klyuchi
 	itog.Versiya = sostav.VpnUzel
 	return itog, nil
+}
+
+// prodlenieStoyashchego это чем продлевается сертификат поставленного
+// сервера и что о выпуске говорит программа. Hy2 стоит - сертификат был.
+// Путь его выпуска неизвестен, если программа о нём молчит: тогда
+// считается, что продлению нужен 443.
+func prodlenieStoyashchego(vh konfig.Vhody, st server.SostoyanieUzla) (*server.SertUzla, porty.Prodlenie) {
+	switch {
+	case len(vh.Hy2) == 0:
+		return nil, porty.BezSerta
+	case st.Sert != nil:
+		return st.Sert, prodlenieIz(st.Sert.Sposob)
+	}
+	return nil, porty.Cherez443
 }

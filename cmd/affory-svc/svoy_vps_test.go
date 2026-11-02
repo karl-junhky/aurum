@@ -571,7 +571,7 @@ func TestSvoyVpsUstanovit(t *testing.T) {
 	zap := n.SvoiServery[0]
 	if zap.Id != h.Ustanovlen.Server || zap.PortSsh != 2222 || zap.Reality != 443 || zap.Hy2 != 8443 ||
 		zap.Prodlenie != "80" || zap.SertDo != 1790000000 || zap.Maska != "dl.google.com" || zap.PortyRuchnye ||
-		zap.KlyuchHosta != kh.TeloBase64() || len(zap.Servery) != 2 || zap.Servery[0] != n.Servery[0].Id {
+		zap.KlyuchHosta != kh.TeloBase64() || len(zap.Servery) != 2 || zap.Servery[0] != n.Servery[0].Id || zap.Postavlen.IsZero() {
 		t.Errorf("запись: %+v", zap)
 	}
 
@@ -717,6 +717,7 @@ func TestPreduprezhdenieVps(t *testing.T) {
 		"сертификат":    {upravlenie.Preduprezhdenie{Vid: upravlenie.NetSerta}, protokol.KodVpsNetSerta, "порт 80"},
 		"не везёт":      {upravlenie.Preduprezhdenie{Vid: upravlenie.NeVezyot, Transport: "hy2", Port: 8443}, protokol.KodVpsPorty, "hysteria2 на порту 8443"},
 		"не проверено":  {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProvereno}, protokol.KodVpsPorty, ""},
+		"порты в ufw":   {upravlenie.Preduprezhdenie{Vid: upravlenie.PortyNeOtkryty}, protokol.KodVpsPorty, "подбери порты заново"},
 		"белые списки":  {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 443, Detektor: s(blok.BelyeSpiski)}, protokol.KodVpsSetOgranichena, "разрешённые"},
 		"сеть мертва":   {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Detektor: s(blok.NeSostoyalas)}, protokol.KodVpsSetOgranichena, ""},
 		"брандмауэр":    {upravlenie.Preduprezhdenie{Vid: upravlenie.NeProshyol, Port: 8443, Detektor: s(blok.OtvetNeVozvrashchaetsya)}, protokol.KodVpsBrandmauerHostera, "8443"},
@@ -728,6 +729,45 @@ func TestPreduprezhdenieVps(t *testing.T) {
 		if o.Kod != c.kod || !strings.Contains(o.Tekst, c.est) || o.Tekst == "" {
 			t.Errorf("%s: %+v", imya, o)
 		}
+	}
+}
+
+// Вердикт детектора и то, из чего он сложен, уезжают в журнал, и один
+// детектор на два вида пишется раз.
+func TestZhurnalPreduprezhdeniy(t *testing.T) {
+	zhurnal := perehvatitZhurnal(t)
+	d := &blok.Itog{Vid: blok.OtvetNeVozvrashchaetsya, Set: blok.SetZhivaya, Doshlo: -1, DoshloUDP: 4, Krugov: 2,
+		OtkazLovushki: "ловушка молчит", Stuki: []blok.Stuk{
+			{Port: 22, Ishod: blok.Otkryt, Otvet: blok.OtvetEst},
+			{Port: 40443, Ishod: blok.Tishina, Podrobno: "i/o timeout"},
+		}}
+	zhurnalPreduprezhdeniy("s1", []upravlenie.Preduprezhdenie{
+		{Vid: upravlenie.NeProshyol, Transport: "reality-tcp", Port: 50443, Detektor: d},
+		{Vid: upravlenie.NeProshyol, Transport: "hy2", Port: 40443, Detektor: d},
+		{Vid: upravlenie.NetSerta, Otkaz: "лимит выпуска"},
+		{Vid: upravlenie.NeVezyot, Transport: "hy2", Port: 8443, Otkaz: "нет ответа"},
+		{Vid: upravlenie.NeProvereno},
+	})
+	z := zhurnal()
+	for _, est := range []string{
+		"ne-proshyol, reality-tcp на порту 50443: детектор otvet-ne-vozvrashchaetsya",
+		"ne-proshyol, hy2 на порту 40443: детектор otvet-ne-vozvrashchaetsya",
+		"детектор: сеть zhivaya, кругов 2, стук дошёл -1, датаграммы 4",
+		"детектор: ловушка: ловушка молчит",
+		"детектор: порт 22: otkryt, ответ est\n",
+		"детектор: порт 40443: tishina, i/o timeout\n",
+		"net-serta: лимит выпуска",
+		"ne-vezyot, hy2 на порту 8443: нет ответа",
+	} {
+		if !strings.Contains(z, est) {
+			t.Errorf("в журнале нет %q:\n%s", est, z)
+		}
+	}
+	if n := strings.Count(z, "детектор: сеть"); n != 1 {
+		t.Errorf("детектор записан %d раз:\n%s", n, z)
+	}
+	if strings.Contains(z, "ne-provereno") {
+		t.Errorf("предупреждение без причины в журнале:\n%s", z)
 	}
 }
 

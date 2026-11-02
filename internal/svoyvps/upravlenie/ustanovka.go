@@ -103,12 +103,16 @@ const (
 	// не ставится.
 	NetSerta VidPreduprezhdeniya = "net-serta"
 	// NeProshyol: ни один кандидат вида не прошёл проверку из сети человека.
-	// Поставлен первый свободный, Detektor говорит почему.
+	// Поставлен рабочий порт, а без него первый свободный; Detektor говорит
+	// почему, а если детектор не дошёл до вывода, Otkaz говорит, что с ним.
 	NeProshyol VidPreduprezhdeniya = "ne-proshyol"
 	// NeVezyot: ключ окончательного пакета не провёз проверку.
 	NeVezyot VidPreduprezhdeniya = "ne-vezyot"
 	// NeProvereno: проверка ключей не состоялась.
 	NeProvereno VidPreduprezhdeniya = "ne-provereno"
+	// PortyNeOtkryty: окончательный пакет принят, а правила ufw к его портам
+	// не приведены. Лечится подбором портов заново.
+	PortyNeOtkryty VidPreduprezhdeniya = "porty-ne-otkryty"
 )
 
 // Preduprezhdenie это одно такое «не так».
@@ -237,7 +241,11 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	}
 
 	hod(Hod{Shag: ShagSertifikat})
-	pr, otkazSerta, err := vypustitSert(ctx, s, adres, u.Opcii, &itog.Sert)
+	paketSerta, err := konfig.PaketSerta(adres.String(), u.Opcii)
+	if err != nil {
+		return Itog{}, err
+	}
+	pr, otkazSerta, err := vypustitSert(ctx, s, adres, paketSerta, &itog.Sert)
 	if err != nil {
 		return Itog{}, err
 	}
@@ -246,42 +254,94 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkazSerta})
 	}
 
-	hod(Hod{Shag: ShagPodbor})
-	spisok, err := porty.Kandidaty(o, pr, u.Ruchnye)
-	if err != nil {
-		return Itog{}, err
-	}
-	for i := range spisok.Otseyany {
-		hod(Hod{Shag: ShagPodbor, Otsev: &spisok.Otseyany[i]})
-	}
 	sek, err := konfig.NovyeSekrety(maska)
 	if err != nil {
 		return Itog{}, err
 	}
-	v := konfig.Vhody{Imya: u.Imya, Adres: adres.String(), Reality: spisok.Reality, Hy2: spisok.Hy2}
-	if v, err = primenitProbu(ctx, s, sek, v, u.Opcii, hod); err != nil {
+	pp := podborPortov{Adres: adres, Imya: u.Imya, PortSsh: u.Vhod.Port, Ruchnye: u.Ruchnye, Opcii: u.Opcii,
+		Proverka: u.Proverka, Zapusk: u.Zapusk, Pryamo: u.Pryamo, Hod: hod}
+	if err := podobratIPostavit(ctx, s, o, sek, pr, pp, &itog); err != nil {
 		return Itog{}, err
 	}
-	op := u.Proverka
+	return itog, nil
+}
+
+// podborPortov это то, что нужно подбору портов и окончательному пакету:
+// и установке, и подбору заново на поставленном сервере.
+type podborPortov struct {
+	Adres netip.Addr
+	Imya  string
+	// PortSsh это порт входа SSH для стука детектора, 0 - 22.
+	PortSsh int
+	Ruchnye porty.Ruchnye
+	// Rabochie это порты, на которых сервер работает сейчас (подбор заново).
+	// Порт вида, заданного не руками, идёт в пробу последним кандидатом: пока
+	// она идёт, ключи на нём живут, а не прошёл ни один - он и остаётся.
+	Rabochie porty.Ruchnye
+	Opcii    konfig.Opcii
+	Proverka proverka.Opcii
+	Zapusk   proverka.Zapusk
+	Pryamo   blok.Dial
+	Hod      func(Hod)
+}
+
+// podobratIPostavit это шаги 2-6 §3.3 и проверка ключей: кандидаты по
+// осмотру o, пробный пакет с ними, проверка их из сети человека,
+// окончательный пакет, порты в ufw, детектор для вида без прошедшего,
+// проверка ключей. Итог дописывает в itog.
+func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, sek konfig.Sekrety, pr porty.Prodlenie, p podborPortov, itog *Itog) error {
+	hod := p.Hod
+	hod(Hod{Shag: ShagPodbor})
+	spisok, err := porty.Kandidaty(o, pr, p.Ruchnye)
+	if err != nil {
+		return err
+	}
+	for i := range spisok.Otseyany {
+		hod(Hod{Shag: ShagPodbor, Otsev: &spisok.Otseyany[i]})
+	}
+	var zapasnye porty.Ruchnye
+	for _, vid := range []struct {
+		proto             string
+		ruchnoy, rabochiy int
+		kandidaty         *[]int
+		zapasnoy          *int
+	}{
+		{"tcp", p.Ruchnye.Reality, p.Rabochie.Reality, &spisok.Reality, &zapasnye.Reality},
+		{"udp", p.Ruchnye.Hy2, p.Rabochie.Hy2, &spisok.Hy2, &zapasnye.Hy2},
+	} {
+		if vid.ruchnoy != 0 || vid.rabochiy == 0 || len(*vid.kandidaty) == 0 || porty.Godnyy(o, pr, vid.proto, vid.rabochiy) != nil {
+			continue
+		}
+		if !slices.Contains(*vid.kandidaty, vid.rabochiy) {
+			*vid.kandidaty = append(*vid.kandidaty, vid.rabochiy)
+		}
+		*vid.zapasnoy = vid.rabochiy
+	}
+	v := konfig.Vhody{Imya: p.Imya, Adres: p.Adres.String(), Reality: spisok.Reality, Hy2: spisok.Hy2}
+	if v, err = primenitProbu(ctx, s, sek, v, p.Opcii, hod); err != nil {
+		return err
+	}
+	op := p.Proverka
 	op.Vyhody = vyhody(o)
 	op.Hod = func(it proverka.Itog) { hod(Hod{Shag: ShagPodbor, Klyuch: &it}) }
-	vybor, err := podobrat(ctx, sek, v, op, u.Zapusk)
+	vybor, err := podobrat(ctx, sek, v, op, p.Zapusk)
 	if err != nil {
-		return Itog{}, err
+		return err
 	}
 
-	// Не прошёл ни один кандидат вида: ставится первый свободный, а почему
-	// не прошёл, скажет детектор (§3.3, шаг 6).
-	final := konfig.Vhody{Imya: u.Imya, Adres: v.Adres}
+	// Не прошёл ни один кандидат вида: ставится рабочий порт, а без него
+	// первый свободный, и почему не прошёл, скажет детектор (§3.3, шаг 6).
+	final := konfig.Vhody{Imya: p.Imya, Adres: v.Adres}
 	var neProshli []string
 	for _, vid := range []struct {
 		transport string
 		kandidaty []int
 		vybran    int
+		zapasnoy  int
 		kuda      *[]int
 	}{
-		{"reality-tcp", v.Reality, vybor.Reality, &final.Reality},
-		{"hy2", v.Hy2, vybor.Hy2, &final.Hy2},
+		{"reality-tcp", v.Reality, vybor.Reality, zapasnye.Reality, &final.Reality},
+		{"hy2", v.Hy2, vybor.Hy2, zapasnye.Hy2, &final.Hy2},
 	} {
 		if len(vid.kandidaty) == 0 {
 			continue
@@ -289,48 +349,61 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 		port := vid.vybran
 		if port == 0 {
 			port = vid.kandidaty[0]
+			if slices.Contains(vid.kandidaty, vid.zapasnoy) {
+				port = vid.zapasnoy
+			}
 			neProshli = append(neProshli, vid.transport)
 		}
 		*vid.kuda = []int{port}
 	}
 
-	hod(Hod{Shag: ShagPaket})
-	paket, err := konfig.Paket(sek, final, u.Opcii)
+	klyuchi, err := konfig.Klyuchi(sek, final)
 	if err != nil {
-		return Itog{}, err
+		return err
+	}
+	hod(Hod{Shag: ShagPaket})
+	paket, err := konfig.Paket(sek, final, p.Opcii)
+	if err != nil {
+		return err
 	}
 	if _, err := primenit(ctx, s, paket); err != nil {
-		return Itog{}, err
+		return err
 	}
+	// Окончательный пакет принят: ключи на сервере уже эти. Отказ портов,
+	// детектора и проверки дальше их не отменяет, и отмена тоже, а только
+	// предупреждает. Иначе сервер раздавал бы ключи, которых нет ни у кого, а
+	// при подборе заново в списке остались бы прежние, уже мёртвые.
+	itog.Adres, itog.Sekrety, itog.Vhody, itog.Klyuchi = p.Adres.String(), sek, final, klyuchi
+
+	// Наши правила ufw приводятся к окончательным портам: прежние
+	// закрываются здесь, после того как пакет с новыми принят.
 	hod(Hod{Shag: ShagPorty})
 	if itog.Porty, err = otkrytPorty(ctx, s, final.Reality, final.Hy2); err != nil {
-		return Itog{}, err
+		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: PortyNeOtkryty, Otkaz: err.Error()})
 	}
 
 	if len(neProshli) > 0 {
 		hod(Hod{Shag: ShagDetektor})
-		d, err := detektor(ctx, opciiDetektora(u, adres, final, sek.Maska, itog.Vhod.Tunnel, s, hod))
-		if err != nil {
-			return Itog{}, err
-		}
+		d, err := detektor(ctx, opciiDetektora(p, final, sek.Maska, itog.Vhod.Tunnel, s))
 		for _, t := range neProshli {
-			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya,
-				Preduprezhdenie{Vid: NeProshyol, Transport: t, Port: portVida(final, t), Detektor: &d})
+			pr := Preduprezhdenie{Vid: NeProshyol, Transport: t, Port: portVida(final, t)}
+			if err != nil {
+				pr.Otkaz = err.Error()
+			} else {
+				pr.Detektor = &d
+			}
+			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, pr)
 		}
 	}
 
 	hod(Hod{Shag: ShagProverka})
-	klyuchi, err := konfig.Klyuchi(sek, final)
-	if err != nil {
-		return Itog{}, err
-	}
 	servery := make([]protokol.Server, len(klyuchi))
 	for i, k := range klyuchi {
 		servery[i] = k.Server
 	}
 	op.Hod = func(it proverka.Itog) { hod(Hod{Shag: ShagProverka, Klyuch: &it}) }
 	op.PervyyNaVid = false
-	itogi, err := proverit(ctx, servery, op, u.Zapusk)
+	itogi, err := proverit(ctx, servery, op, p.Zapusk)
 	if err != nil {
 		// Сервер поставлен, ключи собраны: несостоявшаяся проверка их не
 		// отменяет, и отменённая тоже, а человек видит, что они не
@@ -344,8 +417,8 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 		}
 	}
 
-	itog.Adres, itog.Sekrety, itog.Vhody, itog.Klyuchi, itog.Proverki = adres.String(), sek, final, klyuchi, itogi
-	return itog, nil
+	itog.Proverki = itogi
+	return nil
 }
 
 // Prepyatstviya судит по осмотру, пойдёт ли установка: nil - пойдёт. klyuch
@@ -375,31 +448,33 @@ func nashaOtmetka(s *server.Sostav, klyuch gossh.PublicKey) bool {
 	return s != nil && klyuch != nil && slices.Contains(s.Klyuchi, base64.StdEncoding.EncodeToString(klyuch.Marshal()))
 }
 
-// vypustitSert ставит пакет «только сертификат» и ждёт выпуска (§3.8, шаг
-// 7). Сертификат уже есть (продолжение своей установки, копия) - он и
-// годится. Попытка программы сервера идёт обоими путями проверки, поэтому её
-// отказ значит, что закрыты оба: hy2 тогда не ставится, а otkaz называет
-// причину.
-func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, o konfig.Opcii, sert **server.SertUzla) (pr porty.Prodlenie, otkaz string, err error) {
+// vypustitSert ставит пакет с выпуском сертификата на адрес и ждёт выпуска
+// (§3.8, шаг 7): при установке это пакет «только сертификат», при подборе
+// заново пробный с прежними входами. Сертификат уже есть (продолжение своей
+// установки, копия) - он и годится. Попытка программы сервера идёт обоими
+// путями проверки, поэтому её отказ значит, что закрыты оба: hy2 тогда не
+// ставится, а otkaz называет причину.
+func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, paket []byte, sert **server.SertUzla) (pr porty.Prodlenie, otkaz string, err error) {
 	do, err := sostoyanie(ctx, m)
 	if err != nil {
 		return 0, "", err
 	}
 	// Попытка считается новой, только если она позже последней до пакета,
 	// на какой бы адрес та ни шла: учёт попыток у программы общий, и отказ
-	// прошлого адреса иначе читался бы отказом этого.
+	// прошлого адреса иначе читался бы отказом этого. Выпуск до пакета был
+	// выключен - последней попытки программа не называет, хотя на диске она
+	// есть (установка, где сертификат не вышел). Тогда отказ верен, только
+	// если на глазах шла новая попытка.
 	var byla int64
-	if do.Sert != nil {
+	znaemByla := do.Sert != nil
+	if znaemByla {
 		byla = do.Sert.Popytka
-	}
-	paket, err := konfig.PaketSerta(adres.String(), o)
-	if err != nil {
-		return 0, "", err
 	}
 	if _, err := primenit(ctx, m, paket); err != nil {
 		return 0, "", err
 	}
 	konec := seychas().Add(srokSerta)
+	videliPopytku := false
 	for {
 		st, err := sostoyanie(ctx, m)
 		if err != nil {
@@ -407,10 +482,11 @@ func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, o kon
 		}
 		if c := st.Sert; c != nil && c.IP == adres.String() {
 			*sert = c
+			videliPopytku = videliPopytku || c.Idyot
 			switch {
 			case c.Est:
 				return prodlenieIz(c.Sposob), "", nil
-			case !c.Idyot && c.Popytka > byla && c.Otkaz != "":
+			case !c.Idyot && c.Popytka > byla && c.Otkaz != "" && (znaemByla || videliPopytku):
 				return porty.BezSerta, c.Otkaz, nil
 			}
 		}
@@ -499,29 +575,29 @@ func portVida(v konfig.Vhody, transport string) int {
 // opciiDetektora: стук в 80 и 443 и порты ключей, на порту reality
 // приветствие TLS с маской; UDP в порт hy2. Вход через туннель уже показал,
 // что сервер жив.
-func opciiDetektora(u Ustanovka, adres netip.Addr, v konfig.Vhody, maska string, tunnel bool, m server.Mashina, hod func(Hod)) blok.Opcii {
+func opciiDetektora(p podborPortov, v konfig.Vhody, maska string, tunnel bool, m server.Mashina) blok.Opcii {
 	var tcp []blok.PortTCP
-	for _, p := range []int{80, 443} {
-		if !slices.Contains(v.Reality, p) {
-			tcp = append(tcp, blok.PortTCP{Port: p})
+	for _, port := range []int{80, 443} {
+		if !slices.Contains(v.Reality, port) {
+			tcp = append(tcp, blok.PortTCP{Port: port})
 		}
 	}
-	for _, p := range v.Reality {
-		tcp = append(tcp, blok.PortTCP{Port: p, TLS: maska})
+	for _, port := range v.Reality {
+		tcp = append(tcp, blok.PortTCP{Port: port, TLS: maska})
 	}
 	t := blok.TunnelNeProveren
 	if tunnel {
 		t = blok.TunnelOtvetil
 	}
-	portSsh := u.Vhod.Port
+	portSsh := p.PortSsh
 	if portSsh == 0 {
 		portSsh = 22
 	}
 	return blok.Opcii{
-		Adres: adres, PortSsh: portSsh, TCP: tcp, UDP: v.Hy2, Pryamo: u.Pryamo, Tunnel: t,
+		Adres: p.Adres, PortSsh: portSsh, TCP: tcp, UDP: v.Hy2, Pryamo: p.Pryamo, Tunnel: t,
 		Lovushka: func(ctx context.Context, proto string, port, sekund int) (int64, error) {
 			return lovit(ctx, m, proto, port, sekund)
 		},
-		Hod: func(k blok.Krug) { hod(Hod{Shag: ShagDetektor, Krug: &k}) },
+		Hod: func(k blok.Krug) { p.Hod(Hod{Shag: ShagDetektor, Krug: &k}) },
 	}
 }

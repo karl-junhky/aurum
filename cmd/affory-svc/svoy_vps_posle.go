@@ -199,7 +199,7 @@ func (s *Sluzhba) svoyVpsVzyat(k protokol.Kadr) protokol.Kadr {
 		}
 		osn := osnovaZapisi{Imya: z.Imya, Port: z.Port, Polzovatel: z.Polzovatel}
 		if bylo != nil {
-			osn.PortyRuchnye = bylo.PortyRuchnye
+			osn.PortyRuchnye, osn.Postavlen = bylo.PortyRuchnye, bylo.Postavlen
 		}
 		return s.zapisatIPokazat(zad, id, osn, itog)
 	})

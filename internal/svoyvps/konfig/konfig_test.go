@@ -160,6 +160,14 @@ func TestPaketBezHy2(t *testing.T) {
 	if p := razobrat(t, b); p.SertIPSam != nil || p.SertIP != nil || len(p.Yadro.Inbounds) != 1 {
 		t.Fatalf("пакет %s", b)
 	}
+	// По прямой просьбе выпуск идёт и без hy2, входы те же.
+	b, err = Paket(sekrety(t), Vhody{Imya: "Мой", Adres: "203.0.113.10", Reality: []int{465}}, Opcii{Vypusk: true, Staging: true, Proba: 360})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := razobrat(t, b); p.SertIPSam == nil || p.SertIPSam.IP != "203.0.113.10" || !p.SertIPSam.Staging || len(p.Yadro.Inbounds) != 1 || p.Proba == nil {
+		t.Fatalf("пакет с выпуском %s", b)
+	}
 }
 
 // Пакет «только сертификат»: ни одного входа, выпуск на адрес и копия

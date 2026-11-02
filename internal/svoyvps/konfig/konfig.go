@@ -215,6 +215,9 @@ type Opcii struct {
 	// Proba это срок пробного пакета подбора портов в секундах, 0 значит
 	// окончательный.
 	Proba int
+	// Vypusk: выпуск сертификата и без hy2. Подбор заново на сервере, где
+	// сертификат при установке не вышел, пробует его снова, не трогая входы.
+	Vypusk bool
 }
 
 type paket struct {
@@ -248,8 +251,9 @@ func Paket(s Sekrety, v Vhody, o Opcii) ([]byte, error) {
 	}
 	p := paket{Versiya: versiyaPaketa, Yadro: yadro(s, v, adres.String())}
 	// Сертификат нужен одному hy2. Без hy2 выпуск только копил бы отказы и
-	// тревоги про срок на сервере, где 80 и 443/tcp закрыты.
-	if len(v.Hy2) > 0 {
+	// тревоги про срок на сервере, где 80 и 443/tcp закрыты, поэтому без hy2
+	// он идёт лишь по прямой просьбе.
+	if len(v.Hy2) > 0 || o.Vypusk {
 		p.SertIPSam = &sertIPSam{IP: adres.String(), Staging: o.Staging}
 		p.SertIP = o.Kopiya
 	}

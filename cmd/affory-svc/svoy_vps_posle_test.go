@@ -31,6 +31,13 @@ func itogSvoego(t *testing.T, kh ssh.KlyuchHosta, reality, hy2 int) upravlenie.I
 	if err != nil {
 		t.Fatal(err)
 	}
+	return itogSoSekretami(t, sek, kh, reality, hy2)
+}
+
+// itogSoSekretami это итог с заданными секретами: подбор портов заново
+// меняет порты, а секреты оставляет.
+func itogSoSekretami(t *testing.T, sek konfig.Sekrety, kh ssh.KlyuchHosta, reality, hy2 int) upravlenie.Itog {
+	t.Helper()
 	v := konfig.Vhody{Imya: "Дача", Adres: adresSvoego, Reality: []int{reality}, Hy2: []int{hy2}}
 	klyuchi, err := konfig.Klyuchi(sek, v)
 	if err != nil {
@@ -271,6 +278,9 @@ func TestSvoyVpsVzyat(t *testing.T) {
 	s := sPustymNaborom(t)
 	kh := klyuchHostaDlyaTesta(t)
 	id, starye := postavitSvoy(t, s, kh, false)
+	if err := s.pravitNabor(func(n *Nabor) error { n.SvoiServery[0].Postavlen = postavlenDlyaTesta; return nil }); err != nil {
+		t.Fatal(err)
+	}
 	novyy := itogSvoego(t, kh, 443, 9443)
 	novyy.ParolVyklyuchen = true
 	var v upravlenie.Vzyatie
@@ -306,7 +316,7 @@ func TestSvoyVpsVzyat(t *testing.T) {
 			t.Fatal("прежний ключ hy2 остался рядом с новым")
 		}
 	}
-	if n.SvoiServery[0].Hy2 != 9443 || !n.SvoiServery[0].ParolVyklyuchen {
+	if n.SvoiServery[0].Hy2 != 9443 || !n.SvoiServery[0].ParolVyklyuchen || !n.SvoiServery[0].Postavlen.Equal(postavlenDlyaTesta) {
 		t.Fatalf("запись: %+v", n.SvoiServery[0])
 	}
 }

@@ -147,14 +147,15 @@ var dolgie = map[string]time.Duration{
 	// Свой сервер (01.11.2026): список читает набор и по файлу ключа
 	// управления на каждый сервер, установка и осмотр читают набор до запуска
 	// задания. Остальные команды своего сервера сразу отдают снимок.
-	"svoyVpsSpisok":    srokHranilishcha,
-	"svoyVpsOsmotret":  srokHranilishcha,
-	"svoyVpsUstanovit": srokHranilishcha,
-	"svoyVpsSnesti":    srokHranilishcha,
-	"svoyVpsVzyat":     srokHranilishcha,
-	"svoyVpsProverit":  srokHranilishcha,
-	"svoyVpsOtpustit":  srokHranilishcha,
-	"svoyVpsParol":     srokHranilishcha,
+	"svoyVpsSpisok":        srokHranilishcha,
+	"svoyVpsOsmotret":      srokHranilishcha,
+	"svoyVpsUstanovit":     srokHranilishcha,
+	"svoyVpsSnesti":        srokHranilishcha,
+	"svoyVpsVzyat":         srokHranilishcha,
+	"svoyVpsProverit":      srokHranilishcha,
+	"svoyVpsOtpustit":      srokHranilishcha,
+	"svoyVpsParol":         srokHranilishcha,
+	"svoyVpsPodobratPorty": srokHranilishcha,
 	// Убирает ключи из набора, то есть пересобирает правила, как removeServer.
 	"svoyVpsZabyt": SrokDolgoy,
 	// Пишет набор прямо в ответе на команду, а за записью идёт та же

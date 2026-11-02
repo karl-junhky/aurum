@@ -152,6 +152,19 @@ func Kandidaty(o *server.Osmotr, pr Prodlenie, r Ruchnye) (_ Spisok, err error) 
 	return s, nil
 }
 
+// Godnyy судит один порт по тем же правилам, что кандидатов: nil - годен,
+// иначе Otsev с причиной. Нужен подбору заново, где рабочий порт сервера
+// идёт запасным кандидатом.
+func Godnyy(o *server.Osmotr, pr Prodlenie, proto string, port int) error {
+	if o == nil {
+		return errors.New("подбор портов: нет осмотра сервера")
+	}
+	if ots, ok := otseyat(o, pr, proto, port); !ok {
+		return ots
+	}
+	return nil
+}
+
 // otseyat решает об одном порте: ok - годен.
 func otseyat(o *server.Osmotr, pr Prodlenie, proto string, port int) (Otsev, bool) {
 	ots := Otsev{Proto: proto, Port: port}
