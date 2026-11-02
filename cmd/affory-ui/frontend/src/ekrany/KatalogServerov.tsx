@@ -53,7 +53,7 @@ export function perenestiIdServerov(podpiska: string, ids: Record<string, string
   }))] };
   let otkaz = state.otkaz;
   try { localStorage.setItem(KLYUCH, JSON.stringify(vid)); }
-  catch { otkaz = "Не удалось сохранить закрепления после обновления идентификаторов."; }
+  catch { otkaz = "Не удалось сохранить закреплённые серверы после обновления списка."; }
   window.dispatchEvent(new CustomEvent(SMENA_ID, { detail: { vid, otkaz } }));
 }
 

@@ -369,8 +369,8 @@ export function Nastroyki({
                   nazvanie="Полоса канала"
                   poyasnenie={
                     objavlena
-                      ? `${status.polosa_vverh} вверх · ${status.polosa_vniz} вниз, Мбит · включает Brutal у hysteria2`
-                      : "Автоматически из ссылки сервера. Ручные значения включают Brutal; завышенные могут ухудшить соединение."
+                      ? `${status.polosa_vverh} вверх · ${status.polosa_vniz} вниз, Мбит · hysteria2 держит эту скорость`
+                      : "Автоматически из ссылки сервера. С ручными значениями hysteria2 держит заданную скорость, даже когда сеть теряет данные; завышенные могут ухудшить соединение."
                   }
                   aktiven={aktiven}
                   lomat
@@ -447,7 +447,7 @@ export function Nastroyki({
                       naVvod={zadatMishen}
                       placeholder="https://адрес/большой-файл"
                       aktiven={aktiven}
-                      aria-label="мишень замера приёма"
+                      aria-label="адрес файла для замера приёма"
                       className="w-56"
                     />
                     {/* Вторая мишень отдельная, потому что направления живут по
@@ -461,7 +461,7 @@ export function Nastroyki({
                       naVvod={zadatMishenVverh}
                       placeholder="https://адрес/приём-заливки"
                       aktiven={aktiven}
-                      aria-label="мишень замера отдачи"
+                      aria-label="адрес для замера отдачи"
                       className="w-56"
                     />
                     <Knopka
@@ -571,7 +571,7 @@ export function Nastroyki({
                 {ustarela && !proverkaOtkaz && (
                   <Ryad
                     testId="proverka-ustarela"
-                    nazvanie="Прошлый результат больше не отвечает за сейчас"
+                    nazvanie="Результат устарел"
                     poyasnenie="Состояние VPN сменилось после проверки, проверь заново"
                     aktiven={false}
                   />
@@ -634,7 +634,7 @@ export function Nastroyki({
                   poyasnenie={
                     pochemuSero(adresOtlozhen) ??
                     (zhdyot("checkExitIp")
-                      ? "Спрашиваю, каким адресом нас видит интернет"
+                      ? "Спрашиваю, каким адресом тебя видит интернет"
                       : adresVyhoda
                         ? tekstAdresa(adresVyhoda, podnyat)
                         : "По кнопке и при смене сервера, сам по себе не обновляется")
@@ -803,7 +803,7 @@ export function Nastroyki({
                 <Udalenie naUdalenie={naUdalenie} naOtmenu={() => zadatDialog(false)} />
               ) : (
                 <Panel>
-                  <Ryad nazvanie="Удалить программу" poyasnenie="Служба, адаптер и файлы; ключи по выбору">
+                  <Ryad nazvanie="Удалить программу" poyasnenie="Служба, сетевое подключение VPN и файлы; ключи по выбору">
                     <Knopka rang="opasnaya" testId="otkryt-udalenie" onClick={() => zadatDialog(true)}>
                       Удалить
                     </Knopka>
@@ -833,9 +833,9 @@ function versiyaStrokoy(versiya?: string): string {
 
 const PODPISI_SHAGOV: Record<ShagObnovleniya, string> = {
   skachivanie: "скачивание",
-  sverka: "проверка контрольной суммы",
+  sverka: "проверка целости архива",
   raspakovka: "распаковка архива",
-  podmena: "подмена файлов, служба перезапускается",
+  podmena: "замена файлов, служба перезапускается",
   otkaz: "не удалось",
 };
 

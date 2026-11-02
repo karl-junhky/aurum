@@ -68,7 +68,7 @@ it("приложение проверяется по точному пути б�
 
 it("суффиксы имеют границы, более точный домен побеждает, IDNA приводится",()=>{
   expect(opisatDomen("x.api.example.org",trafik)).toContain("Напрямую: правило api.example.org");
-  expect(opisatDomen("notexample.org",trafik)).toContain("Явного доменного правила нет");
+  expect(opisatDomen("notexample.org",trafik)).toContain("Отдельного правила сайта нет");
   expect(normalizovatProbuDomena("пример.рф")).toBe("xn--e1afmkfd.xn--p1ai");
   expect(normalizovatProbuDomena("https://user:password@example.org")).toBe("");
   expect(()=>razobratSnimok({})).toThrow();
@@ -82,7 +82,7 @@ it("совместный фильтр требует совпадения при
   fireEvent.change(screen.getByLabelText("Путь приложения для проверки"),{target:{value:"C:\\app.exe"}});
   fireEvent.change(screen.getByLabelText("Домен для проверки"),{target:{value:"https://www.example.org/path"}});
   expect(screen.getByText("Соединение: Напрямую")).toBeInTheDocument();
-  expect(screen.getByText("Поиск адреса (DNS): Через VPN")).toBeInTheDocument();
+  expect(screen.getByText("Поиск адреса сайта: Через VPN")).toBeInTheDocument();
   await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Проверить соединения"})));
   expect(inspect).toHaveBeenCalledWith({domen:"www.example.org",put:"C:\\app.exe"});
   expect(screen.getByText("Сработало отдельное правило приложения")).toBeInTheDocument();

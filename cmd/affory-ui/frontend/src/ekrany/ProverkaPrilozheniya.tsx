@@ -57,7 +57,7 @@ export function ProverkaPrilozheniya({rules,draft,disabled,connectionBusy=false,
         <p className={result.fayl==="est"?"text-fg-secondary":"text-warn"}>{fileText[result.fayl]}</p>
         <p className="text-fg-muted">Проверено в {new Date(result.vremya).toLocaleTimeString("ru-RU")}</p>
       </div>
-      <p>{result.samo>0?"Приложение запущено":result.vsego>0?"Приложение здесь не запущено, но запущенные им программы работают":"Приложение и связанные запуски в этом сеансе не обнаружены"}</p>
+      <p>{result.samo>0?"Приложение запущено":result.vsego>0?"Приложение здесь не запущено, но запущенные им программы работают":"В этом сеансе Windows приложение не запущено, и запущенных им программ нет"}</p>
       <p className="text-fg-muted">Маршруты ниже рассчитаны по сохранённым правилам. Реальные соединения можно проверить отдельно.</p>
       {result.trebuet_podyoma && <p className="text-warn">Сохранённые правила ещё не применены к подключению.</p>}
       {result.zapushchennye.length>0 && <ul className="border-border max-h-96 divide-y overflow-y-auto rounded-lg border">

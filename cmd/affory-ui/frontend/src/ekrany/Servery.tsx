@@ -554,7 +554,7 @@ export function Servery({ status, spisok, spisokOtkaz = null, obnovitSpisok, naK
           aria-label="ключи или адрес подписки"
           znachenie={ssylka}
           naVvod={zadatSsylku}
-          placeholder={"vless://, hy2://, anytls://, tuic://, trojan://, ss://\nпо строке на ключ, одним base64 или адрес подписки https://"}
+          placeholder={"vless://, hy2://, anytls://, tuic://, trojan://, ss://\nпо строке на ключ, одной закодированной строкой или адрес подписки https://"}
           aktiven={aktiven}
           strok={4}
         />

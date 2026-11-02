@@ -174,7 +174,7 @@ func (u Ustanovka) proverit() (netip.Addr, error) {
 	case err != nil:
 		return netip.Addr{}, fmt.Errorf("установка: адрес %q не IP", ssh.Obrezat(u.Vhod.Adres, 80))
 	case !u.Pustoy:
-		return netip.Addr{}, errors.New("установка: галочка «Сервер пустой» не стоит")
+		return netip.Addr{}, errors.New("установка: галочка «На сервере нет ничего нужного» не стоит")
 	case u.Upravlenie == nil || u.Programma == nil || u.Zapusk == nil || u.Pryamo == nil:
 		return netip.Addr{}, errors.New("установка: не задан ключ управления, программа или запуск проверки")
 	case u.Imya == "":

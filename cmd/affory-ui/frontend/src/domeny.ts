@@ -64,7 +64,7 @@ export function normalizovatDomen(vvod: string): { domen: string } | { prichina:
   if (adresANeImya(host)) return { prichina: "это адрес, а не имя сайта: правила сайтов работают по имени" };
   if (host.length > 253) return { prichina: "имя длиннее 253 знаков" };
   const metki = host.split(".");
-  if (metki.length < 2) return { prichina: "нужна зона, например example.com" };
+  if (metki.length < 2) return { prichina: "нужно полное имя, например example.com" };
   if (metki.some((m) => m.length > 63)) return { prichina: "часть имени длиннее 63 знаков" };
   if (!metki.every((m) => METKA.test(m))) return { prichina: "не похоже на имя сайта" };
   return { domen: host };

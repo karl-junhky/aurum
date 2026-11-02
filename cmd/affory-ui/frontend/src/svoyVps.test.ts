@@ -99,7 +99,12 @@ describe("оценка сервера", () => {
     const h = hod({ proverka: { yadro_zhivo: false, oshibka_yadra: "порт занят", porty: [], maska: "godna", pamyat_mb: 1, disk_mb: 1 } });
     const o = ocenitServer(server(), [], [h]);
     expect(o.sostoyanie).toBe("slomano");
-    expect(o.sovet).toContain("порт занят");
+    // Текст ядра сервера уходит в отчёт, карточка советует подбор и ведёт к отчёту.
+    expect(o.sovet).toContain("Подбери порты заново");
+    expect(o.sovet).toContain("Скопировать отчёт");
+    expect(o.sovet).not.toContain("порт занят");
+    const bezTeksta = hod({ proverka: { yadro_zhivo: false, porty: [], maska: "godna", pamyat_mb: 1, disk_mb: 1 } });
+    expect(ocenitServer(server(), [], [bezTeksta]).sovet).not.toContain("отчёт");
   });
 
   it("ни один порт не слушает: не работает, совет подобрать заново", () => {

@@ -266,7 +266,7 @@ func (s *Sluzhba) obrabotatBezPaniki(ctx context.Context, k protokol.Kadr) (otv 
 		if r := recover(); r != nil {
 			zapisatPaniku("команде "+k.Imya, r)
 			otv = otkaz(k.Id, k.Imya, protokol.KodVnutrennyayaOshibka,
-				"команда не выполнена: внутренняя ошибка службы")
+				"служба не справилась с действием, повтори его")
 		}
 	}()
 	return otdatDispetcheru(s, ctx, k)

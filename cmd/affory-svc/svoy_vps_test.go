@@ -861,7 +861,7 @@ func TestOtkazVps(t *testing.T) {
 		"молчит без VPN":  {&upravlenie.Molchanie{Pryamo: &ssh.Otkaz{Prichina: ssh.PrichinaTishina}}, protokol.KodVpsNeOtvechaet, "Включи VPN", nil},
 		"молчит оба":      {&upravlenie.Molchanie{Pryamo: errors.New("x"), Tunnel: errors.New("y")}, protokol.KodVpsNeOtvechaet, "ни напрямую, ни через VPN", nil},
 		"порт закрыт":     {&upravlenie.Molchanie{Pryamo: &ssh.Otkaz{Prichina: ssh.PrichinaPortZakryt}}, protokol.KodVpsNeOtvechaet, "включи VPN", nil},
-		"закрыт и в VPN":  {&upravlenie.Molchanie{Pryamo: &ssh.Otkaz{Prichina: ssh.PrichinaPortZakryt}, Tunnel: &ssh.Otkaz{Prichina: ssh.PrichinaPortZakryt}}, protokol.KodVpsNeOtvechaet, "никто не слушает: проверь порт", nil},
+		"закрыт и в VPN":  {&upravlenie.Molchanie{Pryamo: &ssh.Otkaz{Prichina: ssh.PrichinaPortZakryt}, Tunnel: &ssh.Otkaz{Prichina: ssh.PrichinaPortZakryt}}, protokol.KodVpsNeOtvechaet, "не принимает вход: проверь порт", nil},
 		"закрыт, VPN тих": {&upravlenie.Molchanie{Pryamo: &ssh.Otkaz{Prichina: ssh.PrichinaPortZakryt}, Tunnel: &ssh.Otkaz{Prichina: ssh.PrichinaTishina}}, protokol.KodVpsNeOtvechaet, "ни напрямую, ни через VPN", nil},
 		"обёрнутое":       {fmt.Errorf("осмотр: %w", &upravlenie.Molchanie{Pryamo: errors.New("x")}), protokol.KodVpsNeOtvechaet, "", nil},
 		"ключ хоста":      {&ssh.Otkaz{Prichina: ssh.PrichinaKlyuchHostaSmenilsya, Predyavlen: &kh}, protokol.KodVpsKlyuchHosta, "другой ключ", func(o OtkazVps) bool { return o.Otpechatok == kh.Otpechatok() }},

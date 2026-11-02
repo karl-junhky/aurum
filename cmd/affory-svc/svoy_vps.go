@@ -564,7 +564,7 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
 	}
 	if !z.Pustoy {
-		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "без галочки «Сервер пустой» на машине ничего не меняется")
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "без галочки «На сервере нет ничего нужного» на машине ничего не меняется")
 	}
 	kh, err := ssh.KlyuchHostaIzZapisi(z.KlyuchHostaTip, z.KlyuchHosta)
 	if err != nil {

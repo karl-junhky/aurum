@@ -787,7 +787,7 @@ it("проверка охвата использует отдельный зап
   fireEvent.click(await screen.findByRole("tab",{name:/Приложения/}));
   fireEvent.click(screen.getByRole("button",{name:"Проверка правил"}));
   fireEvent.click(screen.getByRole("button",{name:"Проверить охват"}));
-  await screen.findByText(/Приложение и связанные запуски в этом сеансе не обнаружены/);
+  await screen.findByText(/В этом сеансе Windows приложение не запущено, и запущенных им программ нет/);
   expect(stend.s.sled).toContainEqual({chto:"prochitatOhvatPrilozheniya",args:["C:\\App.exe"]});
   expect(most.skolkoRaz("setRules")).toBe(0);
 });

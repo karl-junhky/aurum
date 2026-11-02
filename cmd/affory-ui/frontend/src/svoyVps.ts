@@ -397,6 +397,9 @@ export interface OcenkaServera {
   sovet?: string;
   /** Причина взята из записи о сети человека: строка дела её не повторяет. */
   izSeti?: boolean;
+  /** Причина это отказ последней проверки: строка упавшей проверки говорит
+   *  то же самое и несёт кнопку, плашка карточки её не повторяет. */
+  izProverki?: boolean;
 }
 
 // Хвост тревоги ведёт в этот самый раздел, а в карточке он лишний.
@@ -433,7 +436,10 @@ function imyaVida(t: string): string {
   return t === "hy2" ? "hysteria2" : "reality";
 }
 
-const SOVET_PODBORA = "Подбери порты заново: подбор ставит их на сервер ещё раз";
+// Пункт меню подбора не спрашивает, поэтому о смене ключей говорит совет.
+const HVOST_PODBORA = "Если порты сменятся, ключи на телефоне придётся добавить заново";
+const SOVET_PODBORA = `Подбери порты заново: подбор ставит их на сервер ещё раз. ${HVOST_PODBORA}`;
+const SOVET_PEREZAPUSKA = `Подбери порты заново: подбор перезапустит VPN на сервере. ${HVOST_PODBORA}`;
 
 /** Три значения карточки (план, §4): работает, нужно внимание, не работает.
  *  «Не работает» только по свежей проверке, которая видела VPN на сервере
@@ -448,11 +454,15 @@ export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVp
       return {
         sostoyanie: "slomano",
         prichina: "VPN на сервере не запущен",
-        sovet: proverka.oshibka_yadra ? `Программа сервера пишет: ${proverka.oshibka_yadra}` : undefined,
+        // Подбор заново ставит пакет, и программа сервера перезапускает VPN
+        // (server.Primenit). Текст ядра человеку не прочесть, он в отчёте.
+        sovet: proverka.oshibka_yadra
+          ? `${SOVET_PEREZAPUSKA}. Что ответил сервер, есть в отчёте: меню «…», «Скопировать отчёт»`
+          : SOVET_PEREZAPUSKA,
       };
     }
     if (porty.length > 0 && molchat.length === porty.length) {
-      return { sostoyanie: "slomano", prichina: "На сервере не слушает ни один порт VPN", sovet: SOVET_PODBORA };
+      return { sostoyanie: "slomano", prichina: "VPN на сервере не принимает подключения", sovet: SOVET_PODBORA };
     }
   }
   const trevoga = trevogi.find((t) => t.id === s.id);
@@ -462,7 +472,7 @@ export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVp
   }
   if (s.novyy_otpechatok) return { sostoyanie: "vnimanie" };
   if (s.proverka_otkaz) {
-    return { sostoyanie: "vnimanie", prichina: "Последняя проверка не прошла", sovet: s.proverka_otkaz.charAt(0).toUpperCase() + s.proverka_otkaz.slice(1) };
+    return { sostoyanie: "vnimanie", prichina: "Последняя проверка не прошла", sovet: s.proverka_otkaz.charAt(0).toUpperCase() + s.proverka_otkaz.slice(1), izProverki: true };
   }
   // Ключ, мёртвый на самом сервере, главнее того, что он не открывается из
   // сети: чинит его подбор портов, а не другой адрес.

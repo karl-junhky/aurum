@@ -173,7 +173,7 @@ describe("шаг «Доступ»", () => {
     expect(screen.getByTestId("svoy-dalshe")).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: /Дополнительно/ }));
     fireEvent.change(screen.getByLabelText("reality, TCP"), { target: { value: "22" } });
-    expect(screen.getByText("22 занят входом по SSH")).toBeInTheDocument();
+    expect(screen.getByText("22 занят входом на сервер")).toBeInTheDocument();
     expect(screen.getByTestId("svoy-dalshe")).toBeDisabled();
   });
 
@@ -265,7 +265,7 @@ describe("шаг «Установка»", () => {
     });
     const reality = screen.getByRole("list", { name: "Порты reality, TCP" });
     expect(within(reality).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "22не прошёл: на нём вход SSH", "443не прошёл: не ответил", "2087прошёл",
+      "22не прошёл: на нём вход на сервер", "443не прошёл: не ответил", "2087прошёл",
     ]);
     expect(within(screen.getByRole("list", { name: "Порты hysteria2, UDP" })).getByText(/проверяется/)).toBeInTheDocument();
     expect(screen.getByText("Пробую 5443 по UDP для hysteria2")).toBeInTheDocument();
@@ -295,7 +295,7 @@ describe("шаг «Установка»", () => {
     });
     expect(within(screen.getByRole("list", { name: "Порты reality, TCP" })).getByRole("listitem")).toHaveTextContent("2087прошёл");
     expect(screen.queryByText(/Пробую/)).toBeNull();
-    expect(screen.getByText("reality 2087: 2 МБ через ключ")).toBeInTheDocument();
+    expect(screen.getByText("reality 2087: качаю 2 МБ")).toBeInTheDocument();
   });
 
   it("упавшая установка без пароля в памяти ведёт ввести доступ заново", () => {
@@ -337,6 +337,8 @@ describe("шаг «Установка»", () => {
     });
     fireEvent.click(screen.getByTestId("svoy-klyuchi-telefona"));
     await waitFor(() => expect(s.vyzovy).toContainEqual(["exportServers", { ids: ["k-r", "k-h"] }]));
+    // Выгрузка зовётся так же, как кнопка, что её открыла.
+    expect(await screen.findByTestId("vygruzka-itog")).toHaveTextContent("Ключи для телефона");
     fireEvent.click(screen.getByTestId("svoy-podklyuchit"));
     expect(s.naPodklyuchit).toHaveBeenCalledWith("k-h");
     expect(s.master()).toBeNull();
@@ -485,7 +487,7 @@ describe("карточка сервера", () => {
     fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Задать порты" }));
     fireEvent.change(within(screen.getByTestId("svoy-zadat-porty")).getByLabelText("reality, TCP"), { target: { value: "2222" } });
-    expect(screen.getByText("2222 занят входом по SSH")).toBeInTheDocument();
+    expect(screen.getByText("2222 занят входом на сервер")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Поставить порты" })).toBeDisabled();
   });
 
@@ -514,6 +516,62 @@ describe("карточка сервера", () => {
     expect(delo).toHaveTextContent("Подбор портов: не вышло");
     fireEvent.click(within(delo).getByRole("button", { name: "Повторить" }));
     await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsPodobratPorty", { id: "svoy-1" }]]));
+  });
+
+  it("отказ проверки сказан один раз: строкой дела с кнопкой, а не ещё и плашкой", () => {
+    const tekst = "на сервере нет установки Affory: поставь его заново, ключи VPN при этом сменятся";
+    stend({
+      servery: [server({ proverka_otkaz: tekst })],
+      hody: [hod({ id: 5, vid: "proverka", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-reinstall", tekst } })],
+    });
+    expect(screen.queryByText("Последняя проверка не прошла")).toBeNull();
+    const delo = screen.getByTestId("svoy-delo");
+    // Заголовок говорит, что не вышло, тело почему; строка словаря её не пересказывает.
+    expect(within(delo).getByText("Проверка сервера: не вышло")).toBeInTheDocument();
+    expect(delo).not.toHaveTextContent("нет рабочей установки");
+    expect(within(delo).getByRole("button", { name: "Поставить заново" })).toBeInTheDocument();
+    expect(screen.getAllByText(/на сервере нет установки Affory/i)).toHaveLength(1);
+  });
+
+  it("отказ в записи новее упавшей строки: плашка остаётся", () => {
+    stend({
+      servery: [server({ proverka_otkaz: "ключ управления не прочитан" })],
+      hody: [hod({ id: 5, vid: "proverka", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-unreachable", tekst: "сервер не отвечает на вход" } })],
+    });
+    expect(screen.getByText("Последняя проверка не прошла")).toBeInTheDocument();
+    expect(screen.getByText("Ключ управления не прочитан")).toBeInTheDocument();
+  });
+
+  it("строка упавшего дела без причины службы берёт строку словаря", () => {
+    stend({
+      servery: [server()],
+      hody: [hod({ id: 5, vid: "podbor", faza: "oshibka", server: "svoy-1", otkaz: { kod: "vps-ports-failed", tekst: "" } })],
+    });
+    const delo = screen.getByTestId("svoy-delo");
+    expect(within(delo).getByText("Подбор портов: не вышло")).toBeInTheDocument();
+    expect(within(delo).getByText("Порты не подобрались")).toBeInTheDocument();
+  });
+
+  it("отказ проверки без строки упавшей проверки остаётся плашкой", () => {
+    stend({
+      servery: [server({ proverka_otkaz: "сервер не отвечает на вход" })],
+      hody: [hod({ id: 5, vid: "podbor", faza: "gotovo", server: "svoy-1" })],
+    });
+    expect(screen.getByText("Последняя проверка не прошла")).toBeInTheDocument();
+    expect(screen.getByText("Сервер не отвечает на вход")).toBeInTheDocument();
+  });
+
+  it("текст ядра сервера уходит в отчёт, а карточка ведёт к нему", async () => {
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 5, vid: "proverka", faza: "gotovo", server: "svoy-1", konec: new Date().toISOString(),
+        proverka: { yadro_zhivo: false, oshibka_yadra: "listen tcp :2087: bind: address already in use", porty: [], maska: "godna", pamyat_mb: 1, disk_mb: 1 } })],
+    });
+    expect(screen.getByText("VPN на сервере не запущен")).toBeInTheDocument();
+    expect(screen.queryByText(/address already in use/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Скопировать отчёт" }));
+    await waitFor(() => expect(s.skopirovat).toHaveBeenCalledWith(expect.stringContaining("ошибка VPN на сервере: listen tcp :2087: bind: address already in use")));
   });
 
   it("пока идёт другое дело, «Повторить» погашен", () => {

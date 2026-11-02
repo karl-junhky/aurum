@@ -79,12 +79,14 @@ function KodyQr({ kody, imya, shirina, testId }: { kody: string[]; imya: string;
   );
 }
 
-export function Vygruzka({ vygruzka, zakryt, skopirovat, kodyQr, nazvatTransport = kakEst }: {
+export function Vygruzka({ vygruzka, zakryt, skopirovat, kodyQr, nazvatTransport = kakEst, zagolovok }: {
   vygruzka: VygruzkaOtvet;
   zakryt: () => void;
   skopirovat?: (tekst: string) => Promise<void>;
   kodyQr?: (tekst: string) => Promise<string[]>;
   nazvatTransport?: Nazvat;
+  /** Вместо «Выгрузка: N серверов»: заголовок той кнопки, что её открыла. */
+  zagolovok?: string;
 }) {
   const [vid, zadatVid] = useState<"spisok" | "base64">("spisok");
   const [klyuchiVidny, zadatKlyuchiVidny] = useState(false);
@@ -160,14 +162,14 @@ export function Vygruzka({ vygruzka, zakryt, skopirovat, kodyQr, nazvatTransport
       <div className="flex flex-col gap-3 px-4 py-3">
         <div className="flex items-center gap-3">
           <span className="text-foreground flex-1 text-sm font-medium" data-testid="vygruzka-itog">
-            {`Выгрузка: ${vygruzka.vsego} ${slovoPosleChisla(vygruzka.vsego, "сервер", "сервера", "серверов")}`}
+            {zagolovok ?? `Выгрузка: ${vygruzka.vsego} ${slovoPosleChisla(vygruzka.vsego, "сервер", "сервера", "серверов")}`}
           </span>
           <Knopka rang="tekst" testId="vygruzka-zakryt" onClick={zakryt}>Закрыть</Knopka>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Segment<"spisok" | "base64">
             aria-label="вид выгрузки"
-            znacheniya={[{ z: "spisok", podpis: "списком" }, { z: "base64", podpis: "одной строкой base64" }]}
+            znacheniya={[{ z: "spisok", podpis: "списком" }, { z: "base64", podpis: "одной закодированной строкой" }]}
             vybrano={vid}
             naVybor={(z) => { zadatVid(z); zadatSoobshchenie(null); }}
           />

@@ -46,7 +46,7 @@ export function OhvatPravil({vid,trafik,katalog,chernovik,ozhidayut=false,bezRu=
     </div>
     {open && <div className="bg-surface border-border flex flex-col gap-3 rounded-xl border p-4">
       <p className="text-fg-secondary">{chernovik?"Охват черновика, ещё не применён":"Охват сохранённых правил"}</p>
-      {!count && <p className="text-fg-muted">Явных правил {sites?"сайтов":"приложений"} нет</p>}
+      {!count && <p className="text-fg-muted">Отдельных правил {sites?"сайтов":"приложений"} нет</p>}
       <ul className="flex max-h-72 flex-col gap-3 overflow-y-auto">
         {sites?trafik.domeny.map(d=><li key={d.domen} className="flex flex-col gap-1">
           <div className="flex flex-wrap justify-between gap-2"><span className="text-foreground break-all">{d.domen}</span><span>{imyaMarshruta(d.marshrut)}</span></div>
@@ -75,8 +75,8 @@ export function OhvatPravil({vid,trafik,katalog,chernovik,ozhidayut=false,bezRu=
         <p className="text-foreground font-medium">По настройкам{chernovik?" черновика":""}</p>
         {domainInput.trim() && !domen?<p className="text-warn">Домен не распознан. Исправь его для совместного расчёта.</p>:<>
           <Reshenie label="Соединение" result={preview.dannye}/>
-          <Reshenie label="Поиск адреса (DNS)" result={preview.dns}/>
-          {!proksi && <p className="text-fg-muted">Для обычного DNS-запроса, который обрабатывает Affory.</p>}
+          <Reshenie label="Поиск адреса сайта" result={preview.dns}/>
+          {!proksi && <p className="text-fg-muted">Для обычного поиска адреса, который идёт через Affory.</p>}
         </>}
         <details className="text-fg-muted"><summary>Условия расчёта</summary>
           <div className="mt-2 flex flex-col gap-2">
@@ -85,7 +85,7 @@ export function OhvatPravil({vid,trafik,katalog,chernovik,ozhidayut=false,bezRu=
             {preview.primechaniya.map(note=><p key={note}>{note}</p>)}
           </div>
         </details>
-        <p className="text-fg-muted">Это расчёт, а не проверка доступности сайта или фактического DNS-запроса.</p>
+        <p className="text-fg-muted">Это расчёт по правилам, а не проверка, что сайт открывается.</p>
       </div>}
       {chernovik && <p className="text-warn">Подсказка учитывает черновик. Проверка показывает текущие соединения, ещё без этих изменений.</p>}
       {!chernovik && ozhidayut && <p className="text-warn">Сохранённые правила ещё не применены. Проверка показывает соединения с прежними правилами.</p>}

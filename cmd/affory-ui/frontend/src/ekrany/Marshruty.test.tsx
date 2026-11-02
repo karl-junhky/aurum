@@ -533,7 +533,7 @@ it("адрес и мусор объясняются построчно и не �
   fireEvent.change(pole,{target:{value:"192.168.1.10 example"}});
   const razbor = screen.getByTestId("razbor-domenov");
   expect(razbor).toHaveTextContent("192.168.1.10: это адрес, а не имя сайта");
-  expect(razbor).toHaveTextContent("example: нужна зона");
+  expect(razbor).toHaveTextContent("example: нужно полное имя");
   expect(screen.getByRole("button",{name:"Добавить в черновик"})).toBeDisabled();
   // Годная строка рядом с негодной не блокирует добавление годной.
   fireEvent.change(pole,{target:{value:"192.168.1.10 shop.example.org"}});

@@ -28,7 +28,7 @@ it("адрес не маскируется под имя сайта", () => {
 });
 
 it("негодные строки объясняются каждая своей причиной", () => {
-  expect(normalizovatDomen("example")).toEqual({ prichina: "нужна зона, например example.com" });
+  expect(normalizovatDomen("example")).toEqual({ prichina: "нужно полное имя, например example.com" });
   expect(normalizovatDomen("ftp://example.org")).toEqual({ prichina: "адрес не http и не https" });
   expect(normalizovatDomen("https://user:pass@example.org")).toEqual({ prichina: "адрес с логином и паролем не годится" });
   expect(normalizovatDomen(`${"a".repeat(64)}.example.org`)).toEqual({ prichina: "часть имени длиннее 63 знаков" });
@@ -49,7 +49,7 @@ it("несколько сайтов за один ввод: любые разд�
   expect(gotovye[2].ishodnyy).toBe("пример.рф");
   expect(otkazy).toEqual([
     { vvod: "10.0.0.1", prichina: "это адрес, а не имя сайта: правила сайтов работают по имени" },
-    { vvod: "example", prichina: "нужна зона, например example.com" },
+    { vvod: "example", prichina: "нужно полное имя, например example.com" },
   ]);
 });
 

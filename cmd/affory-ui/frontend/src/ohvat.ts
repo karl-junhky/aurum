@@ -75,7 +75,7 @@ export function opisatDomen(host:string,trafik:PravilaTrafika,katalog?:KatalogSe
     const service=katalog?.servisy.find(s=>s.id===rule.id);
     if (service?.domeny.some(d=>domenPopadaet(host,d))) return `${imyaMarshruta(rule.marshrut)}: сервис ${service.imya}`;
   }
-  return `Явного доменного правила нет. Общий режим: ${imyaMarshruta(trafik.po_umolchaniyu).toLowerCase()}; российский список и системные исключения могут изменить маршрут`;
+  return `Отдельного правила сайта нет. Общий режим: ${imyaMarshruta(trafik.po_umolchaniyu).toLowerCase()}; российский список и системные исключения могут изменить маршрут`;
 }
 
 export function razobratSnimok(value:unknown):SnimokSoedineniy {

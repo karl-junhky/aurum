@@ -108,7 +108,7 @@ function bezProverki(k: KlyuchHoda, u: { ne_iz_seti: string[] }, idyot: boolean)
 function prichinaOtseva(prichina: string, process?: string): string {
   switch (prichina) {
     case "vne": return "вне 1-65535";
-    case "ssh": return "на нём вход SSH";
+    case "ssh": return "на нём вход на сервер";
     case "sert": return "нужен сертификату";
     case "zanyat": return process && process !== "?" ? `занят программой ${process}` : "занят другой программой";
   }
@@ -166,8 +166,8 @@ export function oshibkaPorta(s: string, zanyaty: [number, string][] = []): strin
  *  443 при продлении через него служба отсеет сама: до установки способ
  *  продления неизвестен. */
 export function zanyatyeDlyaReality(portSsh: number): [number, string][] {
-  const z: [number, string][] = [[22, "занят входом по SSH"], [80, "нужен выпуску сертификата"]];
-  if (portSsh !== 22) z.push([portSsh, "занят входом по SSH"]);
+  const z: [number, string][] = [[22, "занят входом на сервер"], [80, "нужен выпуску сертификата"]];
+  if (portSsh !== 22) z.push([portSsh, "занят входом на сервер"]);
   return z;
 }
 
@@ -786,20 +786,20 @@ const CHTO_IDYOT: Record<string, string> = {
   osmotr: "осматриваю сервер",
   klyuch: "кладу ключ управления этого компьютера",
   programma: "ставлю программу",
-  maska: "выбираю маску reality",
+  maska: "выбираю сайт, под который маскируется reality",
   sertifikat: "выпускаю сертификат на адрес сервера",
   podbor: "пробую порты по одному из твоей сети",
   paket: "ставлю выбранные порты",
   porty: "открываю порты в брандмауэре сервера",
   detektor: "проверяю, почему порты не проходят из твоей сети",
-  proverka: "2 МБ через каждый ключ",
+  proverka: "качаю 2 МБ через каждый ключ",
 };
 
 const ETAPY: { id: IdEtapa; imya: string; zhdyot: string }[] = [
   { id: "programma", imya: "Программа сервера", zhdyot: "вход, осмотр и программа" },
   { id: "sertifikat", imya: "Сертификат", zhdyot: "на адрес сервера" },
   { id: "porty", imya: "Подбор портов", zhdyot: "по одному порту из твоей сети" },
-  { id: "klyuchi", imya: "Проверка ключей", zhdyot: "2 МБ через каждый ключ" },
+  { id: "klyuchi", imya: "Проверка ключей", zhdyot: "загрузка 2 МБ через каждый ключ" },
 ];
 
 // Куда отнести предупреждение дошедшей до ключей установки.
@@ -831,7 +831,7 @@ export function etapyUstanovki(h: HodVps | undefined): Etap[] {
     if (h.faza === "idyot") {
       // На проверке ключей служба называет ключ, который сейчас везёт 2 МБ.
       const podrobno = e.id === "klyuchi" && h.klyuch
-        ? `${vidKlyucha(h.klyuch.transport).imya} ${h.klyuch.port}: 2 МБ через ключ`
+        ? `${vidKlyucha(h.klyuch.transport).imya} ${h.klyuch.port}: качаю 2 МБ`
         : CHTO_IDYOT[h.shag ?? ""] ?? e.zhdyot;
       return { id: e.id, imya: e.imya, itog: "idyot", podrobno };
     }
@@ -1104,7 +1104,7 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
       {otkazVygruzki && <p role="alert" className="text-danger text-xs">{otkazVygruzki}</p>}
       {vygruzka && (
         <div ref={kVygruzke}>
-          <Vygruzka vygruzka={vygruzka} zakryt={naZakrytVygruzku} skopirovat={skopirovat} kodyQr={kodyQr} />
+          <Vygruzka vygruzka={vygruzka} zakryt={naZakrytVygruzku} skopirovat={skopirovat} kodyQr={kodyQr} zagolovok="Ключи для телефона" />
         </div>
       )}
       {server && (
@@ -1226,13 +1226,16 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtm
     const z = tekstOtkaza[h.otkaz.kod];
     const deystvie = z ? deystviya[z.deystvie] : undefined;
     const podpis = z ? podpisDeystviya[z.deystvie] : null;
+    // Заголовок говорит, что не вышло, тело почему. Строка словаря тут
+    // только запасная: причина службы её пересказывает, и вместе они
+    // повторяли одно и то же дважды (И6).
     const tekst = [
-      sPropisnoy(h.otkaz.tekst),
+      sPropisnoy(h.otkaz.tekst || z?.tekst || ""),
       h.otkaz.klyuch_ostalsya ? "Ключ этого компьютера остался на сервере, а войти им не вышло" : "",
       h.otkaz.podozhdat ? `Следующий вход не раньше чем через ${h.otkaz.podozhdat} с` : "",
     ].filter((s) => s !== "").join(". ");
     return (
-      <Plashka testId="svoy-delo" ton="danger" zagolovok={`${DELO_ITOG[h.vid] ?? "Дело"}: не вышло.${sPropisnoy(z?.tekst ?? "")}`.replace(/\. $/, "")} tekst={tekst}>
+      <Plashka testId="svoy-delo" ton="danger" zagolovok={`${DELO_ITOG[h.vid] ?? "Дело"}: не вышло`} tekst={tekst}>
         {deystvie && podpis && <Knopka rang="vtoraya" aktiven={aktiven && !zanyato} onClick={deystvie}>{podpis}</Knopka>}
         {dop}
         {zakryt}
@@ -1404,7 +1407,9 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
           tekst={`${sPropisnoy(s.klyuch_ne_chitaetsya)}. Ключи VPN работают. Чтобы вернуть управление, забудь сервер и возьми его под управление заново`}
         />
       )}
-      {ocenka.prichina && <Plashka ton={vid.kromka} zagolovok={ocenka.prichina} tekst={ocenka.sovet} />}
+      {ocenka.prichina && !(ocenka.izProverki && delo?.vid === "proverka" && delo.faza === "oshibka" && delo.otkaz?.tekst === s.proverka_otkaz) && (
+        <Plashka ton={vid.kromka} zagolovok={ocenka.prichina} tekst={ocenka.sovet} />
+      )}
       {delo && (
         <StrokaDela
           h={delo}
@@ -1543,12 +1548,14 @@ export function SvoyVpn(p: SvoyVpnProps) {
 
   const naOtchyot = (s: SvoyServer) => {
     const h = posledniy(hody.filter((x) => x.server === s.id));
+    const yadro = svezhayaProverka(s, hody)?.oshibka_yadra;
     const stroki = [
       `Affory, свой VPN: сервер ${s.adres}`,
       `программа: ${s.versiya ?? "неизвестна"}, порты: reality ${s.reality ?? "-"}, hysteria2 ${s.hy2 ?? "-"}${s.porty_ruchnye ? " (руками)" : ""}`,
       `сертификат: ${s.prodlenie ?? "-"}${s.sert_do ? `, до ${new Date(s.sert_do * 1000).toISOString()}` : ""}${s.sert_otkaz ? `, отказ продления: ${s.sert_otkaz}` : ""}`,
       `проверен: ${s.proveren ?? "никогда"}${s.proverka_otkaz ? `, отказ: ${s.proverka_otkaz}` : ""}`,
       `ключ управления: ${s.klyuch_upravleniya ? "есть" : "нет"}${s.novyy_otpechatok ? ", ключ хоста сменился" : ""}`,
+      yadro ? `ошибка VPN на сервере: ${yadro}` : "",
       h ? otchyotDela(h, undefined, undefined) : "",
       p.versiya ?? "",
     ].filter((x) => x !== "");

@@ -17,7 +17,7 @@ export function opisatPraviloSoedineniya(rule:string):string {
   if(condition.startsWith("process_path=")) return "Сработало отдельное правило приложения";
   if(condition.startsWith("domain_suffix=") || condition.startsWith("domain=")) return "Сработало правило сайта или сервиса";
   if(condition==="inbound=proksi-in") return "Соединение пришло через локальный прокси Affory";
-  if(condition.startsWith("rule_set=")) return "Сработал набор доменов";
+  if(condition.startsWith("rule_set=")) return "Сработал готовый набор сайтов";
   if(condition==="ip_is_private=true" || condition==="ip_is_private") return "Сработало исключение для локального IP-адреса";
   return "Причина выбора видна в технических сведениях ниже";
 }
@@ -56,21 +56,21 @@ export function obyasnitMarshrut({domen,put,proksi,bezRu,killSwitch,reklamaVkl=f
   else if(ru && trafik.po_umolchaniyu==="vpn") dannye={marshrut:null,prichina:"Для российского списка напрямую, для остальных сайтов через VPN. Вхождение в список здесь не проверяется"};
   else dannye={marshrut:trafik.po_umolchaniyu,prichina:"Общий режим: подходящего правила приложения, сайта или сервиса нет"};
   if(!proksi && !app && !domainRule && !killSwitch) primechaniya.push("Локальные IP-адреса идут напрямую, если их не перекрывает явное правило. IP-адрес сайта здесь не запрашивается.");
-  if(domainRule && (app || proksi || dannye.marshrut===null)) primechaniya.push(`По доменным настройкам: ${domainRule.prichina.toLowerCase()} (${domainRule.marshrut==="vpn"?"через VPN":"напрямую"}). Правило приложения или прокси может оказаться важнее.`);
+  if(domainRule && (app || proksi || dannye.marshrut===null)) primechaniya.push(`По правилам сайтов: ${domainRule.prichina.toLowerCase()} (${domainRule.marshrut==="vpn"?"через VPN":"напрямую"}). Правило приложения или прокси может оказаться важнее.`);
 
   // DNS requests shared by Windows cannot reliably be attributed to one app.
   // Local names precede user domains, then rule sets, then the DNS default.
   const dnsDefault=programmy.some(a=>a.marshrut==="vpn")?"vpn":trafik.po_umolchaniyu;
   let dns:ReshenieProby;
-  if(proksi) dns={marshrut:null,prichina:"При передаче имени через прокси адрес может искать VPN-сервер. По этому расчёту нельзя установить, был ли отдельный DNS-запрос приложения"};
-  else if(!domen) dns={marshrut:null,prichina:"Укажи сайт, чтобы проверить выбор DNS"};
-  else if(!domen.includes(".") || [".local",".lan",".home.arpa"].some(s=>domen.endsWith(s))) dns={marshrut:"direct",prichina:"Локальное имя: DNS текущей сети, раньше правил сайта"};
-  else if(killSwitch) dns={marshrut:"vpn",prichina:"Включена блокировка сети вне VPN; доменные исключения для DNS отключены"};
-  else if(domainRule) dns={...domainRule,prichina:`${domainRule.prichina}. Для DNS правило приложения не используется`};
-  else if(missingCatalog) dns={marshrut:null,prichina:"Каталог сервисов недоступен. Нельзя проверить доменные правила DNS"};
-  else if(ru && dnsDefault==="vpn") dns={marshrut:null,prichina:"Для российского списка DNS текущей сети, для остальных через VPN. Вхождение в список здесь не проверяется"};
-  else dns={marshrut:dnsDefault,prichina:programmy.some(a=>a.marshrut==="vpn")?"DNS по умолчанию через VPN: хотя бы одно приложение направлено в VPN":"DNS по общему режиму"};
-  primechaniya.push("Расчёт DNS относится к обычным DNS-запросам, перехваченным Affory. Защищённый DNS самого браузера и поиск адреса на VPN-сервере им не проверяются.");
+  if(proksi) dns={marshrut:null,prichina:"При передаче имени через прокси адрес может искать VPN-сервер. По этому расчёту нельзя установить, искало ли приложение адрес само"};
+  else if(!domen) dns={marshrut:null,prichina:"Укажи сайт, чтобы проверить, где ищется его адрес"};
+  else if(!domen.includes(".") || [".local",".lan",".home.arpa"].some(s=>domen.endsWith(s))) dns={marshrut:"direct",prichina:"Локальное имя: адрес ищется в текущей сети, раньше правил сайта"};
+  else if(killSwitch) dns={marshrut:"vpn",prichina:"Включена защита сети: адреса всех сайтов ищутся через VPN"};
+  else if(domainRule) dns={...domainRule,prichina:`${domainRule.prichina}. Для поиска адреса правило приложения не используется`};
+  else if(missingCatalog) dns={marshrut:null,prichina:"Каталог сервисов недоступен. Нельзя проверить, где ищутся адреса сайтов сервисов"};
+  else if(ru && dnsDefault==="vpn") dns={marshrut:null,prichina:"Адреса сайтов из российского списка ищутся в текущей сети, остальных через VPN. Вхождение в список здесь не проверяется"};
+  else dns={marshrut:dnsDefault,prichina:programmy.some(a=>a.marshrut==="vpn")?"Адреса ищутся через VPN: хотя бы одно приложение направлено в VPN":"Адрес ищется по общему режиму"};
+  primechaniya.push("Расчёт поиска адреса относится к обычным запросам, которые идут через Affory. Безопасный DNS самого браузера и поиск адреса на VPN-сервере он не проверяет.");
   primechaniya.push("Правило сайта сработает, только если Affory видит его имя. Если имя скрыто, правило приложения надёжнее.");
   // Под защитой прямых маршрутов не бывает: служба собирает конфиг без них
   // (`bezPryamyh` в internal/genkonfig/trafik.go), и правило человека просто

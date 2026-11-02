@@ -63,7 +63,7 @@ export function Reklama({ reklama, sohranyonnoe, status, disabled, naSmenu, soob
           <span className="text-foreground text-sm font-medium">Блокировать рекламу и трекеры</span>
           <span className="text-fg-muted text-[13px] leading-relaxed">
             Адреса из списка не открываются ни через VPN, ни напрямую. Работает, пока VPN подключён, во всех
-            режимах, включая блокировку сети вне VPN
+            режимах, включая защиту сети
           </span>
         </span>
         <Tumbler
@@ -216,7 +216,7 @@ export function Reklama({ reklama, sohranyonnoe, status, disabled, naSmenu, soob
             <ul className="flex list-disc flex-col gap-1.5 pl-4">
               <li>Реклама, которая идёт с тех же адресов, что и сам сервис: YouTube, Twitch, соцсети</li>
               <li>Пустые места на странице, где стояла реклама</li>
-              <li>Браузер с вручную включённым защищённым DNS спрашивает адреса сам, мимо списка</li>
+              <li>Браузер с вручную включённым безопасным DNS спрашивает адреса сам, мимо списка</li>
               <li>Правило во вкладках «Сайты» или «Сервисы» блокировку не снимает, для этого есть «Не блокировать»</li>
             </ul>
           }

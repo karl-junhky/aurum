@@ -30,7 +30,7 @@ it("файл существует, но пустой список не обоз�
   render(<ProverkaPrilozheniya {...base} proverit={vi.fn().mockResolvedValue({...result,fayl:"est",vsego:0,zapushchennye:[],neizvestno:0})}/>);
   await check();
   expect(screen.getByRole("status")).toHaveTextContent("Файл найден");
-  expect(screen.getByRole("status")).toHaveTextContent("Приложение и связанные запуски в этом сеансе не обнаружены");
+  expect(screen.getByRole("status")).toHaveTextContent("В этом сеансе Windows приложение не запущено, и запущенных им программ нет");
 });
 
 it("ошибка не превращается в пустой список, черновик нельзя проверить как сохранённый",async()=>{
@@ -38,7 +38,7 @@ it("ошибка не превращается в пустой список, ч�
   const view=render(<ProverkaPrilozheniya {...base} proverit={inspect}/>);
   await check();
   expect(screen.getByRole("alert")).toHaveTextContent("Наблюдение недоступно");
-  expect(screen.queryByText(/Приложение и связанные запуски в этом сеансе не обнаружены/)).toBeNull();
+  expect(screen.queryByText(/В этом сеансе Windows приложение не запущено, и запущенных им программ нет/)).toBeNull();
   view.rerender(<ProverkaPrilozheniya {...base} draft proverit={inspect}/>);
   expect(screen.getByRole("button",{name:"Проверить охват"})).toBeDisabled();
   expect(screen.queryByRole("alert")).toBeNull();

@@ -707,7 +707,7 @@ describe("серверы: выгрузка", () => {
     fireEvent.click(screen.getByTestId("vygruzka-kopirovat"));
     await vi.waitFor(() => expect(skopirovat).toHaveBeenCalledWith(OTVET.tekst));
     expect(await screen.findByTestId("vygruzka-soobshchenie")).toHaveTextContent("скопировано");
-    fireEvent.click(screen.getByRole("radio", { name: "одной строкой base64" }));
+    fireEvent.click(screen.getByRole("radio", { name: "одной закодированной строкой" }));
     fireEvent.click(screen.getByTestId("vygruzka-kopirovat"));
     await vi.waitFor(() => expect(skopirovat).toHaveBeenLastCalledWith(OTVET.base64));
     expect(document.body.textContent).not.toMatch(/hy2:\/\//);
@@ -757,7 +757,7 @@ describe("серверы: выгрузка", () => {
   it("QR рисуется из списка, а не из base64, и несколько кодов подписаны", async () => {
     const kodyQr = vi.fn(async () => ["data:image/png;base64,AAA", "data:image/png;base64,BBB"]);
     otkryt({ kodyQr });
-    fireEvent.click(screen.getByRole("radio", { name: "одной строкой base64" }));
+    fireEvent.click(screen.getByRole("radio", { name: "одной закодированной строкой" }));
     fireEvent.click(screen.getByTestId("vygruzka-qr"));
     await vi.waitFor(() => expect(kodyQr).toHaveBeenCalledWith(OTVET.tekst));
     const kody = await screen.findByTestId("vygruzka-kody");

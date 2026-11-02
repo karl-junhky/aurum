@@ -84,7 +84,7 @@ func otkazVps(err error) OtkazVps {
 		return OtkazVps{Kod: protokol.KodVpsVzyat, Tekst: "сервер переставлен с другого компьютера, и ключи VPN этого компьютера к нему не подходят: возьми его под управление заново"}
 	case errors.Is(err, server.ErrVhodyNeProvereny):
 		return OtkazVps{Kod: protokol.KodVpsPosledniyVhod,
-			Tekst: "не вышло проверить, какие входы root останутся без ключа этого компьютера: sshd на сервере не ответил на проверку настроек, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
+			Tekst: "не вышло проверить, какие входы root останутся без ключа этого компьютера: сервер не ответил на проверку своих настроек входа, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
 	case errors.Is(err, server.ErrPosledniyVhod):
 		return OtkazVps{Kod: protokol.KodVpsPosledniyVhod,
 			Tekst: "ключ этого компьютера - последний вход root: других ключей, которыми root пустят снаружи, нет, а паролем root не пускают. Без него root не войти, разве что под другим пользователем с sudo или через консоль хостера, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
@@ -117,20 +117,20 @@ func otkazVps(err error) OtkazVps {
 	return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: sboi.DlyaCheloveka(err)}
 }
 
-// otkazMolchaniya: «никто не слушает» говорится, только если порт отказал и
+// otkazMolchaniya: «не принимает вход» говорится, только если порт отказал и
 // через VPN. Прямой отказ один ничего не доказывает: сброс подделывают и
 // ТСПУ.
 func otkazMolchaniya(m *upravlenie.Molchanie) OtkazVps {
 	o := OtkazVps{Kod: protokol.KodVpsNeOtvechaet}
 	switch {
 	case m.Tunnel == nil && ssh.PrichinaIz(m.Pryamo) == ssh.PrichinaPortZakryt:
-		o.Tekst = "на этом порту SSH никто не слушает, или соединение сбрасывают по дороге: проверь порт в письме хостера или включи VPN и повтори"
+		o.Tekst = "на этом порту сервер не принимает вход, или соединение сбрасывают по дороге: проверь порт в письме хостера или включи VPN и повтори"
 	case m.Tunnel == nil:
-		o.Tekst = "сервер не отвечает по SSH: он выключен, адрес неверный или дорогу к нему режут. Включи VPN и повтори, служба зайдёт через него"
+		o.Tekst = "сервер не отвечает на вход: он выключен, адрес неверный или дорогу к нему режут. Включи VPN и повтори, служба зайдёт через него"
 	case ssh.PrichinaIz(m.Tunnel) == ssh.PrichinaPortZakryt:
-		o.Tekst = "на этом порту SSH никто не слушает: проверь порт в письме хостера"
+		o.Tekst = "на этом порту сервер не принимает вход: проверь порт в письме хостера"
 	default:
-		o.Tekst = "сервер не отвечает по SSH ни напрямую, ни через VPN: он выключен или адрес неверный"
+		o.Tekst = "сервер не отвечает на вход ни напрямую, ни через VPN: он выключен или адрес неверный"
 	}
 	return o
 }
@@ -187,13 +187,13 @@ func otkazSsh(otk *ssh.Otkaz) OtkazVps {
 	case ssh.PrichinaRanoPovtoryat:
 		return molchit(fmt.Sprintf("два входа подряд не удались: следующий через %d с, иначе сервер запрёт твой адрес", otk.Podozhdat))
 	case ssh.PrichinaNeSSH:
-		return molchit("на этом порту отвечает не SSH: проверь порт в письме хостера")
+		return molchit("на этом порту отвечает другая программа, а не вход на сервер: проверь порт в письме хостера")
 	case ssh.PrichinaPortZakryt:
-		return molchit("на этом порту SSH никто не слушает: проверь порт в письме хостера")
+		return molchit("на этом порту сервер не принимает вход: проверь порт в письме хостера")
 	case ssh.PrichinaNetVhodaTunnelya:
 		return molchit("VPN не отвечает на своём входе: переподключи VPN и повтори")
 	case ssh.PrichinaTishina, ssh.PrichinaObryv, ssh.PrichinaSrok:
-		return molchit("сервер перестал отвечать по SSH: повтори чуть позже")
+		return molchit("сервер перестал отвечать: повтори чуть позже")
 	}
 	return OtkazVps{Kod: protokol.KodVpsUstanovka, Tekst: "сбой связи с сервером"}
 }
@@ -203,7 +203,7 @@ func tekstOtseva(o porty.Otsev) string {
 	case porty.PrichinaVne:
 		return fmt.Sprintf("порт %d вне 1-65535", o.Port)
 	case porty.PrichinaSsh:
-		return fmt.Sprintf("на порту %d вход SSH", o.Port)
+		return fmt.Sprintf("на порту %d вход на сервер", o.Port)
 	case porty.PrichinaSert:
 		return fmt.Sprintf("порт %d нужен для продления сертификата", o.Port)
 	case porty.PrichinaZanyat:
@@ -236,7 +236,7 @@ func tekstZamechaniya(z server.Zamechanie) string {
 	}
 	switch z.Kod {
 	case server.KodNeUbuntu:
-		return "на сервере не Ubuntu (" + pervoe + "): нужна Ubuntu 22.04 или 24.04"
+		return "на сервере не Ubuntu (" + pervoe + "): нужна Ubuntu 20.04 или новее, лучше 24.04"
 	case server.KodStarayaUbuntu:
 		return "Ubuntu старше 20.04 (" + pervoe + "): переустанови систему на Ubuntu 24.04"
 	case server.KodUbuntu2004:
@@ -246,7 +246,7 @@ func tekstZamechaniya(z server.Zamechanie) string {
 	case server.KodNeX86:
 		return "процессор " + pervoe + ", а нужен x86_64"
 	case server.KodNeSystemd:
-		return "система запускается не через systemd"
+		return "система сервера не умеет запускать службы так, как нужно Affory (нет systemd)"
 	case server.KodKonteyner:
 		return "это контейнер " + pervoe + ", а не виртуальная машина: нужен VPS на KVM"
 	case server.KodMaloPamyati:
@@ -286,7 +286,7 @@ func tekstZamechaniya(z server.Zamechanie) string {
 	case server.KodChuzhoyBrandmauer:
 		return "входящие режет свой брандмауэр сервера (" + chto + "): порты, может быть, придётся открыть руками"
 	case server.KodNetBBR:
-		return "в ядре нет BBR: reality на дальних каналах будет медленнее"
+		return "система сервера не умеет ускорять дальние соединения (нет BBR): reality издалека будет медленнее"
 	}
 	log.Printf("свой сервер: замечание без текста %q", z.Kod)
 	return string(z.Kod)
@@ -408,7 +408,7 @@ func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie) OtkazVps {
 	case blok.NeSostoyalas:
 		o.Kod, o.Tekst = protokol.KodVpsSetOgranichena, "твоя сеть не отвечает, проверить "+klyuch+" не вышло"
 	case blok.OtvetNeVozvrashchaetsya:
-		o.Kod, o.Tekst = protokol.KodVpsBrandmauerHostera, "стук доходит до сервера, а ответ не возвращается: открой у хостера "+slovoPorta(len(porty))+" "+strings.Join(porty, " и ")
+		o.Kod, o.Tekst = protokol.KodVpsBrandmauerHostera, "попытки подключиться доходят до сервера, а ответ не возвращается: открой у хостера "+slovoPorta(len(porty))+" "+strings.Join(porty, " и ")
 	case blok.NeDohodit:
 		// Другой вид мог пройти: тогда проверять с телефона только этот.
 		chto, otkroyutsya := "их", "не откроются"
