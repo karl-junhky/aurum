@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/netip"
@@ -582,6 +581,7 @@ func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, 
 	if err != nil {
 		return err
 	}
+	s.pravitHod(zad, func(h *HodVps) { h.Shag = shagZagruzka })
 	prog, err := s.programmaUzla(ctx)
 	if err != nil {
 		return err
@@ -918,15 +918,3 @@ func (s *Sluzhba) zapuskProverki(_ context.Context, telo []byte) (func(), error)
 		})
 	}, nil
 }
-
-// programmaIzKataloga отдаёт программу сервера, лежащую рядом со службой.
-// Доставку с выпуска и сверку отпечатка делает У5.
-func (s *Sluzhba) programmaIzKataloga(context.Context) (io.ReadSeekCloser, error) {
-	f, err := os.Open(filepath.Join(s.dirProgrammy, imyaProgrammyUzla))
-	if err != nil {
-		return nil, fmt.Errorf("программа сервера не найдена: %w", err)
-	}
-	return f, nil
-}
-
-const imyaProgrammyUzla = "vpn-uzel"

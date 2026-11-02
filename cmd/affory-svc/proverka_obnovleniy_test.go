@@ -482,6 +482,9 @@ func TestZakrytyyRepozitoriyObyasnyaetsya(t *testing.T) {
 	if !strings.Contains(err.Error(), "закрыт") {
 		t.Fatalf("по тексту не понять, что смотреть некуда: %v", err)
 	}
+	if !errors.Is(err, errKod404) {
+		t.Fatalf("404 не опознаётся: %v", err)
+	}
 }
 
 // Мёртвая проверка обязана выглядеть мёртвой (23.09.2026, разбор D3).

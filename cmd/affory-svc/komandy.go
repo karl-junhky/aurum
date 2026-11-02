@@ -537,7 +537,9 @@ type Sluzhba struct {
 	// Свой сервер (svoy_vps.go): одно задание на службу под muVps. muVps не
 	// держится через izvestit и не берётся под mu. Швы: настоящие ходят на
 	// сервер, в сеть машины и за программой сервера. vpsStaging берёт
-	// тестовый выпуск Let's Encrypt (AFFORY_LE_STAGING).
+	// тестовый выпуск Let's Encrypt (AFFORY_LE_STAGING), istochnikUzla это
+	// файл программы сервера для стенда (AFFORY_UZEL), vshityyUzel - какую
+	// программу ждёт эта сборка.
 	muVps sync.Mutex
 	vps   *zadanieVps
 	// vpsZaporDo: до этого срока задания своего сервера не заводятся, отказ
@@ -557,6 +559,8 @@ type Sluzhba struct {
 	vpsVklyuchitParol  func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error)
 	vpsPodobratPorty   func(context.Context, upravlenie.Podbor) (upravlenie.Itog, error)
 	programmaUzla      func(context.Context) (io.ReadSeekCloser, error)
+	istochnikUzla      string
+	vshityyUzel        func() (vypuskUzla, error)
 	fizicheskiyAdapter func() (set.Adapter, error)
 
 	seychas   func() time.Time
@@ -649,7 +653,9 @@ func NovayaSluzhba() *Sluzhba {
 	s.vpsVyklyuchitParol = upravlenie.VyklyuchitParol
 	s.vpsVklyuchitParol = upravlenie.VklyuchitParol
 	s.vpsPodobratPorty = upravlenie.PodobratPorty
-	s.programmaUzla = s.programmaIzKataloga
+	s.programmaUzla = s.programmaSVypuska
+	s.istochnikUzla = os.Getenv(peremennayaUzla)
+	s.vshityyUzel = prochitatVshityyUzel
 	s.fizicheskiyAdapter = ssh.FizicheskiyAdapter
 	s.fonCtx, s.fonOtmena = context.WithCancel(context.Background())
 	s.speedRunner = runSpeed

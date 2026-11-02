@@ -1,0 +1,11 @@
+{
+  "programma": "vpn-uzel 0.6.0",
+  "sing_box": "v1.14.2",
+  "versiya_yadra": "1.14.2-affory-quic.1",
+  "quic_go": "v0.61.0-sing-box-mod.7",
+  "patch_sha256": "2d26d5b39e4c42256a72b6964740d40338032d61b9df40efaa5fdb3527eedeb7",
+  "tegi": "with_quic,with_utls,badlinkname,tfogo_checklinkname0",
+  "go": "go version go1.26.8 windows/amd64",
+  "sha256": "f7911f51b88548f10d8316931cf5920ac921b3537b79fdd44f596f497911a0a2",
+  "sobrano": "2026-11-01T14:12:14Z"
+}

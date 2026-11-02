@@ -24,3 +24,7 @@ with_quic,with_utls,badlinkname,tfogo_checklinkname0
 сверяет версии sing-box и quic-go, накладывает правку на копию модуля, подключает её через replace во временном go.mod и собирает
 sborka/vpn-uzel. Версии, хеш правки, тулчейн и sha256 бинаря он записывает в
 sborka/vpn-uzel.otpechatok.json. Версия программы: vpn-uzel versiya.
+
+Этот отпечаток вшит в службу клиента (cmd/affory-svc/vpn-uzel.otpechatok.json).
+Служба качает программу из выпуска клиента на GitHub
+(vpn-uzel-<версия>-linux-amd64) и ставит на сервер только файл с этим sha256.

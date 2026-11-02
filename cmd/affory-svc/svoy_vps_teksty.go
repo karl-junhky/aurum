@@ -35,8 +35,12 @@ func otkazVps(err error) OtkazVps {
 		ostatok *upravlenie.NeChisto
 		chuzhoy *server.ParolChuzhoy
 		klyuch  *upravlenie.KlyuchNePustil
+		uzel    *oshibkaZagruzkiUzla
 	)
 	switch {
+	case errors.As(err, &uzel):
+		return OtkazVps{Kod: protokol.KodVpsUstanovka,
+			Tekst: "программа для сервера не скачалась с GitHub (" + sboi.DlyaCheloveka(uzel.err) + "): проверь, открывается ли github.com, и повтори. На сервер ничего не ставилось"}
 	case errors.As(err, &chuzhoy):
 		t := "пароль не выключен: вход по паролю держит включённым другая настройка SSH на сервере"
 		if len(chuzhoy.Fayly) > 0 {

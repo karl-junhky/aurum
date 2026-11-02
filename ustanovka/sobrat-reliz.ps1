@@ -1,11 +1,13 @@
 ﻿# Сборка выпуска: бинари, установщик NSIS, архив обновления с .sha256.
 #
-# Выпуск состоит из трёх вещей:
+# Выпуск состоит из четырёх вещей:
 #   * Affory-<версия>-setup.exe: установщик (ustanovka\affory.nsi);
 #   * affory-<версия>.zip плюс affory-<версия>.zip.sha256: архив для команды
 #     installUpdate: четыре файла верхнего уровня, ядро в том числе;
 #   * sing-box-<версия ядра>.zip не собирается: ядро это своя сборка апстримного
-#     sing-box (ustanovka\sobrat-yadro.ps1), оно кладётся в установщик как есть.
+#     sing-box (ustanovka\sobrat-yadro.ps1), оно кладётся в установщик как есть;
+#   * vpn-uzel-<версия>-linux-amd64 с .sha256: программа сервера «Своего VPN»,
+#     её служба качает отсюда при первой установке сервера.
 #
 # Ничего секретного в выпуск не попадает: ни адресов, ни ключей, ни подписки.
 [CmdletBinding()]
@@ -18,6 +20,9 @@ param(
     # случай, когда о ней забывают.
     [string]$Otpechatok = '',
     [switch]$BezFronta,
+    # bash из Git для uzel/sobrat.sh. Голое `bash` на Windows бывает bash из
+    # WSL, а тот собрал бы программу другим окружением.
+    [string]$Bash = 'C:\Program Files\Git\bin\bash.exe',
     # Пробная сборка для стенда из дерева без ворот. Выкладывать её нельзя, и
     # в каталог выпуска кладётся файл, который об этом говорит.
     [switch]$Proba
@@ -72,6 +77,33 @@ if ($Proba) {
 } elseif (Test-Path $metkaProby) {
     Remove-Item $metkaProby -Force
 }
+
+# Программа сервера «Своего VPN» (У5): клиент качает её из этого выпуска и
+# сверяет с отпечатком, вшитым в службу. Она собирается здесь же из дерева
+# выпуска: только так файл в выпуске соответствует исходникам uzel/ в теге и
+# в архиве исходников. Сборка воспроизводима (02.11.2026 пересборка дала тот
+# же sha256), поэтому несовпадение с вшитым значит, что исходники uzel/
+# менялись без новой сборки и нового отпечатка. Всё это до сборки клиента,
+# чтобы не ждать зря.
+$otpUzla = Get-Content (Join-Path $koren 'cmd\affory-svc\vpn-uzel.otpechatok.json') -Raw | ConvertFrom-Json
+if ($otpUzla.programma -notmatch '^vpn-uzel (\d+\.\d+\.\d+)$') { throw "в отпечатке программы сервера нет версии: $($otpUzla.programma)" }
+$versiyaUzla = $Matches[1]
+if (-not (Test-Path $Bash)) { throw "нет bash из Git для сборки программы сервера: $Bash" }
+& $Bash (($koren -replace '\\', '/') + '/uzel/sobrat.sh')
+if ($LASTEXITCODE -ne 0) { throw 'программа сервера не собралась (uzel/sobrat.sh)' }
+$uzel = Join-Path $koren 'uzel\sborka\vpn-uzel'
+$hu = (Get-FileHash $uzel -Algorithm SHA256).Hash.ToLower()
+if ($hu -ne $otpUzla.sha256) {
+    throw "программа сервера из дерева $hu, а в службе вшит $($otpUzla.sha256): переложить uzel\sborka\vpn-uzel.otpechatok.json в cmd\affory-svc"
+}
+# Потолок загрузки программы в службе 96 МБ (predelProgrammyUzla). Упрётся в
+# него - установка своего сервера встанет у всех, а причина будет в журнале.
+$razmerUzla = (Get-Item $uzel).Length
+if ($razmerUzla -gt 90MB) { throw "программа сервера $([math]::Round($razmerUzla/1MB,1)) МБ, потолок загрузки в службе 96 МБ: поднимать надо и там" }
+Get-ChildItem $vypusk -Filter 'vpn-uzel-*' | Remove-Item -Force
+$imyaUzla = "vpn-uzel-$versiyaUzla-linux-amd64"
+Copy-Item $uzel (Join-Path $vypusk $imyaUzla)
+[IO.File]::WriteAllText((Join-Path $vypusk "$imyaUzla.sha256"), "$hu  $imyaUzla`n")
 
 Push-Location $koren
 try {
