@@ -282,6 +282,9 @@ Section "Affory" SEC_AFFORY
   ; взять его исходники. Ядро это сборка sing-box, а не наш код.
   File "GPL-3.0.txt"
   File "YADRO-ISHODNIKI.txt"
+  ; Программу сервера «Своего VPN» клиент кладёт на сервер человека, и она
+  ; тоже сборка на sing-box.
+  File "UZEL-ISHODNIKI.txt"
   File /oname=LICENSE.opencck.txt "..\internal\katalog\LICENSE.opencck"
   File /oname=LICENSE.simple-icons.txt "..\cmd\affory-ui\frontend\src\assets\services\LICENSE.simple-icons.txt"
   File /oname=OFL-Inter.txt "..\cmd\affory-ui\frontend\src\shrifty\OFL-Inter.txt"
@@ -379,6 +382,7 @@ Section "Uninstall"
   Delete "$INSTDIR\sing-box.exe"
   Delete "$INSTDIR\GPL-3.0.txt"
   Delete "$INSTDIR\YADRO-ISHODNIKI.txt"
+  Delete "$INSTDIR\UZEL-ISHODNIKI.txt"
   Delete "$INSTDIR\LICENSE.opencck.txt"
   Delete "$INSTDIR\LICENSE.simple-icons.txt"
   Delete "$INSTDIR\OFL-Inter.txt"

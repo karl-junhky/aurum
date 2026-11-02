@@ -11,6 +11,12 @@ Affory includes a Windows process-family extension. The corresponding source,
 patch, build scripts and release fingerprint accompany each release.
 See ustanovka/YADRO-ISHODNIKI.txt and ustanovka/GPL-3.0.txt.
 
+vpn-uzel, the server program of "Свой VPN", links sing-box v1.14.2 as a
+library and is distributed under GNU GPL version 3 or later. Its inbounds in
+uzel/vhody are modified copies of sing-box protocol code. Its source is uzel/,
+its quic-go dependency carries the same patch as the core. Build and
+reproduction: ustanovka/UZEL-ISHODNIKI.txt.
+
 Inter
 -----
 Designer: Rasmus Andersson.
@@ -52,7 +58,8 @@ converts it with the bundled sing-box.
 
 Other components
 ----------------
-Go dependencies are recorded in go.mod and go.sum. Frontend dependencies are
+Go dependencies are recorded in go.mod and go.sum, those of vpn-uzel in
+uzel/go.mod and uzel/go.sum. Frontend dependencies are
 recorded in cmd/affory-ui/frontend/package.json and package-lock.json.
 Their license terms remain with the respective components and sources.
 

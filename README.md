@@ -251,12 +251,14 @@ go build -tags production -ldflags "-H windowsgui" -o affory-ui.exe ./cmd/affory
 
 Ядро собирает `ustanovka/sobrat-yadro.ps1`, ему нужны git и Go. Скрипт берёт sing-box нужной версии и накладывает патчи из `ustanovka/patches`. Что они меняют и как повторить сборку, описано в [`ustanovka/YADRO-ISHODNIKI.txt`](ustanovka/YADRO-ISHODNIKI.txt).
 
+Программу сервера для «Своего VPN» собирает `uzel/sobrat.sh` под linux/amd64, ему нужны bash 4+, git, Go и GNU coreutils. Как повторить сборку, описано в [`ustanovka/UZEL-ISHODNIKI.txt`](ustanovka/UZEL-ISHODNIKI.txt).
+
 </details>
 
 <details>
 <summary><b>Лицензии</b></summary>
 
-Affory распространяется под [GPL-3.0-or-later](LICENSE). Ядро это сборка [sing-box](https://github.com/SagerNet/sing-box) (GPL-3.0-or-later) с патчами из `ustanovka/patches`. Каталог сервисов собран из [OpenCCK](https://github.com/rekryt/iplist) (MIT), списки рекламы из [HaGeZi DNS Blocklists](https://github.com/hagezi/dns-blocklists) (GPL-3.0), шрифт [Inter](https://github.com/rsms/inter) под SIL OFL 1.1, значки сервисов из [Simple Icons](https://github.com/simple-icons/simple-icons) (CC0). Подробности в [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt).
+Affory распространяется под [GPL-3.0-or-later](LICENSE). Ядро это сборка [sing-box](https://github.com/SagerNet/sing-box) (GPL-3.0-or-later) с патчами из `ustanovka/patches`, программа сервера `uzel` собрана на sing-box как на библиотеке и тоже под GPL-3.0-or-later. Каталог сервисов собран из [OpenCCK](https://github.com/rekryt/iplist) (MIT), списки рекламы из [HaGeZi DNS Blocklists](https://github.com/hagezi/dns-blocklists) (GPL-3.0), шрифт [Inter](https://github.com/rsms/inter) под SIL OFL 1.1, значки сервисов из [Simple Icons](https://github.com/simple-icons/simple-icons) (CC0). Подробности в [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt).
 
 </details>
 

@@ -77,7 +77,7 @@ var sluzhbaUborki = imyaSluzhby
 // расхождение ловит TestSpisokUdaleniyaSovpadaetSUstanovshchikom.
 var (
 	faylyProgrammy = append(append([]string{}, faylyUstanovki...),
-		"GPL-3.0.txt", "YADRO-ISHODNIKI.txt", "LICENSE.opencck.txt",
+		"GPL-3.0.txt", "YADRO-ISHODNIKI.txt", "UZEL-ISHODNIKI.txt", "LICENSE.opencck.txt",
 		"LICENSE.simple-icons.txt", "OFL-Inter.txt",
 		// Manrope ушёл 16.09.2026, но его лицензия лежит у всех, кто ставил 1.1.x.
 		"OFL-Manrope.txt",

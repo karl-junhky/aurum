@@ -1,0 +1,26 @@
+ИСХОДНИКИ ПРОГРАММЫ СЕРВЕРА vpn-uzel
+
+vpn-uzel это программа, которую раздел «Свой VPN» ставит на собственный сервер
+человека. Она распространяется под GNU GPL версии 3 или новее, текст в
+GPL-3.0.txt. Внутри неё sing-box в виде библиотеки:
+Upstream: https://github.com/SagerNet/sing-box
+Версия: v1.14.2, лицензия GNU GPL версии 3 или новее.
+
+Исходники программы лежат в каталоге uzel/ архива исходного кода выпуска.
+Входы uzel/vhody/vless.go, trojan.go, hysteria2.go и anytls.go это копии
+protocol/<вид>/inbound.go из sing-box v1.14.2, отличия помечены в коде словом
+«наше:».
+Зависимость github.com/sagernet/quic-go v0.61.0-sing-box-mod.7 (лицензия MIT)
+собрана с той же правкой, что у ядра клиента:
+ustanovka/patches/quic-go-applimited.patch.
+Остальные зависимости и их версии записаны в uzel/go.mod и uzel/go.sum, их
+лицензии остаются за ними. Pebble из uzel/go.mod нужен только тестам и в
+программу не входит.
+Сборка: linux/amd64, Go 1.26.8, теги сборки:
+with_quic,with_utls,badlinkname,tfogo_checklinkname0
+
+Воспроизведение: в каталоге uzel запустить sobrat.sh (нужны bash 4+, git, Go
+1.26.8 и GNU coreutils: realpath с --relative-to и sha256sum). Скрипт
+сверяет версии sing-box и quic-go, накладывает правку на копию модуля, подключает её через replace во временном go.mod и собирает
+sborka/vpn-uzel. Версии, хеш правки, тулчейн и sha256 бинаря он записывает в
+sborka/vpn-uzel.otpechatok.json. Версия программы: vpn-uzel versiya.
