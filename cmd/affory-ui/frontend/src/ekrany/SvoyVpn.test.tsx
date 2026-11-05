@@ -6,7 +6,7 @@ import {
   punktyOsmotra, sostoyanieKlyucha, strokaPerehvata, teloDostupa, zanyatyeDlyaReality,
 } from "./SvoyVpn";
 import {
-  PUSTAYA_FORMA, type HodVps, type ItogKomandy, type Master, type OsmotrVps, type SvoyServer, type SvoyVps,
+  PUSTAYA_FORMA, type HodVps, type ItogKomandy, type Master, type OsmotrVps, type PravilaHapp, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
 import { razobratSoobshchenie } from "../soobshchenieHostera";
 
@@ -22,7 +22,7 @@ function server(dop: Partial<SvoyServer> = {}): SvoyServer {
     id: "svoy-1", imya: "Мой сервер", adres: "203.0.113.40", port_ssh: 22, polzovatel: "root",
     parol_vyklyuchen: false, maska: "www.example.net", reality: 2087, hy2: 5443, porty_ruchnye: false,
     prodlenie: "80", servery: ["k-r", "k-h"], sert_trevoga: false, klyuch_upravleniya: true, ne_iz_seti: [],
-    proveren: SEYCHAS(), ...dop,
+    proveren: SEYCHAS(), rf_cherez_vpn: false, ...dop,
   };
 }
 
@@ -39,13 +39,20 @@ function osmotr(dop: Partial<OsmotrVps> = {}): OsmotrVps {
 
 type Otvety = Record<string, (telo: Record<string, unknown>) => ItogKomandy | Promise<ItogKomandy>>;
 
+const HAPP: PravilaHapp = { vklyuchit: "happ://routing/onadd/eyJOYW1lIjoiQWZmb3J5In0", vyklyuchit: "happ://routing/onadd/eyJ0In0" };
+
+/** Код QR, по картинке которого видно, какую строку он несёт. */
+const kodyQrSoSsylkoy = async (tekst: string) => [`data:image/png;base64,${btoa(tekst)}`];
+
 /** Раздел с подставным useSvoyVps: мастер и ход живут в состоянии обёртки,
  *  команды пишутся в журнал и отвечают по таблице. */
-function stend({ servery = [], hody = [], master = null, otvety = {} }: {
+function stend({ servery = [], hody = [], master = null, otvety = {}, happ = HAPP, kodyQr = async () => [] }: {
   servery?: SvoyServer[] | null;
   hody?: HodVps[];
   master?: Master | null;
   otvety?: Otvety;
+  happ?: PravilaHapp | null;
+  kodyQr?: (tekst: string) => Promise<string[]>;
 } = {}) {
   const vyzovy: [string, Record<string, unknown>][] = [];
   const naPodklyuchit = vi.fn();
@@ -54,7 +61,11 @@ function stend({ servery = [], hody = [], master = null, otvety = {} }: {
   const skopirovat = vi.fn(async () => {});
   const obnovit = vi.fn();
   const skryt = vi.fn();
-  const sostoyanie: { master: Master | null; zadatHody: (f: (h: HodVps[]) => HodVps[]) => void } = { master, zadatHody: () => {} };
+  const sostoyanie: {
+    master: Master | null;
+    zadatHody: (f: (h: HodVps[]) => HodVps[]) => void;
+    zadatSp: (s: SvoyServer[] | null) => void;
+  } = { master, zadatHody: () => {}, zadatSp: () => {} };
 
   function Obertka() {
     const [m, zadatMaster] = useState<Master | null>(master);
@@ -67,8 +78,9 @@ function stend({ servery = [], hody = [], master = null, otvety = {} }: {
     }, []);
     sostoyanie.master = m;
     sostoyanie.zadatHody = zadatHody;
+    sostoyanie.zadatSp = zadatSp;
     const svoy: SvoyVps = {
-      servery: sp, spisokOtkaz: null, hody: h, master: m, zadatMaster, skryty: [], skryt, obnovit: perechitat,
+      servery: sp, spisokOtkaz: null, happ, hody: h, master: m, zadatMaster, skryty: [], skryt, obnovit: perechitat,
       komanda: async (imya, telo) => {
         const t = (telo ?? {}) as Record<string, unknown>;
         vyzovy.push([imya, t]);
@@ -81,7 +93,7 @@ function stend({ servery = [], hody = [], master = null, otvety = {} }: {
     return (
       <SvoyVpn
         svoy={svoy} trevogi={[]} aktiven naPodklyuchit={naPodklyuchit} naServery={vi.fn()} skopirovat={skopirovat}
-        kodyQr={async () => []} vybratKlyuch={vybratKlyuch} ochistitBufer={ochistitBufer} versiya="Affory 1.11.0"
+        kodyQr={kodyQr} vybratKlyuch={vybratKlyuch} ochistitBufer={ochistitBufer} versiya="Affory 1.11.0"
       />
     );
   }
@@ -91,6 +103,8 @@ function stend({ servery = [], hody = [], master = null, otvety = {} }: {
     master: () => sostoyanie.master,
     imena: () => vyzovy.map(([i]) => i),
     prishyol: (x: HodVps) => act(() => sostoyanie.zadatHody((pr) => [...pr.filter((y) => y.id !== x.id), x])),
+    /** Список, перечитанный у службы. */
+    zadatServery: (x: SvoyServer[]) => act(() => sostoyanie.zadatSp(x)),
   };
 }
 
@@ -952,6 +966,88 @@ describe("смена маски", () => {
     stend({ servery: [server({ klyuch_upravleniya: false })] });
     expect(screen.getByTestId("svoy-maska")).toHaveTextContent("www.example.net");
     expect(screen.queryByTestId("svoy-smenit-masku")).toBeNull();
+  });
+});
+
+describe("российские сайты напрямую", () => {
+  /** Строка, которую несёт показанный код правил. */
+  const ssylkaKoda = () => atob(screen.getByTestId("svoy-pravila-happ-kod").querySelector("img")!.getAttribute("src")!.replace("data:image/png;base64,", ""));
+
+  it("готово: строка правил есть и при отказе выгрузки ключей, код свёрнут до нажатия", async () => {
+    const s = stend({
+      servery: [server()],
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({ id: 11, vid: "ustanovka", faza: "gotovo", ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "hy2", port: 5443, vid: "vezyot" }], ids: ["k-h"], ne_iz_seti: [] } })],
+      otvety: { exportServers: () => ({ otkaz: { kod: "vps-busy", tekst: "служба занята" } }) },
+      kodyQr: kodyQrSoSsylkoy,
+    });
+    fireEvent.click(screen.getByTestId("svoy-klyuchi-telefona"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Ключи не выгружены"));
+    const pravila = screen.getByTestId("svoy-gotovo-pravila");
+    expect(pravila).toHaveTextContent("Российские сайты напрямую");
+    expect(screen.queryByTestId("svoy-pravila-happ")).toBeNull();
+    fireEvent.click(within(pravila).getByTestId("svoy-pravila-qr"));
+    expect(await screen.findByTestId("svoy-pravila-happ")).toHaveTextContent("российские сайты пойдут мимо VPN");
+    await waitFor(() => expect(ssylkaKoda()).toBe(HAPP.vklyuchit));
+    fireEvent.click(within(pravila).getByTestId("svoy-obhod-rf"));
+    await waitFor(() => expect(s.vyzovy).toContainEqual(["svoyVpsObhodRf", { id: "svoy-1", vkl: false }]));
+  });
+
+  it("готово: пока окно ждёт выгрузку ключей, переключатель её не перебивает", async () => {
+    let otdat: (r: ItogKomandy) => void = () => {};
+    stend({
+      servery: [server()],
+      master: { shag: "ustanovka", forma: null, id: 11 },
+      hody: [hod({ id: 11, vid: "ustanovka", faza: "gotovo", ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "hy2", port: 5443, vid: "vezyot" }], ids: ["k-h"], ne_iz_seti: [] } })],
+      otvety: { exportServers: () => new Promise<ItogKomandy>((r) => { otdat = r; }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-klyuchi-telefona"));
+    await waitFor(() => expect(within(screen.getByTestId("svoy-gotovo-pravila")).getByTestId("svoy-obhod-rf")).toBeDisabled());
+    await act(async () => { otdat({ otkaz: { kod: "vps-busy", tekst: "служба занята" } }); });
+    expect(within(screen.getByTestId("svoy-gotovo-pravila")).getByTestId("svoy-obhod-rf")).toBeEnabled();
+  });
+
+  it("карточка: включено по умолчанию, QR по кнопке, «Выключить» шлёт выбор", async () => {
+    const s = stend({ servery: [server()], kodyQr: kodyQrSoSsylkoy });
+    const ryad = screen.getByText("Российские сайты напрямую").closest("div")!.parentElement!;
+    expect(ryad).toHaveTextContent("Включено");
+    expect(screen.queryByTestId("svoy-pravila-happ")).toBeNull();
+    fireEvent.click(screen.getByTestId("svoy-pravila-qr"));
+    await waitFor(() => expect(ssylkaKoda()).toBe(HAPP.vklyuchit));
+    fireEvent.click(screen.getByTestId("svoy-obhod-rf"));
+    await waitFor(() => expect(s.vyzovy).toContainEqual(["svoyVpsObhodRf", { id: "svoy-1", vkl: false }]));
+  });
+
+  it("выключено: QR заменяет правила в Happ, «Включить» возвращает", async () => {
+    const s = stend({ servery: [server({ rf_cherez_vpn: true })], kodyQr: kodyQrSoSsylkoy });
+    expect(screen.getByText("Российские сайты напрямую").closest("div")!.parentElement!).toHaveTextContent("Выключено");
+    fireEvent.click(screen.getByTestId("svoy-pravila-qr"));
+    await waitFor(() => expect(ssylkaKoda()).toBe(HAPP.vyklyuchit));
+    expect(screen.getByTestId("svoy-pravila-happ")).toHaveTextContent("этот код заменит их");
+    fireEvent.click(screen.getByTestId("svoy-obhod-rf"));
+    await waitFor(() => expect(s.vyzovy).toContainEqual(["svoyVpsObhodRf", { id: "svoy-1", vkl: true }]));
+  });
+
+  it("служба без правил Happ: строки нет", () => {
+    stend({ servery: [server()], happ: null });
+    expect(screen.queryByText("Российские сайты напрямую")).toBeNull();
+    expect(screen.queryByTestId("svoy-pravila-qr")).toBeNull();
+  });
+
+  it("код, нарисованный для прежнего выбора, не показывается", async () => {
+    let otdat: (k: string[]) => void = () => {};
+    const kodyQr = vi.fn((tekst: string) => (tekst === HAPP.vyklyuchit
+      ? new Promise<string[]>((r) => { otdat = r; })
+      : kodyQrSoSsylkoy(tekst)));
+    const s = stend({ servery: [server()], kodyQr });
+    fireEvent.click(screen.getByTestId("svoy-pravila-qr"));
+    await waitFor(() => expect(ssylkaKoda()).toBe(HAPP.vklyuchit));
+    // Правила выключили, код для выключения ещё рисуется: прежний не висит.
+    s.zadatServery([server({ rf_cherez_vpn: true })]);
+    expect(screen.getByTestId("svoy-pravila-happ")).toHaveTextContent("рисую код");
+    expect(screen.queryByTestId("svoy-pravila-happ-kod")).toBeNull();
+    await act(async () => { otdat([`data:image/png;base64,${btoa(HAPP.vyklyuchit)}`]); });
+    expect(ssylkaKoda()).toBe(HAPP.vyklyuchit);
   });
 });
 

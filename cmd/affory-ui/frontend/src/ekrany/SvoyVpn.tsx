@@ -9,12 +9,12 @@ import { razobratSoobshchenie } from "../soobshchenieHostera";
 import type { SvoyaTrevoga } from "../protokol";
 import { tekstOshibki } from "../ponyatno";
 import { podpisDeystviya, tekstOtkaza } from "./otkazy";
-import { Vygruzka, type VygruzkaOtvet } from "./Vygruzka";
+import { KodyQr, Vygruzka, type VygruzkaOtvet } from "./Vygruzka";
 import { vozrast, vygruzkaIz } from "./Servery";
 import {
   DLINA_IMENI, imyaPoUmolchaniyu, imyaZanyato, ocenitServer, portyNyneshnie, PUSTAYA_FORMA, svezhayaProverka, zapomnitUvidennuyu,
   type Forma, type HodVps, type KlyuchFayla, type KlyuchHoda, type Master, type OsmotrVps, type OtkazVps,
-  type ProverkaVps, type SostoyanieServera, type SvoyServer, type SvoyVps,
+  type PravilaHapp, type ProverkaVps, type SostoyanieServera, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
 
 // Раздел «Свой VPN» (план 2026-11-01, §4 и Ж2): пустое состояние, мастер
@@ -1077,9 +1077,15 @@ function RyadVhoda({ vkl, idyot, aktiven, naSmenu }: { vkl: boolean; idyot: bool
   );
 }
 
-function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otkazVygruzki, zhdyotVygruzka, skopirovat, kodyQr, naPodklyuchit, naVygruzit, naZakrytVygruzku, naVhod, naZakryt }: {
+function ShagGotovo({ h, server, happ, aktivenObhod, zhdyotObhod, naObhodRf, idyotParol, itogParolya, aktiven, vygruzka, otkazVygruzki, zhdyotVygruzka, skopirovat, kodyQr, naPodklyuchit, naVygruzit, naZakrytVygruzku, naVhod, naZakryt }: {
   h: HodVps;
   server: SvoyServer | undefined;
+  /** Правила Happ: второй QR под ключами для телефона (РФ1). */
+  happ: PravilaHapp | null;
+  /** Окно ждёт ответа на другую команду: переключатель её не перебивает. */
+  aktivenObhod: boolean;
+  zhdyotObhod: boolean;
+  naObhodRf: () => void;
   idyotParol: boolean;
   itogParolya: ReactNode;
   aktiven: boolean;
@@ -1159,6 +1165,12 @@ function ShagGotovo({ h, server, idyotParol, itogParolya, aktiven, vygruzka, otk
         <div ref={kVygruzke}>
           <Vygruzka vygruzka={vygruzka} zakryt={naZakrytVygruzku} skopirovat={skopirovat} kodyQr={kodyQr} zagolovok="Ключи для телефона" />
         </div>
+      )}
+      {/* Правила от выгрузки ключей не зависят: строка есть и при её отказе. */}
+      {server && happ && (
+        <Panel testId="svoy-gotovo-pravila">
+          <RyadRossii s={server} happ={happ} aktiven={aktivenObhod} zhdyot={zhdyotObhod} kodyQr={kodyQr} naSmenu={naObhodRf} />
+        </Panel>
       )}
       {server && (
         <Gruppa nazvanie="Доступ к серверу">
@@ -1511,6 +1523,75 @@ export function sostoyanieKlyucha(s: SvoyServer, p: ProverkaVps | undefined, tra
   return s.porty_ruchnye ? "порт задан руками" : "порт подобран из твоей сети";
 }
 
+/** QR правил Happ (РФ1): ставит профиль «российские сайты напрямую» или,
+ *  когда человек их выключил, под тем же именем профиль, где всё идёт через
+ *  VPN (не happ://routing/off: тот выключил бы и правила чужих подписок).
+ *  Код, нарисованный для прежнего выбора, не показывается: камера прочла бы
+ *  не то. */
+function KodPravilHapp({ cherezVpn, happ, kodyQr }: { cherezVpn: boolean; happ: PravilaHapp; kodyQr: (tekst: string) => Promise<string[]> }) {
+  const ssylka = cherezVpn ? happ.vyklyuchit : happ.vklyuchit;
+  const [kod, zadatKod] = useState<{ ssylka: string; kody?: string[]; otkaz?: string } | null>(null);
+  useEffect(() => {
+    let aktualen = true;
+    kodyQr(ssylka).then(
+      (kody) => { if (aktualen) zadatKod({ ssylka, kody }); },
+      (e: unknown) => { if (aktualen) zadatKod({ ssylka, otkaz: tekstOshibki(e) }); },
+    );
+    return () => { aktualen = false; };
+  }, [ssylka, kodyQr]);
+  const svezhiy = kod?.ssylka === ssylka ? kod : null;
+  return (
+    <div className="flex flex-col gap-2" data-testid="svoy-pravila-happ">
+      <span className="text-foreground text-sm font-medium">{cherezVpn ? "Всё через VPN в Happ" : "Правила для Happ"}</span>
+      <span className="text-fg-muted text-xs">
+        {cherezVpn
+          ? "Если правила уже добавлены, этот код заменит их, и всё пойдёт через VPN"
+          : "Отсканируй в Happ после ключей: российские сайты пойдут мимо VPN, а YouTube, Telegram и всё остальное через него"}
+      </span>
+      {!svezhiy && <span role="status" className="text-fg-muted text-xs">рисую код</span>}
+      {svezhiy?.kody && <KodyQr kody={svezhiy.kody} imya="правил Happ" shirina="max-w-[360px]" testId="svoy-pravila-happ-kod" />}
+      {svezhiy?.otkaz && <p role="status" className="text-warn text-xs">{svezhiy.otkaz}</p>}
+    </div>
+  );
+}
+
+/** Строка «Российские сайты напрямую» (РФ1) в карточке и в конце мастера.
+ *  Сервер выбор не трогает: в простом режиме правила едут на телефон
+ *  отдельным QR, и меняется только то, какой код показан. Код свёрнут: его
+ *  сканируют после ключей. */
+function RyadRossii({ s, happ, aktiven, zhdyot, kodyQr, naSmenu }: {
+  s: SvoyServer;
+  happ: PravilaHapp;
+  aktiven: boolean;
+  zhdyot: boolean;
+  kodyQr: (tekst: string) => Promise<string[]>;
+  naSmenu: () => void;
+}) {
+  const [vidny, zadatVidny] = useState(false);
+  return (
+    <>
+      <Ryad
+        nazvanie="Российские сайты напрямую"
+        poyasnenie={s.rf_cherez_vpn
+          ? "Выключено: код для Happ заменяет правила, и на телефоне всё идёт через VPN"
+          : "Включено: правила для Happ пускают их на телефоне мимо VPN, а YouTube и Telegram через VPN"}
+      >
+        <Knopka rang="tekst" testId="svoy-pravila-qr" aria-expanded={vidny} onClick={() => zadatVidny(!vidny)}>
+          {vidny ? "Скрыть QR" : "QR для Happ"}
+        </Knopka>
+        <Knopka rang="vtoraya" aktiven={aktiven} zhdyot={zhdyot} testId="svoy-obhod-rf" onClick={naSmenu}>
+          {s.rf_cherez_vpn ? "Включить" : "Выключить"}
+        </Knopka>
+      </Ryad>
+      {vidny && (
+        <div className="border-border border-t px-4 py-4">
+          <KodPravilHapp cherezVpn={s.rf_cherez_vpn} happ={happ} kodyQr={kodyQr} />
+        </div>
+      )}
+    </>
+  );
+}
+
 type Vopros = { vid: "snesti" | "zabyt"; server: SvoyServer };
 
 /** Вход с адресом, портом и пользователем из записи о сервере. */
@@ -1524,8 +1605,10 @@ function formaPostavitZanovo(s: SvoyServer): Forma {
   return { ...formaIzZapisi(s), poverhZapisi: s.adres, imya: s.imya, sposob: s.parol_vyklyuchen ? "klyuch" : "parol" };
 }
 
-function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot, komanda, skopirovat, kodyQr }: {
+function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot, komanda, skopirovat, kodyQr }: {
   s: SvoyServer;
+  /** Правила Happ; null - служба их не прислала, строки нет. */
+  happ: PravilaHapp | null;
   trevogi: SvoyaTrevoga[];
   hody: HodVps[];
   skryty: number[];
@@ -1760,6 +1843,10 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
         {s.hy2 !== undefined && (
           <Ryad nazvanie={<span className="flex items-baseline gap-2">hysteria2<span className="text-fg-muted text-[13px] font-normal tabular-nums">UDP {s.hy2}</span></span>}
             poyasnenie={sostoyanieKlyucha(s, p, "hy2")} />
+        )}
+        {happ && (
+          <RyadRossii s={s} happ={happ} aktiven={aktiven} zhdyot={false} kodyQr={kodyQr}
+            naSmenu={() => naDelo("svoyVpsObhodRf", { id: s.id, vkl: s.rf_cherez_vpn })} />
         )}
         <Ryad
           nazvanie="Сертификат"
@@ -1998,6 +2085,7 @@ export function SvoyVpn(p: SvoyVpnProps) {
         <KartochkaServera
           key={s.id}
           s={s}
+          happ={svoy.happ}
           trevogi={p.trevogi}
           hody={hody}
           skryty={svoy.skryty}
@@ -2178,6 +2266,12 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
             <ShagGotovo
               h={hod}
               server={server}
+              happ={svoy.happ}
+              aktivenObhod={aktiven && zhdyom === null}
+              zhdyotObhod={zhdyom === "svoyVpsObhodRf"}
+              naObhodRf={() => {
+                if (server) void p.naDelo("svoyVpsObhodRf", { id: server.id, vkl: server.rf_cherez_vpn });
+              }}
               idyotParol={parol?.faza === "idyot"}
               itogParolya={parol && !svoy.skryty.includes(parol.id) ? itogParolya : null}
               aktiven={aktiven}

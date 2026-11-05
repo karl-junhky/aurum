@@ -20,6 +20,7 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/happ"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/porty"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
@@ -576,6 +577,99 @@ func TestSvoyVpsPereimenovatPravilaOtstali(t *testing.T) {
 		if slices.Contains(ids, srv.Id) && !strings.HasPrefix(srv.Imya, "Офис, ") {
 			t.Fatalf("ключ %s после переименования: %q", srv.Id, srv.Imya)
 		}
+	}
+}
+
+// «Российские сайты напрямую» по умолчанию включено, выбор лежит в записи и
+// переживает дело, что пишет запись целиком. Список несёт обе ссылки Happ.
+func TestSvoyVpsObhodRf(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh := klyuchHostaDlyaTesta(t)
+	id, _ := postavitSvoy(t, s, kh, true)
+	if zapisPoId(t, s, id).RfCherezVpn {
+		t.Fatal("после установки российские сайты идут через VPN")
+	}
+	obhod := func(telo any) protokol.Kadr { return s.svoyVpsObhodRf(kadrVps(t, "svoyVpsObhodRf", telo)) }
+	if otv := obhod(map[string]any{"id": id, "vkl": false}); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	if !zapisPoId(t, s, id).RfCherezVpn {
+		t.Fatal("выключение не записано")
+	}
+	// Подбор портов заново пишет запись целиком: выбор человека остаётся.
+	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "root", ZapisEst: true}, itogSvoego(t, kh, 8443, 443)); err != nil {
+		t.Fatal(err)
+	}
+	if !zapisPoId(t, s, id).RfCherezVpn {
+		t.Fatal("перезапись записи вернула российские сайты напрямую")
+	}
+	if otv := obhod(map[string]any{"id": id, "vkl": true}); otv.Oshib != nil || zapisPoId(t, s, id).RfCherezVpn {
+		t.Fatalf("включение: %v", otv.Oshib)
+	}
+	// Без vkl тело не разобрано: пустое значение не выключает молча.
+	for imya, telo := range map[string]any{
+		"нет сервера": map[string]any{"id": "net-takogo", "vkl": false},
+		"без vkl":     map[string]any{"id": id},
+		"не то тело":  []int{1},
+	} {
+		if kod := kodOtkaza(obhod(telo)); kod != protokol.KodTeloNegodno {
+			t.Fatalf("%s: %q", imya, kod)
+		}
+	}
+	if zapisPoId(t, s, id).RfCherezVpn {
+		t.Fatal("отказ тронул запись")
+	}
+
+	var spisok struct {
+		Servery []SvoyServerDlyaEkrana `json:"servery"`
+		Happ    map[string]string      `json:"happ"`
+	}
+	if err := json.Unmarshal(s.svoyVpsSpisok(protokol.Kadr{Imya: "svoyVpsSpisok"}).Telo, &spisok); err != nil {
+		t.Fatal(err)
+	}
+	vkl, err := happ.Vklyuchit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vykl, err := happ.Vyklyuchit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spisok.Happ["vklyuchit"] != vkl || spisok.Happ["vyklyuchit"] != vykl || vkl == vykl || len(spisok.Servery) != 1 {
+		t.Fatalf("список: %+v", spisok)
+	}
+}
+
+// Правила брандмауэра, отставшие после записи набора, не делают выбор
+// отказом: он записан, а отставание приходит предупреждением.
+func TestSvoyVpsObhodRfPravilaOtstali(t *testing.T) {
+	s, _, _ := sKillSwitch(t)
+	s.sobratAdresa = adresaIzNabora(s)
+	if err := s.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetKillSwitch(true); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), false)
+	s.muZaslon.Lock()
+	s.otpechatokZamka = ""
+	s.muZaslon.Unlock()
+	s.vklyuchitVes = func(set.Razreshyonnoe, bool) error {
+		return fmt.Errorf("%w: профиль Domain", set.ErrBrandmauerVyklyuchen)
+	}
+	otv := s.svoyVpsObhodRf(kadrVps(t, "svoyVpsObhodRf", map[string]any{"id": id, "vkl": false}))
+	if otv.Oshib != nil {
+		t.Fatalf("отставшие правила дали отказ: %v", otv.Oshib)
+	}
+	var telo struct {
+		Preduprezhdenie *OtkazVps `json:"preduprezhdenie"`
+	}
+	if err := json.Unmarshal(otv.Telo, &telo); err != nil || telo.Preduprezhdenie == nil || telo.Preduprezhdenie.Kod != protokol.KodFirewallDisabled {
+		t.Fatalf("предупреждение %+v: %v", telo.Preduprezhdenie, err)
+	}
+	if !zapisPoId(t, s, id).RfCherezVpn {
+		t.Fatal("выбор не записан")
 	}
 }
 

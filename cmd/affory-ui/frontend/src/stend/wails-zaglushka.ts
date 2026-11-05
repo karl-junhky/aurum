@@ -420,7 +420,15 @@ function poId(v: Record<string, unknown>): Zapis {
 }
 
 const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = {
-  svoyVpsSpisok: () => ({ servery: svoi }),
+  // Правила Happ (РФ1): настоящий профиль собирает служба, стенду хватает
+  // ссылки той же схемы.
+  svoyVpsSpisok: () => ({ servery: svoi, happ: { vklyuchit: "happ://routing/onadd/eyJOYW1lIjoiQWZmb3J5IiwiUnUiOjF9", vyklyuchit: "happ://routing/onadd/eyJOYW1lIjoiQWZmb3J5IiwiUnUiOjB9" } }),
+  svoyVpsObhodRf: (v) => {
+    if (typeof v.vkl !== "boolean") throw new OtkazStenda("request-invalid", "тело команды не разобрано");
+    const z = poId(v);
+    z.rf_cherez_vpn = !v.vkl;
+    return { id: z.id, vkl: v.vkl };
+  },
   svoyVpsHod: () => (hodVps ? { ...hodVps } : { faza: "net" }),
   svoyVpsOtmenit: () => {
     if (hodVps && hodVps.faza === "idyot") {

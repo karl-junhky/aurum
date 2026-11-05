@@ -216,7 +216,9 @@ func TestSmenitMaskuOtkazy(t *testing.T) {
 			podobratMasku = func(context.Context, server.Mashina, netip.Addr, string) (Maska, error) {
 				return Maska{Imya: "www.adobe.com", Istochnik: MaskaBrend}, nil
 			}
-		}, func(err error) bool { return errors.Is(err, ErrNetDrugoyMaski) && strings.Contains(err.Error(), "www.adobe.com") }},
+		}, func(err error) bool {
+			return errors.Is(err, ErrNetDrugoyMaski) && strings.Contains(err.Error(), "www.adobe.com")
+		}},
 		{"старая программа", func(_ *postavlennyy, p *SmenaMaski) {
 			p.Svoya = "svoya.example.org"
 			proveritSvoyuMasku = func(context.Context, server.Mashina, string) (ProverkaMaski, error) {

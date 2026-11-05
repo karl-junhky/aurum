@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Kadr } from "./most";
 import {
-  PUSTAYA_FORMA, hodIz, metkaRazdela, ocenitServer, posledneeDelo, sobytieHodaIz, spisokIz, svezhayaProverka, useSvoyVps,
+  PUSTAYA_FORMA, hodIz, metkaRazdela, ocenitServer, posledneeDelo, pravilaHappIz, sobytieHodaIz, spisokIz, svezhayaProverka, useSvoyVps,
   type HodVps, type SvoyServer,
 } from "./svoyVps";
 
@@ -12,7 +12,7 @@ function server(dop: Partial<SvoyServer> = {}): SvoyServer {
   return {
     id: "svoy-1", imya: "Мой сервер", adres: "203.0.113.40", port_ssh: 22, polzovatel: "root",
     parol_vyklyuchen: false, maska: "www.example.net", reality: 2087, hy2: 5443, porty_ruchnye: false,
-    prodlenie: "80", servery: ["a", "b"], sert_trevoga: false, klyuch_upravleniya: true, ne_iz_seti: [], ...dop,
+    prodlenie: "80", servery: ["a", "b"], sert_trevoga: false, klyuch_upravleniya: true, ne_iz_seti: [], rf_cherez_vpn: false, ...dop,
   };
 }
 
@@ -403,5 +403,38 @@ describe("связь раздела со службой", () => {
     expect(naSmenuKlyuchey).toHaveBeenCalledTimes(1);
     expect(s.zvat.mock.calls.filter(([i]) => i === "svoyVpsSpisok").length).toBe(spiskov + 1);
     expect(result.current.hody).toEqual([]);
+  });
+
+  it("правила Happ приходят со списком; выбор о российских сайтах перечитывает список, а не общие ключи", async () => {
+    const happ = { vklyuchit: "happ://routing/onadd/eyJ9", vyklyuchit: "happ://routing/onadd/eyJ0In0" };
+    const s = sluzhba({
+      svoyVpsSpisok: () => otvet("svoyVpsSpisok", { servery: [{ id: "svoy-1", adres: "203.0.113.40", rf_cherez_vpn: true }], happ }),
+      svoyVpsHod: () => otvet("svoyVpsHod", { faza: "net" }),
+      svoyVpsObhodRf: () => otvet("svoyVpsObhodRf", { id: "svoy-1", vkl: true }),
+    });
+    const naSmenuKlyuchey = vi.fn();
+    const { result } = renderHook(() => useSvoyVps({ ...s, naSboy: vi.fn(), naSmenuKlyuchey, aktiven: true }));
+    await waitFor(() => expect(result.current.happ).toEqual(happ));
+    expect(result.current.servery?.[0].rf_cherez_vpn).toBe(true);
+    const spiskov = s.zvat.mock.calls.filter(([i]) => i === "svoyVpsSpisok").length;
+    await act(async () => { await result.current.komanda("svoyVpsObhodRf", { id: "svoy-1", vkl: true }); });
+    expect(s.zvat.mock.calls.filter(([i]) => i === "svoyVpsSpisok").length).toBe(spiskov + 1);
+    expect(naSmenuKlyuchey).not.toHaveBeenCalled();
+  });
+});
+
+describe("правила Happ из ответа списка", () => {
+  it("принимаются только ссылки правил Happ", () => {
+    const happ = { vklyuchit: "happ://routing/onadd/eyJ9", vyklyuchit: "happ://routing/onadd/eyJ0In0" };
+    expect(pravilaHappIz({ servery: [], happ })).toEqual(happ);
+    // Служба старее окна, профиль не собрался, чужая схема: QR не рисуется.
+    expect(pravilaHappIz({ servery: [] })).toBeNull();
+    expect(pravilaHappIz({ servery: [], happ: { vklyuchit: "happ://routing/onadd/x" } })).toBeNull();
+    expect(pravilaHappIz({ servery: [], happ: { ...happ, vklyuchit: "https://example.net/x" } })).toBeNull();
+    // routing/off выключил бы и правила чужих подписок; одна ссылка на оба
+    // выбора значит сломанный ответ.
+    expect(pravilaHappIz({ servery: [], happ: { ...happ, vyklyuchit: "happ://routing/off" } })).toBeNull();
+    expect(pravilaHappIz({ servery: [], happ: { ...happ, vyklyuchit: happ.vklyuchit } })).toBeNull();
+    expect(spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40" }] })?.[0].rf_cherez_vpn).toBe(false);
   });
 });

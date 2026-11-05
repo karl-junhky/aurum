@@ -27,6 +27,7 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/blok"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/happ"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/porty"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
@@ -103,6 +104,10 @@ type SvoyServer struct {
 	NeIzSeti   []string          `json:"ne_iz_seti,omitempty"`
 	SetTekst   string            `json:"set_tekst,omitempty"`
 	SetPoVidam map[string]string `json:"set_po_vidam,omitempty"`
+	// RfCherezVpn: человек выключил «Российские сайты напрямую» (РФ1), по
+	// умолчанию они напрямую. В простом режиме окно по нему показывает QR,
+	// что включает правила в Happ, или тот, что их выключает.
+	RfCherezVpn bool `json:"rf_cherez_vpn,omitempty"`
 }
 
 // idSvoego выводит id своего сервера из адреса: та же машина после
@@ -1018,6 +1023,9 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 			if bylo.Maska == zapis.Maska {
 				zapis.MaskaNeOtvechaet = bylo.MaskaNeOtvechaet
 			}
+			// Выбор человека берётся из записи на момент записи, а не на
+			// начало дела: переключение посреди дела не теряется.
+			zapis.RfCherezVpn = bylo.RfCherezVpn
 			prezhnyaya := map[string]string{}
 			for _, t := range bylo.NeIzSeti {
 				if slices.Contains(osn.PrezhnyayaSet, t) && !slices.Contains(zapis.NeIzSeti, t) {
@@ -1134,7 +1142,17 @@ func (s *Sluzhba) svoyVpsSpisok(k protokol.Kadr) protokol.Kadr {
 		e.NovayaVersiya = s.noveeNaServere(x.Versiya)
 		spisok = append(spisok, e)
 	}
-	return otvet(k.Id, k.Imya, map[string]any{"servery": spisok})
+	otv := map[string]any{"servery": spisok}
+	// Правила Happ одни на все серверы (РФ1). Не собрались - окно не покажет
+	// их QR, а список всё равно нужен.
+	vkl, err := happ.Vklyuchit()
+	vykl, err2 := happ.Vyklyuchit()
+	if err = errors.Join(err, err2); err != nil {
+		log.Printf("свой VPN: %v", err)
+	} else {
+		otv["happ"] = map[string]string{"vklyuchit": vkl, "vyklyuchit": vykl}
+	}
+	return otvet(k.Id, k.Imya, otv)
 }
 
 // Проверка ключей: ядро вне набора на своём конфиге.

@@ -421,6 +421,41 @@ func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
 	return otvet(k.Id, k.Imya, otv)
 }
 
+// svoyVpsObhodRf включает и выключает «Российские сайты напрямую» (РФ1) в
+// записи о сервере. Входа на сервер нет: в простом режиме правила едут на
+// телефон отдельным QR, и окно по записи показывает нужный. Дела, что пишут
+// запись целиком, берут этот выбор из записи в миг записи, поэтому запор не
+// нужен.
+func (s *Sluzhba) svoyVpsObhodRf(k protokol.Kadr) protokol.Kadr {
+	var telo struct {
+		Id  string `json:"id"`
+		Vkl *bool  `json:"vkl"`
+	}
+	if err := json.Unmarshal(k.Telo, &telo); err != nil || telo.Vkl == nil {
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "тело команды не разобрано")
+	}
+	err := s.pravitNabor(func(n *Nabor) error {
+		i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == telo.Id })
+		if i < 0 {
+			return errSvoegoNet
+		}
+		n.SvoiServery[i].RfCherezVpn = !*telo.Vkl
+		return nil
+	})
+	otv := map[string]any{"id": telo.Id, "vkl": *telo.Vkl}
+	switch {
+	case errors.Is(err, errSvoegoNet):
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
+	case errors.Is(err, errPravilaOtstali):
+		// Выбор записан, а правила брандмауэра от него не зависят.
+		log.Printf("свой сервер %s: выбор о российских сайтах записан, %v", telo.Id, err)
+		otv["preduprezhdenie"] = OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
+	case err != nil:
+		return otkazIz(k, kodSohraneniya(err), err)
+	}
+	return otvet(k.Id, k.Imya, otv)
+}
+
 // obnovitImenaYadra переносит новые имена ключей (id - имя) в снимок ядра и в
 // имя несущего: при том же несущем его имя иначе не перечитывается до
 // переподключения. Отпечаток ключа имени не включает, ядро не поднимается.

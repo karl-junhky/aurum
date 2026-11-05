@@ -191,6 +191,16 @@ export interface SvoyServer {
   novyy_otpechatok?: string;
   /** Эта сборка ставит программу сервера новее той, что на нём: её номер. */
   novaya_versiya?: string;
+  /** Человек выключил «Российские сайты напрямую» (РФ1). */
+  rf_cherez_vpn: boolean;
+}
+
+/** Ссылки правил Happ из ответа svoyVpsSpisok (РФ1): одна ставит профиль
+ *  «российские сайты напрямую», другая под тем же именем ставит профиль, где
+ *  всё идёт через VPN. */
+export interface PravilaHapp {
+  vklyuchit: string;
+  vyklyuchit: string;
 }
 
 // Разбор. Тело приезжает с провода, и служба старее окна может прислать
@@ -426,6 +436,7 @@ function serverIz(v: unknown): SvoyServer | null {
     otpechatok: stroka(o.otpechatok),
     novyy_otpechatok: stroka(o.novyy_otpechatok),
     novaya_versiya: stroka(o.novaya_versiya),
+    rf_cherez_vpn: o.rf_cherez_vpn === true,
   };
 }
 
@@ -433,6 +444,19 @@ function serverIz(v: unknown): SvoyServer | null {
 export function spisokIz(v: unknown): SvoyServer[] | null {
   const o = obekt(v);
   return o && Array.isArray(o.servery) ? spisok(o.servery, serverIz) : null;
+}
+
+/** Правила Happ из ответа svoyVpsSpisok. null - служба старее окна или
+ *  профиль у неё не собрался: QR правил не показывается. Принимается только
+ *  ссылка, что ставит профиль: в QR уходит ровно она, а happ://routing/off
+ *  выключил бы и правила чужих подписок. */
+export function pravilaHappIz(v: unknown): PravilaHapp | null {
+  const h = obekt(obekt(v)?.happ);
+  const vklyuchit = stroka(h?.vklyuchit);
+  const vyklyuchit = stroka(h?.vyklyuchit);
+  const PROFIL = "happ://routing/onadd/";
+  if (!vklyuchit?.startsWith(PROFIL) || !vyklyuchit?.startsWith(PROFIL) || vklyuchit === vyklyuchit) return null;
+  return { vklyuchit, vyklyuchit };
 }
 
 // Состояние сервера для карточки и метки раздела.
@@ -658,6 +682,8 @@ export interface SvoyVps {
   /** null - список ещё не пришёл или не прочитался (тогда spisokOtkaz). */
   servery: SvoyServer[] | null;
   spisokOtkaz: OtkazVps | null;
+  /** Правила Happ, пришедшие со списком. */
+  happ: PravilaHapp | null;
   /** Последние снимки дел, по одному на номер, по возрастанию номера. */
   hody: HodVps[];
   master: Master | null;
@@ -729,6 +755,7 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
 }): SvoyVps {
   const [servery, zadatServery] = useState<SvoyServer[] | null>(null);
   const [spisokOtkaz, zadatSpisokOtkaz] = useState<OtkazVps | null>(null);
+  const [happ, zadatHapp] = useState<PravilaHapp | null>(null);
   const [hody, zadatHody] = useState<HodVps[]>([]);
   const [master, zadatMaster] = useState<Master | null>(null);
   const [skryty, zadatSkryty] = useState<number[]>([]);
@@ -776,6 +803,7 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
       }
       zadatSpisokOtkaz(null);
       zadatServery(s);
+      zadatHapp(pravilaHappIz(k.telo));
       for (const x of s) adresa.current.set(x.id, x.adres);
     } catch (e: unknown) {
       if (!zhiv.current || nomer !== nomerSpiska.current) return;
@@ -895,10 +923,11 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
     // запись, а у «забыть» и переименования и ключи общего списка,
     // перечитываются отсюда. И при отказе тоже: «забыть» могло успеть стереть
     // ключ управления, а запись набора могла пройти до отказа.
-    const sraznu = imya === "svoyVpsZabyt" || imya === "svoyVpsPrinyatKlyuchHosta" || imya === "svoyVpsPereimenovat";
+    const sraznu = imya === "svoyVpsZabyt" || imya === "svoyVpsPrinyatKlyuchHosta" || imya === "svoyVpsPereimenovat" || imya === "svoyVpsObhodRf";
     if (sraznu) {
       void obnovitSpisok();
-      if (imya !== "svoyVpsPrinyatKlyuchHosta") vneshnie.current.naSmenuKlyuchey();
+      // Ключ хоста и выбор о российских сайтах ключей общего списка не меняют.
+      if (imya === "svoyVpsZabyt" || imya === "svoyVpsPereimenovat") vneshnie.current.naSmenuKlyuchey();
     }
     if (k.oshibka) return { otkaz: { kod: k.oshibka.kod, tekst: k.oshibka.tekst } };
     if (sraznu) {
@@ -920,5 +949,5 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
   const skryt = useCallback((id: number) => zadatSkryty((s) => (s.includes(id) ? s : [...s, id])), []);
   const adresServera = useCallback((id: string) => adresa.current.get(id), []);
 
-  return { servery, spisokOtkaz, hody, master, zadatMaster, skryty, skryt, komanda, obnovit, adresServera };
+  return { servery, spisokOtkaz, happ, hody, master, zadatMaster, skryty, skryt, komanda, obnovit, adresServera };
 }

@@ -60,7 +60,7 @@ function SsylkaKlyucha({ ssylka, testId }: { ssylka: string; testId?: string }) 
 
 /** Коды QR. Белое поле обязательно: камера ищет тёмные модули на светлом, и
  *  код на тёмной подложке окна не читается. */
-function KodyQr({ kody, imya, shirina, testId }: { kody: string[]; imya: string; shirina: string; testId?: string }) {
+export function KodyQr({ kody, imya, shirina, testId }: { kody: string[]; imya: string; shirina: string; testId?: string }) {
   return (
     <div className="flex flex-wrap gap-4" data-testid={testId}>
       {kody.map((kod, i) => (
