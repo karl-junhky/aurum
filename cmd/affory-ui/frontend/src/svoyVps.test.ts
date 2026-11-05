@@ -69,6 +69,17 @@ describe("разбор ответов службы", () => {
     expect(hodIz({ id: 1, vid: "obnovlenie", faza: "gotovo", obnovlenie: { bylo: "0.6.0" } })?.obnovlenie).toBeUndefined();
   });
 
+  it("маска: источник в записи, своя и вставшая в ходе", () => {
+    expect(spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40", maska: "shop.example.org", maska_istochnik: "sosedi" }] })?.[0])
+      .toMatchObject({ maska: "shop.example.org", maska_istochnik: "sosedi" });
+    expect(spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40", maska: "dl.google.com" }] })?.[0].maska_istochnik).toBeUndefined();
+    expect(hodIz({ id: 1, vid: "maska", faza: "gotovo", maska: { svoya: "www.adobe.com", brend_soglasen: true, imya: "www.adobe.com", istochnik: "brend" } })?.maska)
+      .toEqual({ svoya: "www.adobe.com", brend_soglasen: true, imya: "www.adobe.com", istochnik: "brend" });
+    expect(hodIz({ id: 1, vid: "maska", faza: "idyot", maska: { svoya: 5, brend_soglasen: "da" } })?.maska)
+      .toEqual({ svoya: undefined, brend_soglasen: undefined, imya: undefined, istochnik: undefined });
+    expect(hodIz({ id: 1, vid: "maska", faza: "idyot" })?.maska).toBeUndefined();
+  });
+
   it("«заданий не было» и чужая фаза дают null", () => {
     expect(hodIz({ faza: "net" })).toBeNull();
     expect(hodIz({ id: 1, vid: "osmotr", faza: "zhdyot" })).toBeNull();
@@ -284,6 +295,21 @@ describe("связь раздела со службой", () => {
     await waitFor(() => expect(result.current.hody[0]?.faza).toBe("gotovo"));
     expect(naSmenuKlyuchey).toHaveBeenCalledTimes(1);
     expect(s.zvat.mock.calls.filter(([i]) => i === "svoyVpsSpisok").length).toBeGreaterThan(spiskov);
+  });
+
+  it("конец смены маски: ключ reality сменился, общие ключи перечитываются", async () => {
+    let faza = "idyot";
+    const s = sluzhba({
+      svoyVpsSpisok: () => otvet("svoyVpsSpisok", { servery: [] }),
+      svoyVpsHod: () => otvet("svoyVpsHod", { id: 8, vid: "maska", faza }),
+    });
+    const naSmenuKlyuchey = vi.fn();
+    const { result } = renderHook(() => useSvoyVps({ ...s, naSboy: vi.fn(), naSmenuKlyuchey, aktiven: true }));
+    await waitFor(() => expect(result.current.hody[0]?.faza).toBe("idyot"));
+    faza = "gotovo";
+    act(() => s.sobytie({ id: 8, vid: "maska", faza: "gotovo" }));
+    await waitFor(() => expect(result.current.hody[0]?.faza).toBe("gotovo"));
+    expect(naSmenuKlyuchey).toHaveBeenCalledTimes(1);
   });
 
   it("опоздавший снимок «идёт» не возвращает законченное дело назад", async () => {

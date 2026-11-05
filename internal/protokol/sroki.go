@@ -157,6 +157,7 @@ var dolgie = map[string]time.Duration{
 	"svoyVpsParol":         srokHranilishcha,
 	"svoyVpsPodobratPorty": srokHranilishcha,
 	"svoyVpsObnovit":       srokHranilishcha,
+	"svoyVpsMaska":         srokHranilishcha,
 	// Убирает ключи из набора, то есть пересобирает правила, как removeServer.
 	"svoyVpsZabyt": SrokDolgoy,
 	// Пишет набор прямо в ответе на команду, а за записью идёт та же

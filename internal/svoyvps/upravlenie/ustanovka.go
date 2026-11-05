@@ -250,7 +250,13 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	if len(u.Maski) > 0 {
 		mk.Imya, err = vybratMasku(ctx, s, u.Maski)
 	} else {
-		mk, err = podobratMasku(ctx, s, adres)
+		mk, err = podobratMasku(ctx, s, adres, "")
+		// Программа сервера ставится этой же сборкой и подбор умеет; старая
+		// бывает только у сборки с прежней программой внутри.
+		if errors.Is(err, ErrStarayaProgramma) {
+			mk.Imya, err = vybratMasku(ctx, s, Maski)
+			mk.Istochnik = MaskaBrend
+		}
 	}
 	if err != nil {
 		return Itog{}, err

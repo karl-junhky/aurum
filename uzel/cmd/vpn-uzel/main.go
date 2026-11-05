@@ -5,7 +5,7 @@
 //	vpn-uzel rabotat            служба (systemd)
 //	vpn-uzel pult [команда]     принудительная команда ssh-ключа центра
 //	vpn-uzel proverit <пакет>   проверить пакет, ничего не запуская и не записывая
-//	vpn-uzel maska podobrat -adres <IPv4 сервера>
+//	vpn-uzel maska podobrat -adres <адрес сервера> [-krome <маска>]
 //	                            подобрать маску reality у соседей сервера
 //	vpn-uzel maska proverit <имя>
 //	                            проверить маску теми же условиями

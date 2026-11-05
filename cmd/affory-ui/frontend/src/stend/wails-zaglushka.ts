@@ -318,7 +318,7 @@ type Zapis = Record<string, unknown>;
 function svoyZapis(adres: string, reality: number, hy2: number, imya = "Мой сервер"): Zapis {
   return {
     id: SVOY_ID, imya, adres, port_ssh: 22, polzovatel: "root",
-    klyuch_hosta_tip: "ssh-ed25519", maska: "www.example.net", versiya: "0.6.0",
+    klyuch_hosta_tip: "ssh-ed25519", maska: "www.example.net", maska_istochnik: "sosedi", versiya: "0.6.0",
     reality, hy2, prodlenie: "80",
     servery: [`${SVOY_ID}-reality`, `${SVOY_ID}-hy2`],
     postavlen: new Date(Date.now() - 72 * CHAS_MS).toISOString(),
@@ -505,6 +505,35 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
         servery = [...servery.filter((s) => !s.id.startsWith(`${z.id}-`)), ...klyuchiSvoego(stroka(z.adres), reality, hy2)];
       },
     ]);
+  },
+  // Своя маска: известное имя без согласия - vps-mask-known, suckless.org
+  // не годится, остальное встаёт.
+  svoyVpsMaska: (v) => {
+    const z = poId(v);
+    const svoya = stroka(v.svoya).trim().toLowerCase();
+    const izvestnaya = ["dl.google.com", "www.adobe.com", "www.microsoft.com"].includes(svoya);
+    return nachatDelo("maska", stroka(z.id), [
+      (h) => { h.shag = "maska"; h.maska = { svoya: svoya || undefined }; },
+      (h) => {
+        if (svoya === "suckless.org") {
+          zakonchit(h, "oshibka", { otkaz: { kod: "vps-mask-failed", tekst: "маска suckless.org не годится: сайт не отвечает h2. На сервере прежняя маска" } });
+          return;
+        }
+        if (izvestnaya && v.brend_soglasen !== true) {
+          zakonchit(h, "oshibka", { otkaz: { kod: "vps-mask-known",
+            tekst: `маска ${svoya} - известный сайт: на мобильном интернете такие имена глушат, и ключ reality с ним может не открыться. На сервере прежняя маска` } });
+          return;
+        }
+        h.shag = "paket";
+      },
+      (h) => {
+        const imya = svoya || "shop.example.org";
+        const istochnik = !svoya ? "sosedi" : izvestnaya ? "brend" : "svoya";
+        zakonchit(h, "gotovo", { put: PUT_PRYAMO, maska: { svoya: svoya || undefined, imya, istochnik },
+          ustanovlen: { ...ustanovlen(), klyuchi: [{ transport: "reality-tcp", port: z.reality }, { transport: "hy2", port: z.hy2 }] } });
+        Object.assign(z, { maska: imya, maska_istochnik: istochnik, proveren: new Date().toISOString() });
+      },
+    ], svoya ? 900 : 1500);
   },
   svoyVpsSnesti: (v) => {
     const z = poId(v);

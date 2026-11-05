@@ -62,8 +62,9 @@ type SvoyServer struct {
 	ParolVyklyuchen     bool   `json:"parol_vyklyuchen,omitempty"`
 	Versiya             string `json:"versiya,omitempty"`
 	Maska               string `json:"maska"`
-	// MaskaIstochnik: откуда маска, upravlenie.MaskaSosedi, MaskaZapas или
-	// MaskaBrend; пусто у серверов 1.11.0 (их маски из известных).
+	// MaskaIstochnik: откуда маска, upravlenie.MaskaSosedi, MaskaZapas,
+	// MaskaBrend или MaskaSvoya (ввёл человек); пусто у серверов 1.11.0 (их
+	// маски из известных) и у взятых под управление.
 	MaskaIstochnik string `json:"maska_istochnik,omitempty"`
 	Reality        int    `json:"reality,omitempty"`
 	Hy2            int    `json:"hy2,omitempty"`
@@ -230,6 +231,7 @@ type HodVps struct {
 	Parol            *ParolVps      `json:"parol,omitempty"`
 	Proverka         *ProverkaVps   `json:"proverka,omitempty"`
 	Obnovlenie       *ObnovlenieVps `json:"obnovlenie,omitempty"`
+	Maska            *MaskaVps      `json:"maska,omitempty"`
 	Otkaz            *OtkazVps      `json:"otkaz,omitempty"`
 	Preduprezhdeniya []OtkazVps     `json:"preduprezhdeniya,omitempty"`
 	Nachalo          time.Time      `json:"nachalo"`
@@ -936,6 +938,10 @@ type osnovaZapisi struct {
 	// которой ключи не прошли, называет Avast, если порт его. Взятие под
 	// управление ключи не проверяет и их не ищет.
 	Pomehi pomehiKompyutera
+	// PrezhnyayaSet это виды ключей, чья отметка «не проходит из сети
+	// человека» переходит из прежней записи: дело их не проверяло и не
+	// меняло.
+	PrezhnyayaSet []string
 }
 
 // errSvoyZabyt: запись о сервере убрали посреди дела, которое её только
@@ -999,9 +1005,17 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		if i >= 0 {
 			// Подбор портов заново и захват маску не подбирают: откуда она,
 			// знает прежняя запись.
-			if bylo := n.SvoiServery[i]; it.MaskaIstochnik == "" && bylo.Maska == zapis.Maska {
+			bylo := n.SvoiServery[i]
+			if it.MaskaIstochnik == "" && bylo.Maska == zapis.Maska {
 				zapis.MaskaIstochnik = bylo.MaskaIstochnik
 			}
+			prezhnyaya := map[string]string{}
+			for _, t := range bylo.NeIzSeti {
+				if slices.Contains(osn.PrezhnyayaSet, t) && !slices.Contains(zapis.NeIzSeti, t) {
+					prezhnyaya[t] = prichinaVida(bylo, t)
+				}
+			}
+			dobavitNeIzSeti(&zapis, prezhnyaya)
 			uhodyat := slices.DeleteFunc(slices.Clone(n.SvoiServery[i].Servery), func(x string) bool {
 				return slices.Contains(ids, x)
 			})
@@ -1013,6 +1027,18 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		return nil
 	})
 	return ids, err
+}
+
+// prichinaVida это почему вид t записи x не проходит из сети: своя причина
+// или общая, когда вид один.
+func prichinaVida(x SvoyServer, t string) string {
+	if p := x.SetPoVidam[t]; p != "" {
+		return p
+	}
+	if len(x.NeIzSeti) == 1 {
+		return x.SetTekst
+	}
+	return ""
 }
 
 // perenestiVybor переводит выбор и исключение из авто с ключей uhodyat на

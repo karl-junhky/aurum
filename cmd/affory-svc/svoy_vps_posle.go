@@ -353,7 +353,7 @@ var errSvoegoNet = errors.New("такого сервера в разделе «�
 // pishutZapis это задания, что пишут запись о сервере целиком, с названием,
 // взятым в начале дела. Проверка, пароль, снос и снятие ключа правят запись
 // по полям и названия не трогают.
-var pishutZapis = map[string]bool{vidUstanovka: true, vidPodbor: true, vidVzyat: true}
+var pishutZapis = map[string]bool{vidUstanovka: true, vidPodbor: true, vidVzyat: true, vidMaska: true}
 
 // svoyVpsPereimenovat меняет название своего сервера (ИМ1) в записи и в
 // именах ключей группы одной правкой набора. На сервер название не уходит,

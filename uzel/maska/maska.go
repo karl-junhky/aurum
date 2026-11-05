@@ -15,7 +15,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"math/rand/v2"
 	"net"
 	"net/netip"
@@ -98,6 +97,9 @@ type Opcii struct {
 	Korni    *x509.CertPool
 	// Zapasnye и Prezhnie: nil - списки пакета.
 	Zapasnye, Prezhnie []string
+	// Krome это имя, которое не годится: «Подобрать другую» не должна
+	// вернуть ту же маску.
+	Krome string
 }
 
 const (
@@ -143,9 +145,36 @@ type Proverka struct {
 	Godna bool
 	// Brend: имя из известных, на мобильном его глушат.
 	Brend bool
-	// Prichina говорит, чем не годна; пусто у годной.
-	Prichina string
+	// Prichina говорит человеку, чем не годна; пусто у годной. Podrobno это
+	// исходная ошибка для журнала.
+	Prichina, Podrobno string
 }
+
+// otkaz записывает причину: у oshibka своя, остальное - прерванная проверка.
+func (p *Proverka) otkaz(err error) {
+	var o *oshibka
+	if errors.As(err, &o) {
+		p.Prichina = o.prichina
+	} else {
+		p.Prichina = "проверка прервана"
+	}
+	p.Podrobno = err.Error()
+}
+
+// oshibka это причина для человека и исходная ошибка под ней.
+type oshibka struct {
+	prichina string
+	err      error
+}
+
+func (o *oshibka) Error() string {
+	if o.err == nil {
+		return o.prichina
+	}
+	return o.prichina + ": " + o.err.Error()
+}
+
+func (o *oshibka) Unwrap() error { return o.err }
 
 // Itog это подобранная маска.
 type Itog struct {
@@ -193,6 +222,9 @@ func Podobrat(ctx context.Context, svoy netip.Addr, o Opcii) (Itog, error) {
 	}{{o.Zapasnye, Zapas}, {o.Prezhnie, Brend}} {
 		zctx, otmena := context.WithTimeout(ctx, srokZapasa)
 		for _, i := range rand.Perm(len(sp.imena)) {
+			if s.krome(sp.imena[i]) {
+				continue
+			}
 			if p := s.proverit(zctx, sp.imena[i]); p.Godna {
 				otmena()
 				it.Maska, it.Istochnik = p.Imya, sp.ist
@@ -220,6 +252,12 @@ type skaner struct {
 	o           Opcii
 	tik         *time.Ticker
 	prosmotreno atomic.Int64
+}
+
+// krome: имя совпадает с o.Krome без учёта регистра и точки в конце.
+func (s *skaner) krome(imya string) bool {
+	norm := func(x string) string { return strings.ToLower(strings.TrimSuffix(x, ".")) }
+	return s.o.Krome != "" && norm(imya) == norm(s.o.Krome)
 }
 
 // zhdat пропускает соединения не чаще o.Shag на все потоки разом.
@@ -336,7 +374,7 @@ func (s *skaner) imenaSoseda(ctx context.Context, a netip.Addr) []string {
 	var imena []string
 	for _, imya := range serty[0].DNSNames {
 		imya = strings.ToLower(imya)
-		if reImya.MatchString(imya) && !EtoBrend(imya) && !slices.Contains(imena, imya) {
+		if reImya.MatchString(imya) && !EtoBrend(imya) && !s.krome(imya) && !slices.Contains(imena, imya) {
 			imena = append(imena, imya)
 		}
 		if len(imena) == imenNaAdres {
@@ -357,7 +395,7 @@ func (s *skaner) proverit(ctx context.Context, imya string) Proverka {
 	}
 	adresa, err := s.adresaImeni(ctx, imya)
 	if err != nil {
-		p.Prichina = err.Error()
+		p.otkaz(err)
 		return p
 	}
 	var q Proverka
@@ -374,10 +412,13 @@ func (s *skaner) adresaImeni(ctx context.Context, imya string) ([]netip.Addr, er
 	defer otmena()
 	adresa, err := s.o.Resolver.LookupNetIP(rctx, "ip4", imya)
 	if err != nil {
-		return nil, fmt.Errorf("имя не находится: %w", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, &oshibka{"сервер не находит адрес этого имени", err}
 	}
 	if len(adresa) == 0 {
-		return nil, errors.New("у имени нет A-записи")
+		return nil, &oshibka{"у имени нет адреса IPv4", nil}
 	}
 	for i := range adresa {
 		adresa[i] = adresa[i].Unmap()
@@ -391,7 +432,7 @@ func (s *skaner) proveritNaAdrese(ctx context.Context, imya string, a netip.Addr
 	p := Proverka{Imya: imya, Adres: a, Brend: EtoBrend(imya)}
 	adresa, err := s.adresaImeni(ctx, imya)
 	if err != nil {
-		p.Prichina = err.Error()
+		p.otkaz(err)
 		return p
 	}
 	if !slices.Contains(adresa, a) {
@@ -407,7 +448,7 @@ func (s *skaner) proveritTLS(ctx context.Context, p Proverka, a netip.Addr) Prov
 	imya := p.Imya
 	p.Adres = a
 	if err := s.zhdat(ctx); err != nil {
-		p.Prichina = err.Error()
+		p.otkaz(err)
 		return p
 	}
 	// Предлагаются оба протокола, как у браузера: сайт без h2 иначе рвёт
@@ -415,7 +456,10 @@ func (s *skaner) proveritTLS(ctx context.Context, p Proverka, a netip.Addr) Prov
 	c, err := s.rukopozhatie(ctx, a, &tls.Config{ServerName: imya, RootCAs: s.o.Korni, MinVersion: tls.VersionTLS13,
 		NextProtos: []string{"h2", "http/1.1"}, CurvePreferences: []tls.CurveID{tls.X25519}})
 	if err != nil {
-		p.Prichina = "нет TLS 1.3 с X25519 и действительным сертификатом: " + err.Error()
+		if ctx.Err() == nil {
+			err = &oshibka{"сайт не отвечает TLS 1.3 с X25519 или его сертификат недействителен", err}
+		}
+		p.otkaz(err)
 		return p
 	}
 	defer c.Close()

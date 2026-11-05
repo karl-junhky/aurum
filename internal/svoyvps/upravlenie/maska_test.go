@@ -127,11 +127,11 @@ func TestPodobratMasku(t *testing.T) {
 	} {
 		t.Run(c.imya, func(t *testing.T) {
 			m := &skriptovaya{it: c.it}
-			mk, err := podobratMasku(context.Background(), m, adres)
+			mk, err := podobratMasku(context.Background(), m, adres, "staraya.example.org")
 			if mk != c.maska || !errors.Is(err, c.oshibka) {
 				t.Fatalf("маска %+v, ошибка %v", mk, err)
 			}
-			if !slices.Equal(m.argumenty, []string{"203.0.113.10"}) || m.tekstOtvet != skriptPodbora {
+			if !slices.Equal(m.argumenty, []string{"203.0.113.10", "staraya.example.org"}) || m.tekstOtvet != skriptPodbora {
 				t.Fatalf("аргументы %q", m.argumenty)
 			}
 		})
@@ -144,21 +144,65 @@ func TestPodobratMasku(t *testing.T) {
 		// старая программа: известная маска молча не ставится.
 		"негодный адрес": {Kod: 2, Oshibki: "адрес сервера: ParseAddr: unable to parse IP\n"},
 	} {
-		if _, err := podobratMasku(context.Background(), &skriptovaya{it: it}, adres); err == nil || errors.Is(err, ErrNetMaski) {
+		if _, err := podobratMasku(context.Background(), &skriptovaya{it: it}, adres, ""); err == nil ||
+			errors.Is(err, ErrNetMaski) || errors.Is(err, ErrStarayaProgramma) {
 			t.Errorf("%s: %v", imya, err)
 		}
 	}
 }
 
-// Программа сервера без подбора (старше 0.7.0) отвечает кодом 2: маска из
-// прежнего списка, помеченная как известная.
-func TestPodobratMaskuStarayaProgramma(t *testing.T) {
-	bylo := proveritMasku
-	t.Cleanup(func() { proveritMasku = bylo })
-	proveritMasku = func(context.Context, server.Mashina, string) (bool, bool, error) { return true, true, nil }
-	mk, err := podobratMasku(context.Background(), &skriptovaya{it: ssh.Itog{Kod: 2, Oshibki: "неизвестная команда \"maska\"\n"}},
-		netip.MustParseAddr("203.0.113.10"))
-	if err != nil || !slices.Contains(Maski, mk.Imya) || mk.Istochnik != MaskaBrend {
-		t.Fatalf("%+v, %v", mk, err)
+// Программа сервера без подбора (старше 0.7.0) отвечает «неизвестная
+// команда» с кодом 2.
+func TestMaskaStarayaProgramma(t *testing.T) {
+	m := &skriptovaya{it: ssh.Itog{Kod: 2, Oshibki: "неизвестная команда \"maska\"\n"}}
+	if _, err := podobratMasku(context.Background(), m, netip.MustParseAddr("203.0.113.10"), ""); !errors.Is(err, ErrStarayaProgramma) {
+		t.Errorf("подбор: %v", err)
+	}
+	if _, err := proveritSvoyuMasku(context.Background(), m, "svoya.example.org"); !errors.Is(err, ErrStarayaProgramma) {
+		t.Errorf("проверка: %v", err)
+	}
+}
+
+func TestProveritSvoyuMasku(t *testing.T) {
+	for _, c := range []struct {
+		imya string
+		it   ssh.Itog
+		p    ProverkaMaski
+	}{
+		{"годна", ssh.Itog{Vyvod: []byte("imya\tsvoya.example.org\ngodna\tda\nbrend\tnet\n")},
+			ProverkaMaski{Imya: "svoya.example.org", Godna: true}},
+		{"известная", ssh.Itog{Vyvod: []byte("imya\twww.adobe.com\ngodna\tda\nbrend\tda\n")},
+			ProverkaMaski{Imya: "www.adobe.com", Godna: true, Brend: true}},
+		{"негодна", ssh.Itog{Vyvod: []byte("imya\tsuckless.org\ngodna\tnet\nbrend\tnet\nprichina\tсайт не отвечает h2\npodrobno\tx\n")},
+			ProverkaMaski{Imya: "suckless.org", Prichina: "сайт не отвечает h2", Podrobno: "x"}},
+	} {
+		m := &skriptovaya{it: c.it}
+		p, err := proveritSvoyuMasku(context.Background(), m, c.imya)
+		if err != nil || p != c.p || m.tekstOtvet != skriptProverkiMaski || !slices.Equal(m.argumenty, []string{c.imya}) {
+			t.Errorf("%s: %+v, %v, аргументы %q", c.imya, p, err, m.argumenty)
+		}
+	}
+	// Годной программа назвала то, что ссылка не примет.
+	m := &skriptovaya{it: ssh.Itog{Vyvod: []byte("imya\tНе имя\ngodna\tda\nbrend\tnet\n")}}
+	if _, err := proveritSvoyuMasku(context.Background(), m, "x"); err == nil {
+		t.Error("негодное имя принято")
+	}
+}
+
+// Установка с программой сервера без подбора берёт маску из прежнего
+// списка и помечает её известной.
+func TestUstanovitStarayaProgramma(t *testing.T) {
+	m := novayaMashina(t)
+	podobratMasku = func(context.Context, server.Mashina, netip.Addr, string) (Maska, error) {
+		return Maska{}, ErrStarayaProgramma
+	}
+	u := m.ustanovka()
+	u.Maski = nil
+	itog, err := Ustanovit(context.Background(), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(Maski, itog.Sekrety.Maska) || itog.MaskaIstochnik != MaskaBrend {
+		t.Fatalf("маска %q из %q", itog.Sekrety.Maska, itog.MaskaIstochnik)
 	}
 }

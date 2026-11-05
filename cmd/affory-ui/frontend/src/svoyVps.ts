@@ -107,6 +107,15 @@ export interface ObnovlenieVps {
   ne_proshli: string[];
 }
 
+/** Смена маски (МА2): svoya - что ввёл человек, brend_soglasen - согласен
+ *  на известное имя, imya и istochnik - что встало на сервер. */
+export interface MaskaVps {
+  svoya?: string;
+  brend_soglasen?: boolean;
+  imya?: string;
+  istochnik?: string;
+}
+
 /** Снимок задания своего сервера (HodVps службы). */
 export interface HodVps {
   id: number;
@@ -133,6 +142,7 @@ export interface HodVps {
   otpushchen?: { klyucha_ne_bylo: boolean };
   parol?: ParolVps;
   obnovlenie?: ObnovlenieVps;
+  maska?: MaskaVps;
   proverka?: ProverkaVps;
   otkaz?: OtkazVps;
   preduprezhdeniya: OtkazVps[];
@@ -150,6 +160,9 @@ export interface SvoyServer {
   parol_vyklyuchen: boolean;
   versiya?: string;
   maska: string;
+  /** Откуда маска: sosedi, zapas, brend или svoya. Пусто - сервер 1.11.0
+   *  или взят под управление. */
+  maska_istochnik?: string;
   reality?: number;
   hy2?: number;
   porty_ruchnye: boolean;
@@ -321,6 +334,7 @@ export function hodIz(v: unknown): HodVps | null {
   const parol = obekt(o.parol);
   const obnovlenie = obekt(o.obnovlenie);
   const novaya = stroka(obnovlenie?.versiya);
+  const maska = obekt(o.maska);
   return {
     id,
     vid,
@@ -352,6 +366,10 @@ export function hodIz(v: unknown): HodVps | null {
         ne_proshli: spisok(obnovlenie.ne_proshli, (x) => stroka(x) ?? null),
       }
       : undefined,
+    maska: maska ? {
+      svoya: stroka(maska.svoya), brend_soglasen: maska.brend_soglasen === true || undefined,
+      imya: stroka(maska.imya), istochnik: stroka(maska.istochnik),
+    } : undefined,
     proverka: proverkaIz(o.proverka) ?? undefined,
     otkaz: otkazVpsIz(o.otkaz) ?? undefined,
     preduprezhdeniya: spisok(o.preduprezhdeniya, otkazVpsIz),
@@ -384,6 +402,7 @@ function serverIz(v: unknown): SvoyServer | null {
     parol_vyklyuchen: o.parol_vyklyuchen === true,
     versiya: stroka(o.versiya),
     maska: stroka(o.maska) ?? "",
+    maska_istochnik: stroka(o.maska_istochnik),
     reality: chislo(o.reality),
     hy2: chislo(o.hy2),
     porty_ruchnye: o.porty_ruchnye === true,
@@ -598,7 +617,7 @@ const IMYA_PO_UMOLCHANIYU = "Мой сервер";
 
 /** Дела, что пишут запись о сервере целиком, с названием из начала дела
  *  (pishutZapis службы): переименование посреди них служба не пустит. */
-const PISHUT_ZAPIS = new Set(["ustanovka", "podbor", "vzyat"]);
+const PISHUT_ZAPIS = new Set(["ustanovka", "podbor", "vzyat", "maska"]);
 
 /** Идёт дело, которое затёрло бы новое название сервера id. Дело, чей сервер
  *  в снимке ещё не назван, могло начаться над ним же. */
@@ -647,7 +666,7 @@ const HODOV_V_PAMYATI = 8;
 
 // Какие дела меняют набор ключей: по их удачному концу окну пора перечитать
 // и общий список серверов.
-const MENYAYUT_KLYUCHI = new Set(["ustanovka", "vzyat", "podbor", "snos", "otpusk"]);
+const MENYAYUT_KLYUCHI = new Set(["ustanovka", "vzyat", "podbor", "snos", "otpusk", "maska"]);
 
 // Номер установки, итог которой человек уже видел. Окно, поднятое заново после
 // упавшей установки, иначе молчало бы о ней, а показанное каждый раз заново

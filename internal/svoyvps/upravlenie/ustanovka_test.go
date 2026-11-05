@@ -78,9 +78,9 @@ func novayaMashina(t *testing.T) *mashina {
 		podobrat, proverit, detektor, srokSerta, shagSerta, proveritMasku, podobratMasku = bPd, bPv, bDt, bSr, bSh, bM, bPm
 	})
 	shagSerta = time.Millisecond
-	podobratMasku = func(_ context.Context, x server.Mashina, adres netip.Addr) (Maska, error) {
-		if x != m.root {
-			t.Fatal("маска подбирается не входом root")
+	podobratMasku = func(_ context.Context, x server.Mashina, adres netip.Addr, krome string) (Maska, error) {
+		if x != m.root || krome != "" {
+			t.Fatalf("маска подбирается не входом root или кроме %q", krome)
 		}
 		m.maski = append(m.maski, "подбор "+adres.String())
 		return Maska{Imya: "sosed.example.net", Istochnik: MaskaSosedi}, nil

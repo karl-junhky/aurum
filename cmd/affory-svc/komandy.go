@@ -562,6 +562,7 @@ type Sluzhba struct {
 	vpsVklyuchitParol  func(context.Context, upravlenie.Puti, ssh.Zapros) (upravlenie.ParolItog, error)
 	vpsPodobratPorty   func(context.Context, upravlenie.Podbor) (upravlenie.Itog, error)
 	vpsObnovit         func(context.Context, upravlenie.Obnovlenie) (upravlenie.ObnovlenieItog, error)
+	vpsSmenitMasku     func(context.Context, upravlenie.SmenaMaski) (upravlenie.Itog, error)
 	programmaUzla      func(context.Context) (io.ReadSeekCloser, error)
 	istochnikUzla      string
 	vshityyUzel        func() (vypuskUzla, error)
@@ -659,6 +660,7 @@ func NovayaSluzhba() *Sluzhba {
 	s.vpsVklyuchitParol = upravlenie.VklyuchitParol
 	s.vpsPodobratPorty = upravlenie.PodobratPorty
 	s.vpsObnovit = upravlenie.Obnovit
+	s.vpsSmenitMasku = upravlenie.SmenitMasku
 	s.programmaUzla = s.programmaSVypuska
 	s.istochnikUzla = os.Getenv(peremennayaUzla)
 	s.vshityyUzel = prochitatVshityyUzel

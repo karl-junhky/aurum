@@ -14,7 +14,7 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/maska"
 )
 
-const ispolzovanieMaski = "vpn-uzel maska podobrat -adres <адрес сервера> | vpn-uzel maska proverit <имя>"
+const ispolzovanieMaski = "vpn-uzel maska podobrat -adres <адрес сервера> [-krome <маска>] | vpn-uzel maska proverit <имя>"
 
 // maskaKomanda подбирает или проверяет маску reality для клиента «Своего
 // VPN». Печатает строки «ключ<TAB>значение»; подбор не нашёл ничего - код 1
@@ -30,6 +30,7 @@ func maskaKomanda(argumenty []string) int {
 	case "podobrat":
 		fl := flag.NewFlagSet("maska podobrat", flag.ContinueOnError)
 		adres := fl.String("adres", "", "адрес сервера")
+		krome := fl.String("krome", "", "маска, которую не брать (нынешняя)")
 		if err := fl.Parse(argumenty[1:]); err != nil {
 			return 2
 		}
@@ -38,7 +39,7 @@ func maskaKomanda(argumenty []string) int {
 			fmt.Fprintln(os.Stderr, "адрес сервера:", err)
 			return 2
 		}
-		it, err := maska.Podobrat(ctx, a.Unmap(), maska.Opcii{})
+		it, err := maska.Podobrat(ctx, a.Unmap(), maska.Opcii{Krome: *krome})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -58,6 +59,9 @@ func maskaKomanda(argumenty []string) int {
 		stroka("brend", daNet(p.Brend))
 		if p.Prichina != "" {
 			stroka("prichina", p.Prichina)
+		}
+		if p.Podrobno != "" {
+			stroka("podrobno", p.Podrobno)
 		}
 		return 0
 	}

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { useCallback, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
+  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, opisanieMaski, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
   punktyOsmotra, sostoyanieKlyucha, strokaPerehvata, teloDostupa, zanyatyeDlyaReality,
 } from "./SvoyVpn";
 import {
@@ -37,7 +37,7 @@ function osmotr(dop: Partial<OsmotrVps> = {}): OsmotrVps {
   };
 }
 
-type Otvety = Record<string, (telo: Record<string, unknown>) => ItogKomandy>;
+type Otvety = Record<string, (telo: Record<string, unknown>) => ItogKomandy | Promise<ItogKomandy>>;
 
 /** Раздел с подставным useSvoyVps: мастер и ход живут в состоянии обёртки,
  *  команды пишутся в журнал и отвечают по таблице. */
@@ -72,7 +72,7 @@ function stend({ servery = [], hody = [], master = null, otvety = {} }: {
       komanda: async (imya, telo) => {
         const t = (telo ?? {}) as Record<string, unknown>;
         vyzovy.push([imya, t]);
-        const r = otvety[imya]?.(t) ?? { telo: {} };
+        const r = await (otvety[imya]?.(t) ?? { telo: {} });
         if ("hod" in r) zadatHody((pr) => [...pr.filter((x) => x.id !== r.hod.id), r.hod]);
         return r;
       },
@@ -768,6 +768,142 @@ describe("карточка сервера", () => {
     expect(screen.getByText("VPN снесён с сервера 203.0.113.40")).toBeInTheDocument();
     expect(screen.getByText(/Вход по паролю снова такой/)).toBeInTheDocument();
     expect(screen.getByTestId("svoy-postavit")).toBeInTheDocument();
+  });
+});
+
+describe("смена маски", () => {
+  const IZVESTNAYA = "известный сайт: на мобильном интернете такие имена глушат";
+
+  it("строка маски говорит, откуда она", () => {
+    expect(opisanieMaski(server({ maska_istochnik: "sosedi" }))).toBe("малоизвестный сайт из той же сети, что сервер");
+    expect(opisanieMaski(server({ maska_istochnik: "zapas" }))).toMatch(/^из запасного списка/);
+    expect(opisanieMaski(server({ maska_istochnik: "svoya" }))).toBe("задана тобой");
+    expect(opisanieMaski(server({ maska_istochnik: "brend", maska: "www.adobe.com" }))).toBe(IZVESTNAYA);
+    // Сервер 1.11.0: источника нет, а маска из прежнего списка.
+    expect(opisanieMaski(server({ maska: "DL.google.com." }))).toBe(IZVESTNAYA);
+    expect(opisanieMaski(server({ maska: "shop.example.org" }))).toBeUndefined();
+  });
+
+  it("«Подобрать другую»: ход, итог про телефон и ключи с кодами", async () => {
+    const s = stend({
+      servery: [server({ maska_istochnik: "sosedi" })],
+      otvety: {
+        svoyVpsMaska: () => ({ hod: hod({ id: 9, vid: "maska", faza: "idyot", shag: "maska", server: "svoy-1", maska: {} }) }),
+        exportServers: () => ({ telo: { tekst: "vless://k-r2", base64: "dmxlc3M6Ly9rLXIy", servery: 2, propushcheny: [] } }),
+      },
+    });
+    expect(screen.getByTestId("svoy-maska")).toHaveTextContent("www.example.net");
+    fireEvent.click(screen.getByTestId("svoy-smenit-masku"));
+    fireEvent.click(screen.getByTestId("svoy-podobrat-masku"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsMaska", { id: "svoy-1" }]]));
+    expect(screen.queryByTestId("svoy-smena-maski")).toBeNull();
+    const delo = await screen.findByTestId("svoy-delo");
+    expect(delo).toHaveTextContent("Меняю маску");
+    expect(delo).toHaveTextContent("ищу рядом с сервером малоизвестный сайт");
+    s.prishyol(hod({ id: 9, vid: "maska", faza: "idyot", shag: "paket", server: "svoy-1", maska: {} }));
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("перезапускаю VPN на сервере с новой маской");
+    s.prishyol(hod({
+      id: 9, vid: "maska", faza: "gotovo", server: "svoy-1", maska: { imya: "shop.example.org", istochnik: "sosedi" },
+      ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087 }, { transport: "hy2", port: 5443 }], ids: ["k-r2", "k-h"], ne_iz_seti: [] },
+    }));
+    const itog = screen.getByTestId("svoy-delo");
+    expect(itog).toHaveTextContent("Маска сменилась на shop.example.org");
+    expect(itog).toHaveTextContent("Ключ reality на телефоне со старой маской больше не подключится, добавь его заново. Ключ hysteria2 прежний");
+    fireEvent.click(within(itog).getByTestId("svoy-klyuchi-telefona-maska"));
+    await waitFor(() => expect(s.vyzovy[s.vyzovy.length - 1]).toEqual(["exportServers", { ids: ["k-r2", "k-h"] }]));
+    expect(await screen.findByTestId("vygruzka")).toBeInTheDocument();
+    // Следующее дело: коды прежнего ключа с экрана уходят.
+    s.prishyol(hod({ id: 10, vid: "maska", faza: "idyot", shag: "maska", server: "svoy-1", maska: {} }));
+    expect(screen.queryByTestId("vygruzka")).toBeNull();
+  });
+
+  it("ключи, что выгрузились уже после смены дела, на экран не встают", async () => {
+    let otvetit: (v: ItogKomandy) => void = () => {};
+    const s = stend({
+      servery: [server()],
+      hody: [hod({
+        id: 9, vid: "maska", faza: "gotovo", server: "svoy-1", maska: { imya: "shop.example.org", istochnik: "sosedi" },
+        ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087 }], ids: ["k-r2"], ne_iz_seti: [] },
+      })],
+      otvety: { exportServers: () => new Promise<ItogKomandy>((r) => { otvetit = r; }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-klyuchi-telefona-maska"));
+    await waitFor(() => expect(s.imena()).toEqual(["exportServers"]));
+    s.prishyol(hod({ id: 10, vid: "maska", faza: "idyot", shag: "maska", server: "svoy-1", maska: {} }));
+    await act(async () => otvetit({ telo: { tekst: "vless://k-r2", base64: "dmxlc3M6Ly9rLXIy", servery: 1, propushcheny: [] } }));
+    expect(screen.queryByTestId("vygruzka")).toBeNull();
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Меняю маску");
+  });
+
+  it("своя маска: поле отсекает опечатку и нынешнюю, уходит без пробелов и регистра", async () => {
+    const s = stend({ servery: [server()] });
+    fireEvent.click(screen.getByTestId("svoy-smenit-masku"));
+    const pole = screen.getByTestId("svoy-svoya-maska");
+    const knopka = screen.getByTestId("svoy-postavit-svoyu");
+    expect(knopka).toBeDisabled();
+    fireEvent.change(pole, { target: { value: "не имя" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("это не имя сайта");
+    expect(knopka).toBeDisabled();
+    fireEvent.change(pole, { target: { value: "WWW.example.net." } });
+    expect(screen.getByRole("alert")).toHaveTextContent("эта маска уже стоит");
+    fireEvent.change(pole, { target: { value: " Shop.Example.ORG " } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(knopka);
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsMaska", { id: "svoy-1", svoya: "shop.example.org" }]]));
+  });
+
+  it("своя маска на проверке: шаг называет её", () => {
+    stend({ servery: [server()], hody: [hod({ id: 7, vid: "maska", faza: "idyot", shag: "maska", server: "svoy-1", maska: { svoya: "shop.example.org" } })] });
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("проверяю с сервера, годится ли shop.example.org в маску");
+    expect(screen.getByTestId("svoy-smenit-masku")).toBeDisabled();
+  });
+
+  it("известная маска: «Всё равно поставить» шлёт согласие, «Повторить» нет", async () => {
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 5, vid: "maska", faza: "oshibka", server: "svoy-1", maska: { svoya: "www.adobe.com" },
+        otkaz: { kod: "vps-mask-known", tekst: "маска www.adobe.com - известный сайт: на мобильном интернете такие имена глушат. На сервере прежняя маска" } })],
+    });
+    const delo = screen.getByTestId("svoy-delo");
+    expect(delo).toHaveTextContent("Смена маски: не вышло");
+    expect(delo).toHaveTextContent("Маска www.adobe.com - известный сайт");
+    expect(within(delo).queryByRole("button", { name: "Повторить" })).toBeNull();
+    fireEvent.click(within(delo).getByTestId("svoy-maska-vsyo-ravno"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsMaska", { id: "svoy-1", svoya: "www.adobe.com", brend_soglasen: true }]]));
+  });
+
+  it("обрыв связи посреди смены: «Повторить» повторяет с той же своей", async () => {
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 5, vid: "maska", faza: "oshibka", server: "svoy-1", maska: { svoya: "shop.example.org" },
+        otkaz: { kod: "vps-unreachable", tekst: "сервер перестал отвечать: повтори чуть позже" } })],
+    });
+    fireEvent.click(within(screen.getByTestId("svoy-delo")).getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsMaska", { id: "svoy-1", svoya: "shop.example.org" }]]));
+  });
+
+  it("обрыв после «Всё равно поставить»: «Повторить» несёт согласие", async () => {
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 5, vid: "maska", faza: "oshibka", server: "svoy-1", maska: { svoya: "www.adobe.com", brend_soglasen: true },
+        otkaz: { kod: "vps-unreachable", tekst: "сервер перестал отвечать: повтори чуть позже" } })],
+    });
+    fireEvent.click(within(screen.getByTestId("svoy-delo")).getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsMaska", { id: "svoy-1", svoya: "www.adobe.com", brend_soglasen: true }]]));
+  });
+
+  it("ключи записаны, смена ещё идёт: заголовок про маску, а не про проверку сети", () => {
+    stend({ servery: [server()], hody: [hod({ id: 7, vid: "maska", faza: "idyot", shag: "maska", server: "svoy-1", maska: {},
+      ustanovlen: { server: "svoy-1", klyuchi: [{ transport: "reality-tcp", port: 2087 }], ids: ["k-r2"], ne_iz_seti: [] } })] });
+    const delo = screen.getByTestId("svoy-delo");
+    expect(delo).toHaveTextContent("Меняю маску");
+    expect(delo).not.toHaveTextContent("Проверяю ключи");
+  });
+
+  it("без ключа управления маску видно, а сменить нечем", () => {
+    stend({ servery: [server({ klyuch_upravleniya: false })] });
+    expect(screen.getByTestId("svoy-maska")).toHaveTextContent("www.example.net");
+    expect(screen.queryByTestId("svoy-smenit-masku")).toBeNull();
   });
 });
 

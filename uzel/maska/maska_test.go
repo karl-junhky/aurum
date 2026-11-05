@@ -270,6 +270,46 @@ func TestSetiIHosty(t *testing.T) {
 	}
 }
 
+// «Подобрать другую» не возвращает нынешнюю маску ни у соседей, ни из
+// запаса.
+func TestPodobratKrome(t *testing.T) {
+	s := novyyStend(t)
+	s.postavit("198.51.100.9", sosed{imena: []string{"horoshiy.example.net"}, protokoly: []string{"h2"}})
+	s.zapis("horoshiy.example.net", "198.51.100.9")
+	s.postavit("203.0.113.5", sosed{imena: []string{"zapas.example.org"}, protokoly: []string{"h2"}})
+	s.zapis("zapas.example.org", "203.0.113.5")
+	s.postavit("203.0.113.6", sosed{imena: []string{"dl.google.com"}, protokoly: []string{"h2"}})
+	s.zapis("dl.google.com", "203.0.113.6")
+	o := s.opcii()
+	o.Krome = "Horoshiy.Example.net."
+	sk := &skaner{o: o.sDefoltami(), tik: time.NewTicker(time.Millisecond)}
+	defer sk.tik.Stop()
+	if p := sk.oprositSoseda(context.Background(), netip.MustParseAddr("198.51.100.9")); p != nil {
+		t.Errorf("сосед с нынешней маской годен: %+v", p)
+	}
+
+	o.Krome, o.Zapasnye, o.Prezhnie = "zapas.example.org", []string{"zapas.example.org"}, []string{"dl.google.com"}
+	it, err := Podobrat(context.Background(), netip.MustParseAddr("2001:db8::1"), o)
+	if err != nil || it.Maska != "dl.google.com" {
+		t.Errorf("запас с нынешней маской: %+v, %v", it, err)
+	}
+}
+
+// Причина для человека по-русски, исходная ошибка лежит отдельно.
+func TestProveritPrichina(t *testing.T) {
+	s := novyyStend(t)
+	s.postavit("203.0.113.8", sosed{imena: []string{"drugoe.example.org"}, protokoly: []string{"h2"}})
+	s.zapis("chuzhoy-sert.example.org", "203.0.113.8")
+	p := Proverit(context.Background(), "chuzhoy-sert.example.org", s.opcii())
+	if p.Godna || p.Prichina != "сайт не отвечает TLS 1.3 с X25519 или его сертификат недействителен" || p.Podrobno == "" {
+		t.Errorf("%+v", p)
+	}
+	p = Proverit(context.Background(), "net-takogo.example.org", s.opcii())
+	if p.Prichina != "сервер не находит адрес этого имени" || p.Podrobno == "" {
+		t.Errorf("%+v", p)
+	}
+}
+
 func TestEtoBrend(t *testing.T) {
 	for imya, brend := range map[string]bool{
 		"www.adobe.com": true, "dl.google.com": true, "ya.ru": true, "YA.RU.": true,

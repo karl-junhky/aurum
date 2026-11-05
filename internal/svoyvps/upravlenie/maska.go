@@ -33,40 +33,54 @@ type Maska struct {
 }
 
 // skriptPodbora просит программу сервера подобрать маску у соседей по сети
-// (МА1). Подбор идёт до трёх минут.
-const skriptPodbora = `exec /usr/local/sbin/vpn-uzel maska podobrat -adres "$1"`
+// (МА1), кроме $2. Подбор идёт до трёх минут.
+const skriptPodbora = `exec /usr/local/sbin/vpn-uzel maska podobrat -adres "$1" -krome "$2"`
+
+// skriptProverkiMaski просит программу сервера проверить имя теми же
+// условиями, что соседей (МА2, «Ввести свою»).
+const skriptProverkiMaski = `exec /usr/local/sbin/vpn-uzel maska proverit "$1"`
 
 // otvetStaroyProgrammy это начало отказа vpn-uzel на незнакомую команду.
 const otvetStaroyProgrammy = "неизвестная команда"
 
-// podobratMasku: маску подбирает программа сервера. Программа без подбора
-// (старше 0.7.0) отвечает на команду «неизвестная команда», и маска
-// берётся из Maski, как в 1.11.0. Другой отказ с тем же кодом 2 - отказ.
-var podobratMasku = func(ctx context.Context, m server.Mashina, adres netip.Addr) (Maska, error) {
-	it, err := m.Skript(ctx, skriptPodbora, adres.String())
-	if err != nil {
-		return Maska{}, err
-	}
+// ErrStarayaProgramma: программа сервера старше 0.7.0 и маску не подбирает и
+// не проверяет. Установка тогда берёт маску из Maski, а смена маски просит
+// обновить программу.
+var ErrStarayaProgramma = errors.New("программа сервера не умеет подбирать маску: сначала обнови её")
+
+// otvetMaski разбирает ответ команды vpn-uzel maska: код 1 подбора это
+// ErrNetMaski, «неизвестная команда» - ErrStarayaProgramma.
+func otvetMaski(it ssh.Itog) (map[string]string, error) {
 	switch {
 	case it.Kod == 0:
 	case it.Kod == 1:
-		return Maska{}, fmt.Errorf("%w: %s", ErrNetMaski, ssh.PoslednyayaStroka(it.Oshibki))
+		return nil, fmt.Errorf("%w: %s", ErrNetMaski, ssh.PoslednyayaStroka(it.Oshibki))
 	case it.Kod == 2 && strings.HasPrefix(ssh.PoslednyayaStroka(it.Oshibki), otvetStaroyProgrammy):
-		imya, err := vybratMasku(ctx, m, Maski)
-		return Maska{Imya: imya, Istochnik: MaskaBrend}, err
+		return nil, ErrStarayaProgramma
 	default:
-		return Maska{}, &server.Oshibka{Shag: "maska", Kod: it.Kod, Tekst: ssh.PoslednyayaStroka(it.Oshibki)}
+		return nil, &server.Oshibka{Shag: "maska", Kod: it.Kod, Tekst: ssh.PoslednyayaStroka(it.Oshibki)}
 	}
-	var mk Maska
+	v := map[string]string{}
 	for s := range strings.SplitSeq(string(it.Vyvod), "\n") {
-		k, v, _ := strings.Cut(strings.TrimRight(s, "\r"), "\t")
-		switch k {
-		case "maska":
-			mk.Imya = v
-		case "istochnik":
-			mk.Istochnik = v
+		if k, z, ok := strings.Cut(strings.TrimRight(s, "\r"), "\t"); ok {
+			v[k] = z
 		}
 	}
+	return v, nil
+}
+
+// podobratMasku: маску подбирает программа сервера, кроме krome (пусто -
+// любую).
+var podobratMasku = func(ctx context.Context, m server.Mashina, adres netip.Addr, krome string) (Maska, error) {
+	it, err := m.Skript(ctx, skriptPodbora, adres.String(), krome)
+	if err != nil {
+		return Maska{}, err
+	}
+	v, err := otvetMaski(it)
+	if err != nil {
+		return Maska{}, err
+	}
+	mk := Maska{Imya: v["maska"], Istochnik: v["istochnik"]}
 	if err := konfig.ProveritMasku(mk.Imya); err != nil {
 		return Maska{}, &server.Oshibka{Shag: "maska", Tekst: "программа сервера назвала негодную маску: " + err.Error()}
 	}
@@ -76,6 +90,34 @@ var podobratMasku = func(ctx context.Context, m server.Mashina, adres netip.Addr
 		mk.Istochnik = MaskaBrend
 	}
 	return mk, nil
+}
+
+// ProverkaMaski это ответ программы сервера о маске, которую ввёл человек.
+type ProverkaMaski struct {
+	Imya  string
+	Godna bool
+	// Brend: имя из известных, на мобильном его глушат.
+	Brend bool
+	// Prichina - чем не годна, для человека; Podrobno - исходная ошибка.
+	Prichina, Podrobno string
+}
+
+var proveritSvoyuMasku = func(ctx context.Context, m server.Mashina, imya string) (ProverkaMaski, error) {
+	it, err := m.Skript(ctx, skriptProverkiMaski, imya)
+	if err != nil {
+		return ProverkaMaski{}, err
+	}
+	v, err := otvetMaski(it)
+	if err != nil {
+		return ProverkaMaski{}, err
+	}
+	p := ProverkaMaski{Imya: v["imya"], Godna: v["godna"] == "da", Brend: v["brend"] == "da", Prichina: v["prichina"], Podrobno: v["podrobno"]}
+	if p.Godna {
+		if err := konfig.ProveritMasku(p.Imya); err != nil {
+			return ProverkaMaski{}, &server.Oshibka{Shag: "maska", Tekst: "программа сервера назвала негодную маску: " + err.Error()}
+		}
+	}
+	return p, nil
 }
 
 // skriptMaski спрашивает маску с самой машины: reality отдаёт чужому

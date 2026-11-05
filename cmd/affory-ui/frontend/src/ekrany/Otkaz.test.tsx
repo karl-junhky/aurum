@@ -38,7 +38,7 @@ const VSE_DEYSTVIYA: Deystvie[] = [
 describe("экраны отказов", () => {
   const kody = kodyIzGo().filter((k) => !BEZ_EKRANA.has(k));
 
-  it("коды прочитаны из kody.go, и их шестьдесят восемь", () => {
+  it("коды прочитаны из kody.go, и их семьдесят", () => {
     // Pinning the count is deliberate: a new code must fail here until the
     // screen for it exists, and an empty read must not pass as "all covered".
     // Тридцать восьмой это internal-error, заведён 04.09.2026 полосой З:
@@ -73,7 +73,9 @@ describe("экраны отказов", () => {
     // поставить сервер заново кнопкой «Повторить», которая повторяла отказ.
     // Шестьдесят восьмой заведён 05.11.2026: vps-update-failed, обновление
     // программы своего сервера не встало и откатилось.
-    expect(kody.length).toBe(68);
+    // Шестьдесят девятый и семидесятый заведены 05.11.2026: vps-mask-failed и
+    // vps-mask-known, смена маски своего сервера (МА2).
+    expect(kody.length).toBe(70);
   });
 
   it.each(kody)("у кода %s есть свой текст и действие из словаря", (kod) => {

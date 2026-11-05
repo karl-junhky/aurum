@@ -39,6 +39,8 @@ func otkazVps(err error) OtkazVps {
 		chuzhoy *server.ParolChuzhoy
 		klyuch  *upravlenie.KlyuchNePustil
 		uzel    *oshibkaZagruzkiUzla
+		negodna *upravlenie.MaskaNegodna
+		brend   *upravlenie.MaskaIzvestnaya
 	)
 	// Отказ после замены программы несёт внутри и отказ SSH, и отказ
 	// сервера: он разбирается раньше них.
@@ -101,6 +103,17 @@ func otkazVps(err error) OtkazVps {
 			Tekst: "ключ этого компьютера - последний вход root: других ключей, которыми root пустят снаружи, нет, а паролем root не пускают. Без него root не войти, разве что под другим пользователем с sudo или через консоль хостера, поэтому ключ не снят. Сервер можно забыть, не снимая ключа"}
 	case errors.Is(err, upravlenie.ErrNeDoshla):
 		return OtkazVps{Kod: protokol.KodVpsPostavitZanovo, Tekst: "установка на сервере не дошла до ключей: поставь сервер заново"}
+	case errors.As(err, &negodna):
+		return OtkazVps{Kod: protokol.KodVpsMaska,
+			Tekst: "маска " + ssh.Obrezat(negodna.Imya, 80) + " не годится: " + ssh.Obrezat(negodna.Prichina, dlinaSoServera) + ". На сервере прежняя маска"}
+	case errors.As(err, &brend):
+		return OtkazVps{Kod: protokol.KodVpsMaskaIzvestnaya,
+			Tekst: "маска " + brend.Imya + " - известный сайт: на мобильном интернете такие имена глушат, и ключ reality с ним может не открыться. На сервере прежняя маска"}
+	case errors.Is(err, upravlenie.ErrNetDrugoyMaski):
+		return OtkazVps{Kod: protokol.KodVpsMaska,
+			Tekst: "другой годной маски не нашлось ни рядом с сервером, ни в запасном списке: можно ввести свою. На сервере прежняя маска"}
+	case errors.Is(err, upravlenie.ErrStarayaProgramma):
+		return OtkazVps{Kod: protokol.KodVpsMaska, Tekst: "программа на сервере старая и маску не меняет: сначала обнови её"}
 	case errors.As(err, &molch):
 		return otkazMolchaniya(molch)
 	case errors.As(err, &stop):

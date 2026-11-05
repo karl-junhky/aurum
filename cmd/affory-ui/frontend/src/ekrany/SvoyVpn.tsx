@@ -1183,6 +1183,7 @@ const DELO_IDYOT: Record<string, string> = {
   otpusk: "Снимаю ключ этого компьютера с сервера",
   parol: "Меняю вход по паролю",
   obnovlenie: "Обновляю программу на сервере",
+  maska: "Меняю маску",
   osmotr: "Осматриваю сервер",
   ustanovka: "Ставлю VPN",
 };
@@ -1196,6 +1197,7 @@ const DELO_ITOG: Record<string, string> = {
   otpusk: "Снятие ключа этого компьютера",
   parol: "Смена входа по паролю",
   obnovlenie: "Обновление программы сервера",
+  maska: "Смена маски",
   osmotr: "Осмотр сервера",
   ustanovka: "Установка VPN",
 };
@@ -1244,9 +1246,29 @@ export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlash
         tekst: `Из твоей сети с ней не провёз ${o.ne_proshli.map((t) => vidKlyucha(t).imya).join(" и ")}. Остальные ключи работают`,
       };
     }
+    case "maska": {
+      const imya = h.maska?.imya;
+      if (!imya) return null;
+      const hy2 = h.ustanovlen?.klyuchi.some((k) => k.transport === "hy2") ? ". Ключ hysteria2 прежний" : "";
+      return { zagolovok: `Маска сменилась на ${imya}`, tekst: `Ключ reality на телефоне со старой маской больше не подключится, добавь его заново${hy2}` };
+    }
   }
   return null;
 }
+
+/** Что делается сейчас. Смена маски идёт шагами установки, но говорит о
+ *  своём. */
+function chtoIdyot(h: HodVps): string | undefined {
+  if (h.vid === "maska") {
+    if (h.shag === "maska" && h.maska?.svoya) return `проверяю с сервера, годится ли ${h.maska.svoya} в маску`;
+    if (h.shag === "paket") return "перезапускаю VPN на сервере с новой маской";
+  }
+  return CHTO_IDYOT[h.shag ?? ""];
+}
+
+/** Дела, что после записи ключей перепроверяют их из сети. Захват и смена
+ *  маски ключи пишут, но не проверяют. */
+const PEREPROVERYAYUT = new Set(["ustanovka", "podbor"]);
 
 /** Ключи уже записаны, и дело только перепроверяет их из сети (И7): повторы
  *  детектора смотрят адрес, проверка ключей сами ключи. */
@@ -1256,7 +1278,7 @@ function zagolovokPerepoverki(h: HodVps): string {
 
 /** Ход и итог дела одной строкой. Отказ ставит своё действие, если окно его
  *  умеет. */
-function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtmenu, naSkryt, deystviya, dop }: {
+function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtmenu, naSkryt, deystviya, dop, knopkiItoga }: {
   h: HodVps;
   adres: string | undefined;
   aktiven: boolean;
@@ -1271,14 +1293,16 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtm
   deystviya: Partial<Record<string, () => void>>;
   /** Кнопка по коду, у которого в словаре действия нет. */
   dop?: ReactNode;
+  /** Кнопки удачного итога. */
+  knopkiItoga?: ReactNode;
 }) {
   if (h.faza === "idyot") {
     const imya = h.planovaya
       ? "Плановая проверка сервера"
-      : h.ustanovlen ? zagolovokPerepoverki(h) : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
+      : h.ustanovlen && PEREPROVERYAYUT.has(h.vid) ? zagolovokPerepoverki(h) : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
     const tekst = h.shag === "detektor" && h.povtory.length > 0
       ? [h.krug_tekst ? sPropisnoy(h.krug_tekst) : "", povtoryTekstom(h)].filter(Boolean).join(". ")
-      : CHTO_IDYOT[h.shag ?? ""];
+      : chtoIdyot(h);
     return (
       <Plashka testId="svoy-delo" znachok={<Vertushka className="text-accent-ink h-4 w-4" />} zagolovok={imya} tekst={tekst}>
         <Knopka rang="vtoraya" aktiven={aktiven} onClick={naOtmenu}>Отменить</Knopka>
@@ -1317,6 +1341,7 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtm
     <>
       {itog && (
         <Plashka testId="svoy-delo" ton={itog.ton} znachok={itog.ton ? <IkVnimanie className="text-warn h-4 w-4" /> : <IkGalka className="text-accent-ink h-4 w-4" />} zagolovok={itog.zagolovok} tekst={itog.tekst}>
+          {knopkiItoga}
           {zakryt}
         </Plashka>
       )}
@@ -1380,6 +1405,78 @@ function Pereimenovat({ server, aktiven, naSohranit, naOtmenu }: {
   );
 }
 
+/** Имя сайта, как его примет программа сервера (reImya в uzel/maska): окно
+ *  отсекает опечатки, а годится ли сайт, проверяет сервер. */
+const RE_IMENI_SAYTA = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** Маски 1.11.0 (upravlenie.Maski): у записей тех серверов источника нет. */
+const MASKI_1_11 = ["dl.google.com", "www.adobe.com"];
+
+function imyaMaski(imya: string): string {
+  return imya.trim().toLowerCase().replace(/\.$/, "");
+}
+
+/** Что сказать о маске сервера в карточке. */
+export function opisanieMaski(s: SvoyServer): string | undefined {
+  switch (s.maska_istochnik) {
+    case "sosedi":
+      return "малоизвестный сайт из той же сети, что сервер";
+    case "zapas":
+      return "из запасного списка: в сети сервера подходящего сайта не оказалось";
+    case "svoya":
+      return "задана тобой";
+    case "brend":
+      return "известный сайт: на мобильном интернете такие имена глушат";
+  }
+  return MASKI_1_11.includes(imyaMaski(s.maska)) ? "известный сайт: на мобильном интернете такие имена глушат" : undefined;
+}
+
+/** Смена маски (МА2): подобрать другую рядом с сервером или поставить свою.
+ *  Годится ли своя, проверяет сервер. */
+function SmenaMaski({ server, aktiven, naPodobrat, naSvoyu, naOtmenu }: {
+  server: SvoyServer;
+  aktiven: boolean;
+  naPodobrat: () => void;
+  naSvoyu: (imya: string) => void;
+  naOtmenu: () => void;
+}) {
+  const [svoya, zadatSvoyu] = useState("");
+  const imya = imyaMaski(svoya);
+  const oshibka = imya === "" ? null
+    : !RE_IMENI_SAYTA.test(imya) ? "это не имя сайта"
+    : imya === imyaMaski(server.maska) ? "эта маска уже стоит"
+    : null;
+  return (
+    <div className="border-border flex flex-col gap-3 border-t px-4 py-4" data-testid="svoy-smena-maski">
+      <div className="flex flex-wrap items-center gap-3">
+        <Knopka rang="glavnaya" testId="svoy-podobrat-masku" aktiven={aktiven} onClick={naPodobrat}>Подобрать другую</Knopka>
+        <span className="text-fg-muted text-xs">Малоизвестный сайт из сети сервера</span>
+      </div>
+      <div className="flex max-w-[420px] items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <PolePodpisannoe podpis="Или своя маска">
+            <Pole testId="svoy-svoya-maska" znachenie={svoya} naVvod={zadatSvoyu} placeholder="имя сайта" oshibka={oshibka !== null} maxDlina={253} />
+          </PolePodpisannoe>
+        </div>
+        <Knopka rang="vtoraya" testId="svoy-postavit-svoyu" aktiven={aktiven && imya !== "" && oshibka === null} onClick={() => naSvoyu(imya)}>Поставить свою</Knopka>
+      </div>
+      {oshibka && <span role="alert" className="text-danger text-xs">{oshibka}</span>}
+      <span className="text-fg-muted text-xs">Ключ reality в списке сменится сразу, на телефоне его придётся добавить заново</span>
+      <div>
+        <Knopka rang="tekst" onClick={naOtmenu}>Отмена</Knopka>
+      </div>
+    </div>
+  );
+}
+
+/** Ключи для телефона: выгрузка ключей ids с кодами QR. Строка - почему не
+ *  вышло. */
+async function vygruzitKlyuchi(komanda: SvoyVps["komanda"], ids: string[]): Promise<VygruzkaOtvet | string> {
+  const r = await komanda("exportServers", { ids });
+  if ("otkaz" in r) return `Ключи не выгружены: ${r.otkaz.tekst || tekstOtkaza[r.otkaz.kod]?.tekst || r.otkaz.kod}`;
+  return vygruzkaIz("telo" in r ? r.telo : undefined) ?? "Служба ответила без ключей";
+}
+
 /** Строка ключа в карточке. Ключ, мёртвый на самом сервере, главнее всего:
  *  его чинит подбор портов, а не другой адрес. Дальше то, что он не прошёл
  *  из сети человека, хотя на сервере работает: так его и увидит человек. */
@@ -1405,7 +1502,7 @@ function formaPostavitZanovo(s: SvoyServer): Forma {
   return { ...formaIzZapisi(s), poverhZapisi: s.adres, imya: s.imya, sposob: s.parol_vyklyuchen ? "klyuch" : "parol" };
 }
 
-function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot }: {
+function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot, komanda, skopirovat, kodyQr }: {
   s: SvoyServer;
   trevogi: SvoyaTrevoga[];
   hody: HodVps[];
@@ -1419,9 +1516,16 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   naVopros: (v: Vopros) => void;
   naSkryt: (id: number) => void;
   naOtchyot: (s: SvoyServer) => void;
+  komanda: SvoyVps["komanda"];
+  skopirovat: (tekst: string) => Promise<void>;
+  kodyQr: (tekst: string) => Promise<string[]>;
 }) {
   const [zadayu, zadatZadayu] = useState(false);
   const [imenuyu, zadatImenuyu] = useState(false);
+  const [menyayuMasku, zadatMenyayuMasku] = useState(false);
+  const [vygruzka, zadatVygruzku] = useState<VygruzkaOtvet | null>(null);
+  const [otkazVygruzki, zadatOtkazVygruzki] = useState<string | null>(null);
+  const [zhdyotVygruzka, zadatZhdyotVygruzka] = useState(false);
   const ocenka = ocenitServer(s, trevogi, hody);
   const vid = SOSTOYANIE[ocenka.sostoyanie];
   const upravlyaem = s.klyuch_upravleniya && !s.novyy_otpechatok && !s.klyuch_ne_chitaetsya;
@@ -1430,6 +1534,17 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   // что перепишут запись с прежним названием.
   const mozhnoImya = aktiven && !imyaZanyato(hody, s.id);
   const delo = posledniy(hody.filter((h) => h.server === s.id && !skryty.includes(h.id)));
+  // Ключи для телефона показаны по итогу дела: следующее дело могло сменить
+  // ключ, и прежние коды на экране уже мёртвые.
+  const idDela = delo?.id;
+  // Выгрузка, что ответила уже после смены дела, не показывается.
+  const tekusheeDelo = useRef(idDela);
+  useEffect(() => {
+    tekusheeDelo.current = idDela;
+    zadatVygruzku(null);
+    zadatOtkazVygruzki(null);
+    zadatZhdyotVygruzka(false);
+  }, [idDela]);
   const p = svezhayaProverka(s, hody);
   // «Повторить» повторяет упавшее дело. Снос и снятие ключа снова через
   // вопрос. Подбор повторяется сам по сети: порты, заданные руками, снимок
@@ -1439,6 +1554,7 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
     podbor: () => naDelo("svoyVpsPodobratPorty", { id: s.id }),
     parol: () => naDelo("svoyVpsParol", { id: s.id, vyklyuchit: !s.parol_vyklyuchen }),
     obnovlenie: () => naDelo("svoyVpsObnovit", { id: s.id }),
+    maska: () => naDelo("svoyVpsMaska", { id: s.id, svoya: delo?.maska?.svoya, brend_soglasen: delo?.maska?.brend_soglasen }),
     snos: () => naVopros({ vid: "snesti", server: s }),
     otpusk: () => naVopros({ vid: "zabyt", server: s }),
     vzyat: () => naVzyat(s),
@@ -1450,8 +1566,28 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   };
   // Ключ этого компьютера оказался последним входом root: забыть можно и без
   // снятия (спека, таблица отказов, vps-last-login).
-  const zabytBezSnyatiya = delo?.faza === "oshibka" && delo.otkaz?.kod === "vps-last-login"
+  // Своя маска из известных имён: ставится только после согласия.
+  const svoyaIzvestnaya = delo?.faza === "oshibka" && delo.otkaz?.kod === "vps-mask-known" ? delo.maska?.svoya : undefined;
+  const dop = delo?.faza === "oshibka" && delo.otkaz?.kod === "vps-last-login"
     ? <Knopka rang="vtoraya" testId="svoy-zabyt-bez-snyatiya" aktiven={aktiven && !zanyato} onClick={() => naDelo("svoyVpsZabyt", { id: s.id })}>Забыть, не снимая ключа</Knopka>
+    : svoyaIzvestnaya
+      ? <Knopka rang="vtoraya" testId="svoy-maska-vsyo-ravno" aktiven={mozhno} onClick={() => naDelo("svoyVpsMaska", { id: s.id, svoya: svoyaIzvestnaya, brend_soglasen: true })}>Всё равно поставить</Knopka>
+      : undefined;
+  // Маска сменилась: старый ключ reality на телефоне мёртв, новый тут же.
+  const idsMaski = delo?.vid === "maska" && delo.faza === "gotovo" ? delo.ustanovlen?.ids ?? [] : [];
+  const knopkiItoga = idsMaski.length > 0
+    ? (
+      <Knopka rang="vtoraya" testId="svoy-klyuchi-telefona-maska" aktiven={aktiven} zhdyot={zhdyotVygruzka} onClick={() => void (async () => {
+        const dlya = idDela;
+        zadatOtkazVygruzki(null);
+        zadatZhdyotVygruzka(true);
+        const v = await vygruzitKlyuchi(komanda, idsMaski);
+        if (tekusheeDelo.current !== dlya) return;
+        zadatZhdyotVygruzka(false);
+        if (typeof v === "string") zadatOtkazVygruzki(v);
+        else zadatVygruzku(v);
+      })()}>Ключи для телефона</Knopka>
+    )
     : undefined;
   const proveren = vozrast(s.proveren);
   return (
@@ -1520,7 +1656,29 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
           naOtmenu={() => naDelo("svoyVpsOtmenit", {})}
           naSkryt={() => naSkryt(delo.id)}
           deystviya={deystviya}
-          dop={zabytBezSnyatiya}
+          dop={dop}
+          knopkiItoga={knopkiItoga}
+        />
+      )}
+      {otkazVygruzki && <p role="alert" className="text-danger px-4 pb-3 text-xs">{otkazVygruzki}</p>}
+      {vygruzka && (
+        <div className="border-border border-t px-4 py-4">
+          <Vygruzka vygruzka={vygruzka} zakryt={() => zadatVygruzku(null)} skopirovat={skopirovat} kodyQr={kodyQr} zagolovok="Ключи для телефона" />
+        </div>
+      )}
+      {menyayuMasku && (
+        <SmenaMaski
+          server={s}
+          aktiven={mozhno}
+          naPodobrat={() => {
+            zadatMenyayuMasku(false);
+            naDelo("svoyVpsMaska", { id: s.id });
+          }}
+          naSvoyu={(svoya) => {
+            zadatMenyayuMasku(false);
+            naDelo("svoyVpsMaska", { id: s.id, svoya });
+          }}
+          naOtmenu={() => zadatMenyayuMasku(false)}
         />
       )}
       {imenuyu && (
@@ -1549,6 +1707,15 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
         {s.reality !== undefined && (
           <Ryad nazvanie={<span className="flex items-baseline gap-2">reality<span className="text-fg-muted text-[13px] font-normal tabular-nums">TCP {s.reality}</span></span>}
             poyasnenie={sostoyanieKlyucha(s, p, "reality-tcp")} />
+        )}
+        {s.reality !== undefined && s.maska !== "" && (
+          <Ryad nazvanie="Маска" poyasnenie={opisanieMaski(s)}>
+            <span className="text-fg-secondary break-all text-[13px]" data-testid="svoy-maska">{s.maska}</span>
+            {upravlyaem && (
+              <Knopka rang="vtoraya" aktiven={mozhno} zhdyot={delo?.vid === "maska" && delo.faza === "idyot"} testId="svoy-smenit-masku"
+                onClick={() => zadatMenyayuMasku(true)}>Сменить</Knopka>
+            )}
+          </Ryad>
         )}
         {s.hy2 !== undefined && (
           <Ryad nazvanie={<span className="flex items-baseline gap-2">hysteria2<span className="text-fg-muted text-[13px] font-normal tabular-nums">UDP {s.hy2}</span></span>}
@@ -1802,6 +1969,9 @@ export function SvoyVpn(p: SvoyVpnProps) {
           naVopros={zadatVopros}
           naSkryt={svoy.skryt}
           naOtchyot={naOtchyot}
+          komanda={komanda}
+          skopirovat={p.skopirovat}
+          kodyQr={p.kodyQr}
         />
       ))}
       {voprosOkno}
@@ -1985,18 +2155,10 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
               naVygruzit={() => void (async () => {
                 p.zadatOtkazVygruzki(null);
                 zadatZhdyom("exportServers");
-                const r = await komanda("exportServers", { ids });
+                const v = await vygruzitKlyuchi(komanda, ids);
                 zadatZhdyom(null);
-                if ("otkaz" in r) {
-                  p.zadatOtkazVygruzki(`Ключи не выгружены: ${r.otkaz.tekst || tekstOtkaza[r.otkaz.kod]?.tekst || r.otkaz.kod}`);
-                  return;
-                }
-                const v = vygruzkaIz("telo" in r ? r.telo : undefined);
-                if (!v) {
-                  p.zadatOtkazVygruzki("Служба ответила без ключей");
-                  return;
-                }
-                p.zadatVygruzku(v);
+                if (typeof v === "string") p.zadatOtkazVygruzki(v);
+                else p.zadatVygruzku(v);
               })()}
               naZakrytVygruzku={() => p.zadatVygruzku(null)}
               naVhod={() => {
