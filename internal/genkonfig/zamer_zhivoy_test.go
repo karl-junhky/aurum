@@ -3,6 +3,7 @@ package genkonfig
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,29 +134,41 @@ func TestTablicaAdresovNaZhivomYadre(t *testing.T) {
 }
 
 // svobodnyyPort берёт порт, свободный и для TCP, и для UDP: shadowsocks слушает
-// оба. Свободный по TCP номер у Windows бывает в зарезервированном диапазоне
-// UDP (их двигает Hyper-V), и ядро-сервер падало на bind (02.10.2026). Номер
-// поэтому выдаёт UDP: система раздаёт его в обход своих резервов. TCP-порты
-// она выдаёт почти подряд, и двадцать попыток от TCP целиком ложились в один
-// такой диапазон.
+// оба. Свободный по одному протоколу номер у Windows бывает в
+// зарезервированном диапазоне другого (их двигает Hyper-V), и ядро-сервер
+// падало на bind (02.10.2026). Брать номер у системы нельзя: и TCP, и UDP она
+// раздаёт подряд (замерено 06.11.2026: 61220, 61221, 61222…), и двадцать
+// попыток целиком ложились в одну дыру резерва в сотню портов. Номер поэтому
+// случайный и ниже раздаваемых системой.
 func svobodnyyPort(t *testing.T) int {
 	t.Helper()
-	for range 20 {
-		u, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
+	var posled error
+	for range 200 {
+		port := 20000 + rand.IntN(20000)
+		// Проба порт отпускает: без памяти о выданных один тест мог бы
+		// получить один номер дважды, и второе ядро не заняло бы его.
+		if _, uzhe := vydannyePorty.LoadOrStore(port, struct{}{}); uzhe {
+			continue
 		}
-		port := u.LocalAddr().(*net.UDPAddr).Port
+		u, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			posled = err
+			continue
+		}
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		u.Close()
 		if err == nil {
 			l.Close()
 			return port
 		}
+		posled = err
 	}
-	t.Fatal("за 20 попыток не нашлось порта, свободного и для TCP, и для UDP")
+	t.Fatalf("за 200 попыток не нашлось порта, свободного и для TCP, и для UDP: %v", posled)
 	return 0
 }
+
+// vydannyePorty это номера, уже отданные тестам пакета, в том числе отвергнутые пробой.
+var vydannyePorty sync.Map
 
 func zapustit(t *testing.T, yadro, imya, konfig string) {
 	t.Helper()
