@@ -66,9 +66,13 @@ type SvoyServer struct {
 	// MaskaBrend или MaskaSvoya (ввёл человек); пусто у серверов 1.11.0 (их
 	// маски из известных) и у взятых под управление.
 	MaskaIstochnik string `json:"maska_istochnik,omitempty"`
-	Reality        int    `json:"reality,omitempty"`
-	Hy2            int    `json:"hy2,omitempty"`
-	PortyRuchnye   bool   `json:"porty_ruchnye,omitempty"`
+	// MaskaNeOtvechaet: программа сервера (с 0.7.0) не достала эту маску
+	// три проверки подряд, и это чем кончилась последняя (МА3). Пишет
+	// проверка, на которой программа ответила.
+	MaskaNeOtvechaet string `json:"maska_ne_otvechaet,omitempty"`
+	Reality          int    `json:"reality,omitempty"`
+	Hy2              int    `json:"hy2,omitempty"`
+	PortyRuchnye     bool   `json:"porty_ruchnye,omitempty"`
 	// Prodlenie: чем программа сервера продлевает сертификат: 80, 443 или
 	// net (сертификата нет, hy2 не стоит).
 	Prodlenie string `json:"prodlenie,omitempty"`
@@ -1008,6 +1012,11 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 			bylo := n.SvoiServery[i]
 			if it.MaskaIstochnik == "" && bylo.Maska == zapis.Maska {
 				zapis.MaskaIstochnik = bylo.MaskaIstochnik
+			}
+			// Тревога сторожа о той же маске ждёт следующей проверки, новая
+			// маска её снимает.
+			if bylo.Maska == zapis.Maska {
+				zapis.MaskaNeOtvechaet = bylo.MaskaNeOtvechaet
 			}
 			prezhnyaya := map[string]string{}
 			for _, t := range bylo.NeIzSeti {

@@ -918,6 +918,22 @@ func (y *Yadro) Zdorove() Zdorove {
 	return z
 }
 
+// Maska отдаёт сайт первого по тегу входа reality работающего ядра; пусто -
+// ядро не поднято или reality в нём нет.
+func (y *Yadro) Maska() string {
+	y.mu.Lock()
+	defer y.mu.Unlock()
+	if y.rabotaet == nil {
+		return ""
+	}
+	for _, v := range y.rabotaet.vhody {
+		if v.Maska != "" {
+			return v.Maska
+		}
+	}
+	return ""
+}
+
 // Ostanovit гасит ядро при выходе программы.
 func (y *Yadro) Ostanovit() {
 	y.mu.Lock()

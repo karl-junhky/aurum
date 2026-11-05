@@ -87,6 +87,8 @@ type SostoyanieUzla struct {
 	ProbaDo int64 `json:"proba_do,omitempty"`
 	// Sert пуст, если в пакете нет самостоятельного выпуска.
 	Sert *SertUzla `json:"sert_ip_sam,omitempty"`
+	// Maska пуст у программы старше 0.7.0 и у ядра без reality.
+	Maska *StorozhMaski `json:"maska,omitempty"`
 }
 
 // SertUzla это выпуск сертификата на IP глазами программы сервера
@@ -142,5 +144,22 @@ func Sostoyanie(ctx context.Context, m Mashina) (s SostoyanieUzla, err error) {
 	if s.Sert != nil {
 		s.Sert.Sposob, s.Sert.Otkaz = chisto(s.Sert.Sposob), chisto(s.Sert.Otkaz)
 	}
+	if s.Maska != nil {
+		s.Maska.Imya, s.Maska.Prichina = chisto(s.Maska.Imya), chisto(s.Maska.Prichina)
+	}
 	return s, nil
+}
+
+// StorozhMaski это маска reality глазами программы сервера (maska.Storozh в
+// uzel, МА3): она проверяет маску раз в час и после трёх провалов подряд
+// ставит тревогу. Время в Unix-секундах.
+type StorozhMaski struct {
+	Imya string `json:"imya"`
+	// Provereno ноль - эту маску программа ещё не проверяла.
+	Provereno int64  `json:"provereno,omitempty"`
+	Godna     bool   `json:"godna"`
+	Provalov  int    `json:"provalov,omitempty"`
+	ProvalS   int64  `json:"proval_s,omitempty"`
+	Prichina  string `json:"prichina,omitempty"`
+	Trevoga   bool   `json:"trevoga,omitempty"`
 }

@@ -163,6 +163,9 @@ export interface SvoyServer {
   /** Откуда маска: sosedi, zapas, brend или svoya. Пусто - сервер 1.11.0
    *  или взят под управление. */
   maska_istochnik?: string;
+  /** Программа сервера не достала маску три проверки подряд (МА3): чем
+   *  кончилась последняя. */
+  maska_ne_otvechaet?: string;
   reality?: number;
   hy2?: number;
   porty_ruchnye: boolean;
@@ -403,6 +406,7 @@ function serverIz(v: unknown): SvoyServer | null {
     versiya: stroka(o.versiya),
     maska: stroka(o.maska) ?? "",
     maska_istochnik: stroka(o.maska_istochnik),
+    maska_ne_otvechaet: stroka(o.maska_ne_otvechaet),
     reality: chislo(o.reality),
     hy2: chislo(o.hy2),
     porty_ruchnye: o.porty_ruchnye === true,
@@ -444,6 +448,8 @@ export interface OcenkaServera {
   /** Причина это отказ последней проверки: строка упавшей проверки говорит
    *  то же самое и несёт кнопку, плашка карточки её не повторяет. */
   izProverki?: boolean;
+  /** Маска перестала отвечать: плашка несёт «Сменить маску». */
+  maska?: boolean;
 }
 
 // Хвост тревоги ведёт в этот самый раздел, а в карточке он лишний.
@@ -523,6 +529,16 @@ export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVp
   // сети: чинит его подбор портов, а не другой адрес.
   if (molchat.length > 0) {
     return { sostoyanie: "vnimanie", prichina: `На сервере не работает ${molchat.map((x) => imyaVida(x.vid)).join(" и ")}`, sovet: SOVET_PODBORA };
+  }
+  // Сайт маски пропал: ключ reality не подключится, откуда бы ни шёл, и это
+  // главнее того, что он не открывается из сети человека.
+  if (s.maska_ne_otvechaet && s.reality !== undefined) {
+    return {
+      sostoyanie: "vnimanie",
+      prichina: "Маска перестала отвечать",
+      sovet: `${s.maska_ne_otvechaet.charAt(0).toUpperCase() + s.maska_ne_otvechaet.slice(1)}. С ней ключ reality не подключится, смени маску`,
+      maska: true,
+    };
   }
   // Сервер может быть здоров, а ключи из сети человека не проходят: это тоже
   // «нужно внимание». Снимает его запись: служба убирает вид, когда его ключ

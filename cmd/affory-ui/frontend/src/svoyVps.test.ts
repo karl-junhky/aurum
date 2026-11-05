@@ -143,6 +143,21 @@ describe("оценка сервера", () => {
     });
   });
 
+  it("маска перестала отвечать: главнее сети человека, но не мёртвого порта", () => {
+    const s = server({ maska_ne_otvechaet: "сайт не отвечает h2", ne_iz_seti: ["reality-tcp"] });
+    expect(ocenitServer(s, [], [])).toEqual({
+      sostoyanie: "vnimanie", prichina: "Маска перестала отвечать",
+      sovet: "Сайт не отвечает h2. С ней ключ reality не подключится, смени маску", maska: true,
+    });
+    const h = hod({
+      proverka: { yadro_zhivo: true, porty: [{ vid: "reality", port: 2087, slushaet: false }, { vid: "hy2", port: 5443, slushaet: true }], maska: "godna", pamyat_mb: 1, disk_mb: 1 },
+    });
+    expect(ocenitServer(s, [], [h]).prichina).toBe("На сервере не работает reality");
+    // reality нет - маска ни на что не влияет.
+    expect(ocenitServer(server({ maska_ne_otvechaet: "нет", reality: undefined }), [], []).sostoyanie).toBe("horosho");
+    expect(spisokIz({ servery: [{ ...server(), maska_ne_otvechaet: "нет" }] })?.[0].maska_ne_otvechaet).toBe("нет");
+  });
+
   it("после проверки сервер подбирали на тех же портах: старая проверка не судит", () => {
     const h = hod({
       konec: "2026-11-02T10:00:00Z",

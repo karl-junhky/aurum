@@ -403,6 +403,81 @@ func TestProverkaDlyaEkrana(t *testing.T) {
 	if p := proverkaDlyaEkrana(z, zd); p.SertTrevoga || p.SertOtkaz != "" || p.Versiya != "0.6.1" {
 		t.Fatalf("без выпуска в пакете: %+v", p)
 	}
+
+	// Сторож маски (МА3): тревога только о маске записи.
+	z.Maska = "sosed.example.net"
+	for _, c := range []struct {
+		imya    string
+		storozh *server.StorozhMaski
+		zhdali  string
+	}{
+		{"тревога", &server.StorozhMaski{Imya: "Sosed.Example.net", Trevoga: true, Prichina: "сайт не отвечает h2"}, "сайт не отвечает h2"},
+		{"без причины", &server.StorozhMaski{Imya: "sosed.example.net", Trevoga: true}, "сайт маски не отвечает"},
+		{"провалы без тревоги", &server.StorozhMaski{Imya: "sosed.example.net", Provalov: 2, Prichina: "нет"}, ""},
+		{"о другой маске", &server.StorozhMaski{Imya: "drugoy.example.org", Trevoga: true, Prichina: "нет"}, ""},
+		{"старая программа", nil, ""},
+	} {
+		zd.Uzel.Maska = c.storozh
+		if p := proverkaDlyaEkrana(z, zd); p.MaskaNeOtvechaet != c.zhdali {
+			t.Errorf("%s: %q", c.imya, p.MaskaNeOtvechaet)
+		}
+	}
+}
+
+// Тревога сторожа маски (МА3) ложится в запись, пока программа сервера
+// отвечает; пересборка записи с той же маской её держит, с новой снимает.
+func TestSvoyVpsMaskaNeOtvechaet(t *testing.T) {
+	s := sPustymNaborom(t)
+	kh := klyuchHostaDlyaTesta(t)
+	id, _, sek := postavitDlyaPodbora(t, s, kh)
+	imya := zapisPoId(t, s, id).Imya
+	storozh := &server.StorozhMaski{Imya: strings.ToUpper(sek.Maska), Provalov: 3, Trevoga: true, Prichina: "сайт не отвечает h2"}
+	var molchit error
+	s.vpsProverit = func(context.Context, upravlenie.Puti, ssh.Zapros, string) (upravlenie.ZdorovyeServera, error) {
+		return upravlenie.ZdorovyeServera{Osmotr: osmotrChistyy(), UzelOtkaz: molchit,
+			Uzel: server.SostoyanieUzla{Versiya: "0.7.0", YadroZhivo: true, Maska: storozh}}, nil
+	}
+	proverit := func() string {
+		t.Helper()
+		s.svoyVpsProverit(kadrVps(t, "svoyVpsProverit", map[string]string{"id": id}))
+		if h := dozhdatsyaVps(t, s); h.Faza != fazaGotovo {
+			t.Fatalf("проверка: %+v", h)
+		}
+		return zapisPoId(t, s, id).MaskaNeOtvechaet
+	}
+	if m := proverit(); m != "сайт не отвечает h2" {
+		t.Fatalf("после тревоги %q", m)
+	}
+	// Программа не ответила: о маске нового не узнали.
+	molchit = errors.New("пульт молчит")
+	if m := proverit(); m != "сайт не отвечает h2" {
+		t.Fatalf("программа молчит, а тревога %q", m)
+	}
+	// Захват или подбор портов пересобирают запись с той же маской.
+	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: imya, ZapisEst: true}, itogSoSekretami(t, sek, kh, 443, 8443)); err != nil {
+		t.Fatal(err)
+	}
+	if m := zapisPoId(t, s, id).MaskaNeOtvechaet; m != "сайт не отвечает h2" {
+		t.Fatalf("та же маска, а тревога %q", m)
+	}
+	// Маска ответила снова.
+	molchit, storozh = nil, &server.StorozhMaski{Imya: sek.Maska, Godna: true}
+	if m := proverit(); m != "" {
+		t.Fatalf("маска отвечает, а тревога %q", m)
+	}
+	// Новая маска тревогу прежней снимает.
+	storozh = &server.StorozhMaski{Imya: sek.Maska, Trevoga: true, Prichina: "нет"}
+	if m := proverit(); m != "нет" {
+		t.Fatalf("тревога %q", m)
+	}
+	novye := sek
+	novye.Maska = "sosed.example.net"
+	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: imya, ZapisEst: true}, itogSoSekretami(t, novye, kh, 443, 8443)); err != nil {
+		t.Fatal(err)
+	}
+	if m := zapisPoId(t, s, id).MaskaNeOtvechaet; m != "" {
+		t.Fatalf("новая маска, а тревога %q", m)
+	}
 }
 
 // Проверка, вышедшая за срок, это неудача с понятной причиной, а не отмена.

@@ -160,6 +160,8 @@ type Vhod struct {
 	Port       int64  `json:"port,omitempty"`
 	Lyudey     int    `json:"lyudey"`
 	Soedineniy int    `json:"soedineniy"`
+	// Maska это сайт, под который прячется вход reality; у других пусто.
+	Maska string `json:"maska,omitempty"`
 }
 
 // opisatVhody достаёт из конфига то, что про входы стоит показать.
@@ -170,6 +172,14 @@ func opisatVhody(yadro []byte) []Vhod {
 			Tag        string            `json:"tag"`
 			ListenPort json.Number       `json:"listen_port"`
 			Users      []json.RawMessage `json:"users"`
+			Tls        struct {
+				Reality struct {
+					Enabled   bool `json:"enabled"`
+					Handshake struct {
+						Server string `json:"server"`
+					} `json:"handshake"`
+				} `json:"reality"`
+			} `json:"tls"`
 		} `json:"inbounds"`
 	}
 	if err := json.Unmarshal(yadro, &konfig); err != nil {
@@ -180,7 +190,11 @@ func opisatVhody(yadro []byte) []Vhod {
 	itog := make([]Vhod, 0, len(konfig.Inbounds))
 	for _, v := range konfig.Inbounds {
 		port, _ := v.ListenPort.Int64()
-		itog = append(itog, Vhod{Teg: v.Tag, Tip: v.Type, Port: port, Lyudey: len(v.Users)})
+		vh := Vhod{Teg: v.Tag, Tip: v.Type, Port: port, Lyudey: len(v.Users)}
+		if v.Tls.Reality.Enabled {
+			vh.Maska = v.Tls.Reality.Handshake.Server
+		}
+		itog = append(itog, vh)
 	}
 	sort.Slice(itog, func(i, j int) bool { return itog[i].Teg < itog[j].Teg })
 	return itog

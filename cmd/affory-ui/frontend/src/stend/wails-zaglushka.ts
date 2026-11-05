@@ -304,6 +304,8 @@ const CHAS_MS = 3600 * 1000;
 // ?obnovlenie=est: окно ставит программу сервера новее, чем на нём;
 // otkaz - и обновление не выходит.
 const OBNOVLENIE = parametr("obnovlenie", "net");
+// ?maska=mertva: сторож программы сервера не достаёт маску (МА3).
+const MASKA = parametr("maska", "zhiva");
 
 /** Отказ команды тем же кадром, что у службы: полем oshibka, а не
  *  исключением моста. */
@@ -329,6 +331,7 @@ function svoyZapis(adres: string, reality: number, hy2: number, imya = "Мой �
     otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDE",
     ...(SVOY === "klyuch-hosta" ? { novyy_otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDI" } : {}),
     ...(OBNOVLENIE !== "net" ? { novaya_versiya: "0.7.0" } : {}),
+    ...(MASKA === "mertva" ? { maska_ne_otvechaet: "сайт отвечает без h2" } : {}),
   };
 }
 
@@ -531,7 +534,7 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
         const istochnik = !svoya ? "sosedi" : izvestnaya ? "brend" : "svoya";
         zakonchit(h, "gotovo", { put: PUT_PRYAMO, maska: { svoya: svoya || undefined, imya, istochnik },
           ustanovlen: { ...ustanovlen(), klyuchi: [{ transport: "reality-tcp", port: z.reality }, { transport: "hy2", port: z.hy2 }] } });
-        Object.assign(z, { maska: imya, maska_istochnik: istochnik, proveren: new Date().toISOString() });
+        Object.assign(z, { maska: imya, maska_istochnik: istochnik, maska_ne_otvechaet: undefined, proveren: new Date().toISOString() });
       },
     ], svoya ? 900 : 1500);
   },

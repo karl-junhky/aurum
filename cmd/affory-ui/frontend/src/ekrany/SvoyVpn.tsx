@@ -1644,7 +1644,11 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
         />
       )}
       {ocenka.prichina && !(ocenka.izProverki && delo?.vid === "proverka" && delo.faza === "oshibka" && delo.otkaz?.tekst === s.proverka_otkaz) && (
-        <Plashka ton={vid.kromka} zagolovok={ocenka.prichina} tekst={ocenka.sovet} />
+        <Plashka ton={vid.kromka} zagolovok={ocenka.prichina} tekst={ocenka.sovet} testId={ocenka.maska ? "svoy-maska-trevoga" : undefined}>
+          {ocenka.maska && upravlyaem && !menyayuMasku && (
+            <Knopka rang="vtoraya" aktiven={mozhno} testId="svoy-maska-trevoga-smenit" onClick={() => zadatMenyayuMasku(true)}>Сменить маску</Knopka>
+          )}
+        </Plashka>
       )}
       {delo && (
         <StrokaDela

@@ -900,6 +900,21 @@ describe("смена маски", () => {
     expect(delo).not.toHaveTextContent("Проверяю ключи");
   });
 
+  it("маска перестала отвечать: плашка открывает смену", () => {
+    stend({ servery: [server({ maska_ne_otvechaet: "сайт не отвечает h2" })] });
+    const plashka = screen.getByTestId("svoy-maska-trevoga");
+    expect(plashka).toHaveTextContent("Маска перестала отвечать");
+    expect(plashka).toHaveTextContent("Сайт не отвечает h2. С ней ключ reality не подключится, смени маску");
+    fireEvent.click(within(plashka).getByTestId("svoy-maska-trevoga-smenit"));
+    expect(screen.getByTestId("svoy-podobrat-masku")).toBeInTheDocument();
+    expect(within(screen.getByTestId("svoy-maska-trevoga")).queryByTestId("svoy-maska-trevoga-smenit")).toBeNull();
+  });
+
+  it("маска перестала отвечать, а ключа управления нет: кнопки нет", () => {
+    stend({ servery: [server({ maska_ne_otvechaet: "нет", klyuch_upravleniya: false })] });
+    expect(screen.queryByTestId("svoy-maska-trevoga-smenit")).toBeNull();
+  });
+
   it("без ключа управления маску видно, а сменить нечем", () => {
     stend({ servery: [server({ klyuch_upravleniya: false })] });
     expect(screen.getByTestId("svoy-maska")).toHaveTextContent("www.example.net");

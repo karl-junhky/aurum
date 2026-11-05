@@ -86,8 +86,17 @@ func TestSostoyanie(t *testing.T) {
 	}
 	// Без выпуска в пакете поля нет вовсе.
 	m.otvety[komandaSostoyanie] = ssh.Itog{Vyvod: []byte(`{"versiya":"0.6.0","hesh":"","yadro_zhivo":false,"vhody":null}`)}
-	if s, err := Sostoyanie(context.Background(), m); err != nil || s.Sert != nil || s.YadroZhivo {
+	if s, err := Sostoyanie(context.Background(), m); err != nil || s.Sert != nil || s.YadroZhivo || s.Maska != nil {
 		t.Fatalf("состояние %+v, ошибка %v", s, err)
+	}
+	// Сторож маски программы 0.7.0; длинная причина обрезается.
+	m.otvety[komandaSostoyanie] = ssh.Itog{Vyvod: []byte(`{"versiya":"0.7.0","hesh":"abc","yadro_zhivo":true,"vhody":[],` +
+		`"maska":{"imya":"sosed.example.net","provereno":300,"godna":false,"provalov":3,"proval_s":100,"prichina":"` +
+		strings.Repeat("я", 400) + `","trevoga":true}}`)}
+	s, err = Sostoyanie(context.Background(), m)
+	if err != nil || s.Maska == nil || s.Maska.Imya != "sosed.example.net" || !s.Maska.Trevoga || s.Maska.Provalov != 3 ||
+		s.Maska.Provereno != 300 || s.Maska.ProvalS != 100 || s.Maska.Godna || s.Maska.Prichina != ssh.Obrezat(strings.Repeat("я", 400), 300) {
+		t.Fatalf("сторож маски %+v, ошибка %v", s.Maska, err)
 	}
 }
 

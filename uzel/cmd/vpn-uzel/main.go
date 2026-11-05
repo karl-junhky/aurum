@@ -26,6 +26,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/lovushka"
+	"github.com/zxczxczxczxczxczxc1111/affory/uzel/maska"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/podpiska"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/pult"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sertip"
@@ -81,6 +82,7 @@ func rabotat(argumenty []string) int {
 
 	schyotchik := trafik.NovyySchyotchik()
 	u := &uzel{yadro: yadro.Novoe(*katalog, schyotchik, zhurnal), podpiska: podpiska.Novyy(zhurnal)}
+	u.storozh = maska.NovyyStorozh(u.yadro.Maska)
 	u.yadro.PodklyuchitPodpisku(u.podpiska)
 	u.vypusk = u.yadro.PodklyuchitVypusk(sertip.Opcii{})
 	zh, preduprezhdeniya, err := trafik.Otkryt(*katalog)
@@ -103,6 +105,7 @@ func rabotat(argumenty []string) int {
 	go u.vypusk.Rabotat(ctx)
 	go u.yadro.Podderzhivat(ctx)
 	go u.podpiska.Podderzhivat(ctx, yadro.PovtorPodnyatiya)
+	go u.storozh.Rabotat(ctx)
 	go func() {
 		if err := pult.Slushat(ctx, *putPulta, u, zhurnal); err != nil {
 			zhurnal.Error("пульт не работает", "oshibka", err)
@@ -132,6 +135,7 @@ type uzel struct {
 	yadro     *yadro.Yadro
 	podpiska  *podpiska.Server
 	vypusk    *sertip.Vypusk
+	storozh   *maska.Storozh
 	zh        *trafik.Zhurnal
 	zhOshibka error
 }
@@ -157,11 +161,13 @@ type sostoyanie struct {
 	TrafikOshibka string               `json:"trafik_oshibka,omitempty"`
 	Podpiska      *podpiska.Sostoyanie `json:"podpiska,omitempty"`
 	SertIPSam     *sertip.Sostoyanie   `json:"sert_ip_sam,omitempty"`
+	// Maska это сторож маски reality (МА3); нет reality - поля нет.
+	Maska *maska.SostoyanieStorozha `json:"maska,omitempty"`
 }
 
 func (u *uzel) Sostoyanie() any {
 	s := sostoyanie{Versiya: Versiya, Zdorove: u.yadro.Zdorove(), Podpiska: u.podpiska.Sostoyanie(),
-		SertIPSam: u.vypusk.Sostoyanie()}
+		SertIPSam: u.vypusk.Sostoyanie(), Maska: u.storozh.Sostoyanie()}
 	if u.zh != nil {
 		t := u.zh.Sostoyanie()
 		s.Trafik = &t

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
@@ -68,6 +69,10 @@ type ProverkaVps struct {
 	// упала, тогда MaskaOtkaz).
 	Maska      string `json:"maska"`
 	MaskaOtkaz string `json:"maska_otkaz,omitempty"`
+	// MaskaNeOtvechaet: сторож программы сервера (МА3) не достал маску
+	// записи три раза подряд, и это причина последнего провала. Тревога о
+	// другой маске (на сервере уже не та, что в записи) сюда не идёт.
+	MaskaNeOtvechaet string `json:"maska_ne_otvechaet,omitempty"`
 	// Свободная память и место на /var/lib, -1 - не узнали.
 	PamyatMB int `json:"pamyat_mb"`
 	DiskMB   int `json:"disk_mb"`
@@ -163,6 +168,7 @@ func (s *Sluzhba) deloProverki(z SvoyServer, zapros ssh.Zapros) func(context.Con
 			// прежние сведения остаются со своей отметкой.
 			if zd.UzelOtkaz == nil {
 				x.SertDo, x.SertTrevoga, x.SertOtkaz, x.SertProveren = p.SertDo, p.SertTrevoga, p.SertOtkaz, seychas
+				x.MaskaNeOtvechaet = p.MaskaNeOtvechaet
 			} else {
 				x.ProverkaOtkaz = "программа сервера не ответила: " + p.ProgrammaOtkaz
 			}
@@ -199,6 +205,12 @@ func proverkaDlyaEkrana(z SvoyServer, zd upravlenie.ZdorovyeServera) ProverkaVps
 				p.SertDo = u.Sert.Do
 			}
 			p.SertTrevoga, p.SertOtkaz = u.Sert.Trevoga, u.Sert.Otkaz
+		}
+		if m := u.Maska; m != nil && m.Trevoga && strings.EqualFold(m.Imya, z.Maska) {
+			p.MaskaNeOtvechaet = m.Prichina
+			if p.MaskaNeOtvechaet == "" {
+				p.MaskaNeOtvechaet = "сайт маски не отвечает"
+			}
 		}
 	}
 	switch {
