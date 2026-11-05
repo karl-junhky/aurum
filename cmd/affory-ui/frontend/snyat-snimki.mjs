@@ -16,6 +16,9 @@ const KUDA = fileURLToPath(new URL("../../../assets/screenshots/", import.meta.u
 const OKNO = { width: 1180, height: 860 };
 const MASHTAB = 1.5;
 
+// Письмо хостера для кадра мастера. Пароль в окне скрыт точками.
+const PISMO = ["Сервер готов", "", "IP-адрес: 203.0.113.40", "Логин: root", "Пароль: demo-parol-1"].join("\n");
+
 // Вкладки правил выбираются нажатием, а не адресом: подпись под снимком в
 // README обещает конкретную вкладку, и кадр обязан показывать именно её.
 // Прежний снимок показывал вкладку сервисов при подписи «Правила приложений».
@@ -37,6 +40,35 @@ const KADRY = [
   // Справка это окно поверх экрана подключения, и открывается оно значком
   // вопроса у заголовка «Серверы».
   { imya: "protocols.jpg", ekran: "podklyuchenie", knopka: "Проверить серверы", otkryt: "spravka-protokolov-otkryt", obrezat: "spravka-protokolov" },
+  // «Свой VPN» (06.11.2026): путь от письма хостера до карточки сервера.
+  // Ход установки в заглушке идёт по таймеру, поэтому кадр ждёт свою строку,
+  // а не время, и снимается сразу: общая пауза унесла бы установку дальше.
+  {
+    imya: "svoy-vpn-pismo.jpg", ekran: "svoy-vpn",
+    zhdat: async (page) => {
+      await page.getByTestId("svoy-postavit").click();
+      await page.getByTestId("svoy-soobshchenie").fill(PISMO);
+      await page.getByTestId("svoy-adres").waitFor();
+    },
+  },
+  {
+    imya: "svoy-vpn-porty.jpg", ekran: "svoy-vpn", dop: "&svoy=ustanovka", srazu: true,
+    zhdat: (page) => page.getByText("Пробую 5443 по UDP").waitFor(),
+  },
+  {
+    imya: "svoy-vpn-gotovo.jpg", ekran: "svoy-vpn", dop: "&svoy=ustanovka&domen=est", srazu: true,
+    zhdat: (page) => page.getByTestId("svoy-gotovo").waitFor({ timeout: 30_000 }),
+  },
+  // Карточка при открытии проверяет сервер сама: кадр ждёт конца проверки.
+  // Строка «Свободно на сервере» есть только у законченной проверки, а
+  // ожидание скрытия «Проверяю сервер» сработало бы и до её начала.
+  {
+    imya: "svoy-vpn-server.jpg", ekran: "svoy-vpn", dop: "&svoy=server&domen=est",
+    zhdat: async (page) => {
+      await page.getByText("Свободно на сервере").waitFor({ timeout: 30_000 });
+      await page.getByText("Проверяю сервер").waitFor({ state: "hidden", timeout: 30_000 });
+    },
+  },
 ];
 
 mkdirSync(KUDA, { recursive: true });
@@ -47,7 +79,8 @@ const page = await context.newPage();
 
 for (const kadr of KADRY) {
   await page.setViewportSize(OKNO);
-  await page.goto(`${BAZA}/?ekran=${kadr.ekran}`, { waitUntil: "networkidle" });
+  await page.goto(`${BAZA}/?ekran=${kadr.ekran}${kadr.dop ?? ""}`, { waitUntil: "networkidle" });
+  if (kadr.zhdat) await kadr.zhdat(page);
   if (kadr.knopka) {
     await page.getByRole("button", { name: kadr.knopka }).click();
     await page.waitForTimeout(600);
@@ -93,7 +126,7 @@ for (const kadr of KADRY) {
   }
   // Сфера на главном экране анимирована, а замеры и скорость приезжают
   // отдельными кадрами: скорость считается по двум снимкам статистики.
-  await page.waitForTimeout(2200);
+  if (!kadr.srazu) await page.waitForTimeout(2200);
   await page.screenshot({ path: KUDA + kadr.imya, type: "jpeg", quality: 92 });
   console.log(`снят ${kadr.imya} (${kadr.ekran})`);
 }

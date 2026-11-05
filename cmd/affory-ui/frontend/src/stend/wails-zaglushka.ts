@@ -592,7 +592,8 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
         const zhivo = SVOY !== "slomano";
         zakonchit(h, "gotovo", {
           proverka: {
-            versiya: "0.6.0", yadro_zhivo: zhivo,
+            // Проверка называет программу, что стоит на сервере, как служба.
+            versiya: stroka(z.versiya), yadro_zhivo: zhivo,
             ...(zhivo ? {} : { oshibka_yadra: "sing-box вышел с кодом 1: порт 2087 уже занят" }),
             porty: [{ vid: "reality", port: z.reality, slushaet: zhivo }, { vid: "hy2", port: z.hy2, slushaet: zhivo }],
             sert_do: z.sert_do, maska: "godna", pamyat_mb: 612, disk_mb: 18234,
