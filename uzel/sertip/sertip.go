@@ -187,6 +187,11 @@ type Sostoyanie struct {
 	OtkazS int64  `json:"otkaz_s,omitempty"`
 	// Sleduyushchaya: не раньше какого момента будет следующая попытка.
 	Sleduyushchaya int64 `json:"sleduyushchaya,omitempty"`
+	// Predel: выпуску пора, а попытки этого часа кончились; через сколько
+	// секунд освободится следующая. Её программа начнёт сама. Секунды, а не
+	// момент: клиент считает их по своим часам, и расхождение часов сервера
+	// не сдвигает ни его решение ждать, ни время в тексте.
+	Predel int64 `json:"predel,omitempty"`
 	// Trevoga: сертификата нет и выпуск уже отказывал, или до конца срока
 	// меньше суток (у домена недели), или продлить пора, а не выходит
 	// дольше шести часов.
@@ -223,6 +228,10 @@ type Vypusk struct {
 	gotovo     chan struct{} // закрывается, когда идущая попытка кончилась
 	pauza      int           // сколько держателей Zanyat не дают начать попытку
 	otlozheno  bool          // попытка не началась из-за паузы
+
+	// predelVZhurnale: до какого момента (Unix) ожидание предела уже
+	// записано в журнал. Под замком mu.
+	predelVZhurnale int64
 
 	// otlozhennyy: настоящий живой сертификат на прежнее имя, лежит в
 	// katalog/otlozhen; nil - его нет. Под замком mu.
@@ -464,13 +473,52 @@ func (v *Vypusk) Rabotat(ctx context.Context) {
 	defer t.Stop()
 	for {
 		v.krug(ctx)
+		// Попытки часа кончились: круг проснётся, как только освободится
+		// самая старая, а не на следующем тике до десяти минут спустя.
+		var predel <-chan time.Time
+		var budilnik *time.Timer
+		if d, ok := v.doPredela(); ok {
+			budilnik = time.NewTimer(d)
+			predel = budilnik.C
+		}
 		select {
 		case <-ctx.Done():
+			if budilnik != nil {
+				budilnik.Stop()
+			}
 			return
 		case <-t.C:
 		case <-v.budit:
+		case <-predel:
+		}
+		if budilnik != nil {
+			budilnik.Stop()
 		}
 	}
+}
+
+// doPredela: выпуску пора, а попытки этого часа кончились; d - через
+// сколько освободится самая старая. false - ждать её незачем.
+func (v *Vypusk) doPredela() (d time.Duration, ok bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	n := v.nastroyka
+	if n == nil || v.idyot {
+		return 0, false
+	}
+	seychas := v.o.Chasy()
+	if !v.pora(*n, seychas) || v.mozhno(seychas) {
+		return 0, false
+	}
+	// Попытка ровно на границе окна уже не в счёт (mozhno), секунда сверху
+	// это запас на ход часов.
+	return v.osvobozhdenie().Sub(seychas) + time.Second, true
+}
+
+// osvobozhdenie: когда самая старая попытка выйдет из окна. Под замком и
+// только когда попытки в окне есть.
+func (v *Vypusk) osvobozhdenie() time.Time {
+	return time.Unix(v.uchet.Popytki[0], 0).Add(oknoPopytok)
 }
 
 func (v *Vypusk) krug(ctx context.Context) {
@@ -504,7 +552,16 @@ func (v *Vypusk) krug(ctx context.Context) {
 		return
 	}
 	if !v.mozhno(seychas) {
+		// В журнал один раз на каждое ожидание, а не на каждый круг: круг
+		// будят и тик, и каждый принятый пакет.
+		imya, sled := n.imya(), v.osvobozhdenie()
+		novoe := sled.Unix() != v.predelVZhurnale
+		v.predelVZhurnale = sled.Unix()
 		v.mu.Unlock()
+		if novoe {
+			v.zhurnal.Info("выпуск ждёт: попытки этого часа кончились", "na", imya,
+				"sleduyushchaya", sled.UTC().Format(time.DateTime))
+		}
 		return
 	}
 	nastroyka, pervym := *n, v.uchet.Sposob
@@ -689,7 +746,12 @@ func (v *Vypusk) Sostoyanie() *Sostoyanie {
 	if pora {
 		s.Sleduyushchaya = seychas.Unix()
 		if !v.mozhno(seychas) && !v.mozhnoVernut(n, seychas) {
-			s.Sleduyushchaya = time.Unix(v.uchet.Popytki[0], 0).Add(oknoPopytok).Unix()
+			osvob := v.osvobozhdenie()
+			s.Sleduyushchaya = osvob.Unix()
+			if !v.idyot {
+				// Вверх до целой секунды и не меньше одной: ноль значит «предела нет».
+				s.Predel = max(1, int64((osvob.Sub(seychas)+time.Second-1)/time.Second))
+			}
 		}
 	}
 	return s

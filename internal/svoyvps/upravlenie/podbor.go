@@ -125,12 +125,12 @@ func PodobratPorty(ctx context.Context, p Podbor) (itog Itog, err error) {
 		if err != nil {
 			return Itog{}, err
 		}
-		pr, otkazSerta, err := vypustitSert(ctx, s, adres, "", paketSerta, &itog.Sert)
+		pr, otkazSerta, predel, err := vypustitSert(ctx, s, adres, "", paketSerta, &itog.Sert)
 		if err != nil {
 			return Itog{}, err
 		}
 		if itog.Prodlenie = pr; pr == porty.BezSerta {
-			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkazSerta})
+			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkazSerta, Predel: predel})
 		}
 	}
 

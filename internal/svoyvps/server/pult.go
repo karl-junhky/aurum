@@ -130,6 +130,10 @@ type SertUzla struct {
 	Otkaz          string `json:"otkaz,omitempty"`
 	OtkazS         int64  `json:"otkaz_s,omitempty"`
 	Sleduyushchaya int64  `json:"sleduyushchaya,omitempty"`
+	// Predel: выпуску пора, а попытки этого часа у программы кончились;
+	// через сколько секунд она сама начнёт следующую. Шлют сборки 0.7.0 с
+	// 06.11.2026; у прежних поля нет, и клиент ждёт выпуска полный срок.
+	Predel int64 `json:"predel,omitempty"`
 	// Trevoga: сертификата нет и выпуск уже отказывал, или до конца срока
 	// меньше суток, или продлить пора, а не выходит дольше шести часов.
 	Trevoga bool `json:"trevoga,omitempty"`

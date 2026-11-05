@@ -938,6 +938,33 @@ func TestPreduprezhdenieVps(t *testing.T) {
 	}
 }
 
+// Сертификат не вышел из-за предела попыток программы сервера: тексты
+// называют предел и время следующей попытки, а не закрытые порты и не запись
+// домена.
+func TestTekstyPredelaSerta(t *testing.T) {
+	sled := time.Date(2026, 11, 6, 22, 14, 0, 0, time.Local).Unix()
+	for imya, o := range map[string]OtkazVps{
+		"на адрес": preduprezhdenieVps([]upravlenie.Preduprezhdenie{{Vid: upravlenie.NetSerta, Predel: sled}}, nil),
+		"домен при установке": preduprezhdenieVps([]upravlenie.Preduprezhdenie{
+			{Vid: upravlenie.DomenNeVyshel, Domen: "kot.example.net", Predel: sled}}, nil),
+		"переход на домен": otkazVps(&upravlenie.SertDomenaNeVyshel{Domen: "kot.example.net", Otkaz: "попытки кончились", Predel: sled}),
+		"возврат с домена": preduprezhdenieVps([]upravlenie.Preduprezhdenie{{Vid: upravlenie.NetSerta, Predel: sled, Hy2Zhdyot: true}}, nil),
+	} {
+		if !strings.Contains(o.Tekst, "попытки сервера на этот час кончились") || !strings.Contains(o.Tekst, "22:14") ||
+			strings.Contains(o.Tekst, "A-запись") || strings.Contains(o.Tekst, "закрыты порты") {
+			t.Errorf("%s: %+v", imya, o)
+		}
+	}
+	// После возврата с домена hy2 в пакете, и сертификат сервер получит сам:
+	// подбирать порты незачем, и «только reality» неправда.
+	for _, predel := range []int64{0, sled} {
+		o := preduprezhdenieVps([]upravlenie.Preduprezhdenie{{Vid: upravlenie.NetSerta, Predel: predel, Hy2Zhdyot: true}}, nil)
+		if strings.Contains(o.Tekst, "подбери порты") || strings.Contains(o.Tekst, "только reality") || !strings.Contains(o.Tekst, "сам") {
+			t.Errorf("возврат с домена, предел %d: %+v", predel, o)
+		}
+	}
+}
+
 // Avast на этом компьютере перехватывает почтовые порты (П6): предупреждение
 // о reality на них называет его, а не дорогу. Не называет, когда отказ
 // Avast не объясняет: упали и обычные кандидаты, адрес закрыт, сервер

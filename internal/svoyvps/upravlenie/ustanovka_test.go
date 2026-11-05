@@ -464,6 +464,49 @@ func TestUstanovitBezSerta(t *testing.T) {
 	}
 }
 
+// Попытки выпуска этого часа у программы сервера кончились, а следующая не
+// успеет к концу ожидания: установка не ждёт её впустую, ставит reality и
+// знает, что причина в пределе, а не в закрытых портах. Успеет - ждём.
+func TestUstanovitSertPredel(t *testing.T) {
+	for _, c := range []struct {
+		imya   string
+		sekund int64
+	}{{"через 40 минут", 40 * 60}, {"под конец ожидания", 150}} {
+		m := novayaMashina(t)
+		m.serty = []*server.SertUzla{nil, {IP: "203.0.113.10", Popytka: 100, Predel: c.sekund}}
+		m.vybor = porty.Vybor{Reality: 8443}
+		// Ожидание до конца срока упало бы здесь отменой, а не прошло бы молча.
+		shagSerta = time.Hour
+		ctx, otmena := context.WithTimeout(context.Background(), 10*time.Second)
+		nado := time.Now().Unix() + c.sekund
+		itog, err := Ustanovit(ctx, m.ustanovka())
+		otmena()
+		if err != nil {
+			t.Fatalf("%s: %v", c.imya, err)
+		}
+		if itog.Prodlenie != porty.BezSerta || len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Vid != NetSerta ||
+			itog.Preduprezhdeniya[0].Predel < nado || itog.Preduprezhdeniya[0].Predel > nado+5 {
+			t.Fatalf("%s: итог %+v", c.imya, itog)
+		}
+	}
+
+	m := novayaMashina(t)
+	m.serty = []*server.SertUzla{nil, {IP: "203.0.113.10", Popytka: 100, Predel: 60},
+		{IP: "203.0.113.10", Idyot: true, Popytka: 100}, {IP: "203.0.113.10", Est: true, Sposob: "http-01", Popytka: 200}}
+	if itog, err := Ustanovit(context.Background(), m.ustanovka()); err != nil || itog.Prodlenie != porty.Cherez80 {
+		t.Fatalf("попытка внутри ожидания не дождалась: продление %v, ошибка %v", itog.Prodlenie, err)
+	}
+
+	// Число от сервера за пределом типа не переполняет ожидание.
+	m = novayaMashina(t)
+	m.serty = []*server.SertUzla{nil, {IP: "203.0.113.10", Popytka: 100, Predel: 1 << 62}}
+	m.vybor = porty.Vybor{Reality: 8443}
+	itog, err := Ustanovit(context.Background(), m.ustanovka())
+	if err != nil || len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Predel > time.Now().Add(potolokPredela+time.Minute).Unix() {
+		t.Fatalf("огромный предел: %+v, %v", itog.Preduprezhdeniya, err)
+	}
+}
+
 // Прошлый отказ не считается, даже если он был на другой адрес: ждём новую
 // попытку.
 func TestUstanovitSertSrok(t *testing.T) {

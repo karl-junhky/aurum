@@ -42,7 +42,12 @@ func (e *ErrDrugoyDomen) Error() string {
 
 // SertDomenaNeVyshel: Let's Encrypt не выдал сертификат на домен, чаще всего
 // потому, что A-запись ведёт не на сервер или 80/tcp закрыт у хостера.
-type SertDomenaNeVyshel struct{ Domen, Otkaz string }
+// Predel не 0: причина не в этом, а попытки выпуска этого часа у программы
+// сервера кончились; следующая не раньше этого времени, Unix-секунды.
+type SertDomenaNeVyshel struct {
+	Domen, Otkaz string
+	Predel       int64
+}
 
 func (e *SertDomenaNeVyshel) Error() string {
 	return "сертификат на " + e.Domen + " не выпущен: " + e.Otkaz
@@ -238,9 +243,9 @@ func naDomen(ctx context.Context, ps *stoyashchiy, domen, routing, put string, s
 		}
 		return err
 	}
-	pr, otkaz, err := vypustitSert(ctx, ps.s, ps.adres, domen, pered, &itog.Sert)
+	pr, otkaz, predel, err := vypustitSert(ctx, ps.s, ps.adres, domen, pered, &itog.Sert)
 	if err == nil && pr == porty.BezSerta {
-		err = &SertDomenaNeVyshel{Domen: domen, Otkaz: otkaz}
+		err = &SertDomenaNeVyshel{Domen: domen, Otkaz: otkaz, Predel: predel}
 	}
 	if err != nil {
 		return otkatit(err)
@@ -348,12 +353,13 @@ func naProstye(ctx context.Context, ps *stoyashchiy, sek *konfig.Sekrety, vh *ko
 		return nil
 	}
 	hod(Hod{Shag: ShagSertifikat})
-	pr, otkaz, err := vypustitSert(ctx, ps.s, ps.adres, "", paket, &itog.Sert)
+	pr, otkaz, predel, err := vypustitSert(ctx, ps.s, ps.adres, "", paket, &itog.Sert)
 	if err != nil {
 		return err
 	}
 	if itog.Prodlenie = pr; pr == porty.BezSerta {
-		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkaz})
+		// hy2 в пакете с выпуском: сертификат программа получит сама.
+		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkaz, Predel: predel, Hy2Zhdyot: true})
 	}
 	return nil
 }

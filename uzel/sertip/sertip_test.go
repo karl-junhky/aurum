@@ -292,6 +292,15 @@ func TestOtkazIPredelPopytok(t *testing.T) {
 	if sled := v.Sostoyanie().Sleduyushchaya; sled < s.chasy.seychas().Add(50*time.Minute).Unix() {
 		t.Fatalf("следующая попытка %v, ждали через час после первой", time.Unix(sled, 0))
 	}
+	if sost := v.Sostoyanie(); sost.Predel <= 0 || sost.Predel > int64(oknoPopytok/time.Second)+1 {
+		t.Fatalf("попытки часа кончились, а предел в состоянии %d с: %+v", sost.Predel, sost)
+	}
+	// Круг просыпается, когда самая старая попытка выходит из окна, а не на
+	// тике десять минут спустя.
+	osvob := time.Unix(v.uchet.Popytki[0], 0).Add(oknoPopytok)
+	if d, ok := v.doPredela(); !ok || !s.chasy.seychas().Add(d).After(osvob) || s.chasy.seychas().Add(d).After(osvob.Add(2*time.Second)) {
+		t.Fatalf("будильник предела через %v (%v), окно освобождается в %v", d, ok, osvob)
+	}
 
 	v2 := s.novyy(t)
 	if err := v2.Nastroit(&Nastroyka{IP: ip}, nil); err != nil {
@@ -305,6 +314,42 @@ func TestOtkazIPredelPopytok(t *testing.T) {
 	v2.krug(context.Background())
 	if n := len(v2.uchet.Popytki); n != 1 {
 		t.Fatalf("через час попыток в окне %d, ждали одну новую", n)
+	}
+	if _, ok := v2.doPredela(); ok || v2.Sostoyanie().Predel != 0 {
+		t.Fatal("в окне одна попытка, а выпуск считает, что упёрся в предел")
+	}
+}
+
+// Попытки часа кончились: Rabotat начинает следующую, как только окно
+// освободилось, а не на тике десять минут спустя.
+func TestRabotatProsypaetsyaPoPredelu(t *testing.T) {
+	s := novyyStend(t)
+	zanyat(t, s.opcii.PortHTTP)
+	zanyat(t, s.opcii.PortTLS)
+	v := s.novyy(t)
+	if err := v.Nastroit(&Nastroyka{IP: ip}, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	v.krug(context.Background())
+	if n := len(v.uchet.Popytki); n != popytokVOkne {
+		t.Fatalf("попыток %d, ждали %d", n, popytokVOkne)
+	}
+	byla := v.Sostoyanie().Popytka
+	// Окно освободится через полторы секунды по часам выпуска: первый круг
+	// Rabotat ещё упирается в предел, попытку начинает только будильник.
+	s.chasy.vperyod(v.osvobozhdenie().Sub(s.chasy.seychas()) - 1500*time.Millisecond)
+	if d, ok := v.doPredela(); !ok || d < time.Second || d > 3*time.Second {
+		t.Fatalf("будильник через %v (%v)", d, ok)
+	}
+	ctx, otmena := context.WithCancel(context.Background())
+	konchil := make(chan struct{})
+	go func() { defer close(konchil); v.Rabotat(ctx) }()
+	defer func() { otmena(); <-konchil }()
+	for do := time.Now().Add(10 * time.Second); v.Sostoyanie().Popytka <= byla; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(do) {
+			t.Fatal("окно освободилось, а новой попытки нет: круг ждёт тика")
+		}
 	}
 }
 

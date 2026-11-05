@@ -39,6 +39,16 @@ var (
 	shagSerta = 5 * time.Second
 )
 
+const (
+	// zapasPopytkiSerta: попытка, которую программа сервера начнёт позже
+	// конца ожидания минус этот запас, уже не успеет дать сертификат. Выпуск
+	// идёт секунды, минута с запасом.
+	zapasPopytkiSerta = time.Minute
+	// potolokPredela: больше часа предел не держит; дальше число от сервера
+	// не принимается на веру и обрезается.
+	potolokPredela = 2 * time.Hour
+)
+
 // Shag это шаг установки, как его видит ход в окне.
 type Shag string
 
@@ -150,6 +160,15 @@ type Preduprezhdenie struct {
 	Proba proverka.Vid
 	// Domen у DomenNeVyshel: на что не вышел сертификат.
 	Domen string
+	// Predel у NetSerta и DomenNeVyshel: сертификат не вышел, потому что
+	// попытки выпуска этого часа у программы сервера кончились, а не из-за
+	// сети; следующая не раньше этого времени, Unix-секунды. 0 - причина в
+	// Otkaz.
+	Predel int64
+	// Hy2Zhdyot у NetSerta: hy2 остался в пакете вместе с выпуском, и
+	// программа сервера сама получит сертификат, когда сможет (возврат с
+	// домена). Подбирать порты заново для этого не нужно.
+	Hy2Zhdyot bool
 }
 
 // Itog это поставленный сервер.
@@ -273,7 +292,7 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	}
 
 	hod(Hod{Shag: ShagSertifikat})
-	pr, otkazSerta, err := sertNaUstanovke(ctx, s, adres, sayt, u.Opcii, &itog.Sert)
+	pr, otkazSerta, predel, err := sertNaUstanovke(ctx, s, adres, sayt, u.Opcii, &itog.Sert)
 	if err != nil {
 		return Itog{}, err
 	}
@@ -282,19 +301,19 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 		// не пускает и своих. Сервер встаёт с простыми ключами, а домен
 		// подключается из карточки, когда его запись починят: так машина,
 		// поставленная заново поверх рабочей, не остаётся вовсе без VPN.
-		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: DomenNeVyshel, Domen: sayt.Domen, Otkaz: otkazSerta})
+		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: DomenNeVyshel, Domen: sayt.Domen, Otkaz: otkazSerta, Predel: predel})
 		sayt = nil
 		hod(Hod{Shag: ShagSertifikat, BezDomena: true})
 		if mk, err = prostayaMaska(ctx, s, adres, u.Maski); err != nil {
 			return Itog{}, err
 		}
-		if pr, otkazSerta, err = sertNaUstanovke(ctx, s, adres, nil, u.Opcii, &itog.Sert); err != nil {
+		if pr, otkazSerta, predel, err = sertNaUstanovke(ctx, s, adres, nil, u.Opcii, &itog.Sert); err != nil {
 			return Itog{}, err
 		}
 	}
 	itog.Prodlenie, itog.MaskaIstochnik = pr, mk.Istochnik
 	if pr == porty.BezSerta {
-		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkazSerta})
+		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkazSerta, Predel: predel})
 	}
 
 	sek, err := konfig.NovyeSekrety(mk.Imya)
@@ -327,15 +346,15 @@ func prostayaMaska(ctx context.Context, s server.Mashina, adres netip.Addr, mask
 }
 
 // sertNaUstanovke выпускает сертификат пакетом «только сертификат»: на домен
-// сайта или, без него, на адрес.
-func sertNaUstanovke(ctx context.Context, s server.Mashina, adres netip.Addr, sayt *konfig.Sayt, o konfig.Opcii, sert **server.SertUzla) (porty.Prodlenie, string, error) {
+// сайта или, без него, на адрес. Ответ как у vypustitSert.
+func sertNaUstanovke(ctx context.Context, s server.Mashina, adres netip.Addr, sayt *konfig.Sayt, o konfig.Opcii, sert **server.SertUzla) (porty.Prodlenie, string, int64, error) {
 	domen := ""
 	if sayt != nil {
 		domen = sayt.Domen
 	}
 	paket, err := konfig.PaketSerta(adres.String(), domen, o)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	return vypustitSert(ctx, s, adres, domen, paket, sert)
 }
@@ -566,11 +585,14 @@ func nashaOtmetka(s *server.Sostav, klyuch gossh.PublicKey) bool {
 // переходе в режим домена пакет прежних входов. Сертификат уже есть
 // (продолжение своей установки, копия) - он и годится. Попытка программы
 // сервера идёт обоими путями проверки, поэтому её отказ значит, что закрыты
-// оба: hy2 тогда не ставится, а otkaz называет причину.
-func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, domen string, paket []byte, sert **server.SertUzla) (pr porty.Prodlenie, otkaz string, err error) {
+// оба: hy2 тогда не ставится, а otkaz называет причину. predel не 0, если
+// попытки этого часа у программы кончились и следующая не успеет до конца
+// ожидания: тогда причина не в сети, predel - когда она начнётся по часам
+// этого компьютера (Unix-секунды), а otkaz только для журнала.
+func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, domen string, paket []byte, sert **server.SertUzla) (pr porty.Prodlenie, otkaz string, predel int64, err error) {
 	do, err := sostoyanie(ctx, m)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	// Попытка считается новой, только если она позже последней до пакета,
 	// на какой бы адрес та ни шла: учёт попыток у программы общий, и отказ
@@ -584,33 +606,41 @@ func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, domen
 		byla = do.Sert.Popytka
 	}
 	if _, err := primenit(ctx, m, paket); err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	konec := seychas().Add(srokSerta)
 	videliPopytku := false
 	for {
 		st, err := sostoyanie(ctx, m)
 		if err != nil {
-			return 0, "", err
+			return 0, "", 0, err
 		}
 		if c := st.Sert; c != nil && c.IP == adres.String() && c.Domen == domen {
 			*sert = c
 			videliPopytku = videliPopytku || c.Idyot
+			// Предел приходит секундами до следующей попытки и считается по
+			// часам этого компьютера.
+			sled := seychas().Add(time.Duration(min(max(c.Predel, 0), int64(potolokPredela/time.Second))) * time.Second)
 			switch {
 			case c.Est:
-				return prodlenieIz(c.Sposob), "", nil
+				return prodlenieIz(c.Sposob), "", 0, nil
 			case !c.Idyot && c.Popytka > byla && c.Otkaz != "" && (znaemByla || videliPopytku):
-				return porty.BezSerta, c.Otkaz, nil
+				return porty.BezSerta, c.Otkaz, 0, nil
+			case !c.Idyot && c.Predel > 0 && !sled.Add(zapasPopytkiSerta).Before(konec):
+				// Следующую попытку программа начнёт сама, но не успеет к
+				// концу ожидания: ждать её незачем. Успеет - ждём.
+				return porty.BezSerta, fmt.Sprintf("попытки выпуска этого часа кончились, следующая через %d с", c.Predel),
+					sled.Unix(), nil
 			}
 		}
 		if !seychas().Before(konec) {
-			return porty.BezSerta, fmt.Sprintf("сертификат не выпущен за %v", srokSerta), nil
+			return porty.BezSerta, fmt.Sprintf("сертификат не выпущен за %v", srokSerta), 0, nil
 		}
 		t := time.NewTimer(shagSerta)
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return 0, "", ctx.Err()
+			return 0, "", 0, ctx.Err()
 		case <-t.C:
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
@@ -28,7 +29,14 @@ const dlinaSoServera = 200
 const (
 	tekstMaskaDomen  = "сервер работает на своём домене: маска reality это сам домен"
 	tekstNetPodpiski = "сервер выдаёт простые ключи: подписки у него нет"
+	// tekstPredela: сертификат не вышел не из-за сети, а потому, что
+	// программа сервера бережёт лимит Let's Encrypt (upravlenie, Predel).
+	tekstPredela = "Let's Encrypt выдаёт сертификаты с ограничением, и попытки сервера на этот час кончились"
 )
+
+// vremyaPredela: когда программа сервера начнёт следующую попытку, по часам
+// этого компьютера.
+func vremyaPredela(unix int64) string { return time.Unix(unix, 0).Local().Format("15:04") }
 
 // otkazVps переводит отказ задания в код и текст. Полная ошибка уходит в
 // журнал службы в zapustitVps.
@@ -132,6 +140,10 @@ func otkazVps(err error) OtkazVps {
 		return OtkazVps{Kod: protokol.KodVpsMaska, Tekst: "программа на сервере старая и маску не меняет: сначала обнови её"}
 	case errors.Is(err, upravlenie.ErrRezhimDomena):
 		return OtkazVps{Kod: protokol.KodVpsMaska, Tekst: tekstMaskaDomen}
+	case errors.As(err, &sertDom) && sertDom.Predel != 0:
+		return OtkazVps{Kod: protokol.KodVpsDomen,
+			Tekst: "свой домен " + ssh.Obrezat(sertDom.Domen, 80) + " не подключён: " + tekstPredela + ". Подключи домен снова после " +
+				vremyaPredela(sertDom.Predel) + ", сервер пока на прежних ключах"}
 	case errors.As(err, &sertDom):
 		t := "Let's Encrypt не выдал сертификат на " + ssh.Obrezat(sertDom.Domen, 80)
 		if sertDom.Otkaz != "" {
@@ -451,9 +463,27 @@ func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie, pom pomehiKompyuter
 	kto := pom.perehvatchik(p)
 	switch p.Vid {
 	case upravlenie.NetSerta:
+		switch {
+		case p.Predel != 0 && p.Hy2Zhdyot:
+			return OtkazVps{Kod: protokol.KodVpsNetSerta,
+				Tekst: "сертификат на адрес пока не выпущен: " + tekstPredela + ". Сервер получит его сам после " +
+					vremyaPredela(p.Predel) + ", тогда заработает и ключ hysteria2"}
+		case p.Predel != 0:
+			return OtkazVps{Kod: protokol.KodVpsNetSerta,
+				Tekst: "сертификат на адрес пока не выпущен: " + tekstPredela + ". Поставлен только reality; после " +
+					vremyaPredela(p.Predel) + " подбери порты заново, тогда встанет hysteria2"}
+		case p.Hy2Zhdyot:
+			return OtkazVps{Kod: protokol.KodVpsNetSerta,
+				Tekst: "сертификат на адрес не выпущен: у хостера закрыты порты 80 и 443. Ключ hysteria2 заработает, когда сервер получит сертификат: открой у хостера порт 80, дальше сервер справится сам"}
+		}
 		return OtkazVps{Kod: protokol.KodVpsNetSerta,
 			Tekst: "сертификат на адрес не выпущен: у хостера закрыты порты 80 и 443. Поставлен только reality; открой у хостера порт 80 и подбери порты заново, тогда встанет hysteria2"}
 	case upravlenie.DomenNeVyshel:
+		if p.Predel != 0 {
+			return OtkazVps{Kod: protokol.KodVpsDomen,
+				Tekst: "свой домен " + ssh.Obrezat(p.Domen, 80) + " не подключился: " + tekstPredela +
+					". Сервер выдаёт простые ключи; подключи домен из карточки сервера после " + vremyaPredela(p.Predel)}
+		}
 		t := "свой домен " + ssh.Obrezat(p.Domen, 80) + " не подключился: Let's Encrypt не выдал на него сертификат"
 		if p.Otkaz != "" {
 			t += " (" + ssh.Obrezat(p.Otkaz, dlinaSoServera) + ")"

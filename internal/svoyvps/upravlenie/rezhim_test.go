@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
@@ -128,6 +129,30 @@ func TestSmenitRezhimSertNeVyshel(t *testing.T) {
 	_, err := SmenitRezhim(context.Background(), rezhimIz(p, domenTesta))
 	var ne *SertDomenaNeVyshel
 	if !errors.As(err, &ne) || ne.Domen != domenTesta || ne.Otkaz != "DNS problem: NXDOMAIN" {
+		t.Fatalf("отказ %v", err)
+	}
+	if len(m.pakety) != 2 || !bytes.Equal(m.pakety[1], bylo) {
+		t.Fatalf("пакетов %d, второй должен быть прежним", len(m.pakety))
+	}
+}
+
+// Попытки выпуска этого часа кончились, и следующая позже конца ожидания:
+// отказ сразу и с пределом, без трёх минут ожидания и совета проверить
+// запись домена. Сервер возвращается к прежнему пакету.
+func TestSmenitRezhimPredel(t *testing.T) {
+	m, p := novyyPostavlennyy(t, rabochiyServer)
+	m.versiya = "0.7.0"
+	bylo := m.paket
+	gotov := &server.SertUzla{IP: "203.0.113.10", Est: true, Sposob: "http-01", Staging: true, Popytka: 100}
+	m.serty = []*server.SertUzla{gotov, gotov,
+		{IP: "203.0.113.10", Domen: domenTesta, Popytka: 100, Predel: 40 * 60}}
+	shagSerta = time.Hour
+	ctx, otmena := context.WithTimeout(context.Background(), 10*time.Second)
+	defer otmena()
+	nado := time.Now().Unix() + 40*60
+	_, err := SmenitRezhim(ctx, rezhimIz(p, domenTesta))
+	var ne *SertDomenaNeVyshel
+	if !errors.As(err, &ne) || ne.Predel < nado || ne.Predel > nado+5 {
 		t.Fatalf("отказ %v", err)
 	}
 	if len(m.pakety) != 2 || !bytes.Equal(m.pakety[1], bylo) {
@@ -283,6 +308,30 @@ func TestSmenitRezhimNaProstye(t *testing.T) {
 	}
 	if itog.Vhody.Sayt != nil || itog.Sekrety.Maska != "sosed.example.net" || itog.MaskaIstochnik != MaskaSosedi ||
 		itog.Klyuchi[1].Server.Sni != "203.0.113.10" || len(itog.Preduprezhdeniya) != 0 {
+		t.Fatalf("итог %+v", itog)
+	}
+}
+
+// Возврат к простым ключам упёрся в предел попыток: hy2 остаётся в пакете с
+// выпуском, и предупреждение говорит, что сертификат сервер получит сам.
+func TestSmenitRezhimNaProstyePredel(t *testing.T) {
+	m, p := novyyPostavlennyy(t, rabochiyServer)
+	m.versiya = "0.7.0"
+	vRezhimeDomena(t, m)
+	naDomene := m.serty[0]
+	m.serty = []*server.SertUzla{naDomene, naDomene, {IP: "203.0.113.10", Staging: true, Popytka: 100, Predel: 40 * 60}}
+	podobratMasku = func(context.Context, server.Mashina, netip.Addr, string) (Maska, error) {
+		return Maska{Imya: "sosed.example.net", Istochnik: MaskaSosedi}, nil
+	}
+	shagSerta = time.Hour
+	ctx, otmena := context.WithTimeout(context.Background(), 10*time.Second)
+	defer otmena()
+	itog, err := SmenitRezhim(ctx, rezhimIz(p, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Vid != NetSerta || itog.Preduprezhdeniya[0].Predel == 0 ||
+		!itog.Preduprezhdeniya[0].Hy2Zhdyot || len(itog.Vhody.Hy2) == 0 || razobratPaket(t, m.pakety[0]).SertIPSam == nil {
 		t.Fatalf("итог %+v", itog)
 	}
 }
