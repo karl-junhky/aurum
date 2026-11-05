@@ -13,6 +13,7 @@ import (
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/upravlenie"
 )
@@ -181,7 +182,7 @@ func (s *Sluzhba) svoyVpsVzyat(k protokol.Kadr) protokol.Kadr {
 		z.Imya = bylo.Imya
 	}
 	if z.Imya == "" {
-		z.Imya = imyaSvoegoPoUmolchaniyu
+		z.Imya = imyaPoUmolchaniyu(n.SvoiServery, id)
 	}
 	return s.zapustitVps(k, vidVzyat, func(ctx context.Context, zad *zadanieVps) error {
 		s.pravitHod(zad, func(h *HodVps) { h.Shag, h.Server = string(upravlenie.ShagVhod), id })
@@ -344,7 +345,102 @@ func (s *Sluzhba) svoyVpsZabyt(k protokol.Kadr) protokol.Kadr {
 const (
 	zaporNaZabyt     = 10 * time.Minute
 	otkazZabyvaetsya = "клиент как раз забывает свой сервер: повтори через несколько секунд"
+	otkazImenuetsya  = "клиент как раз меняет название своего сервера: повтори через несколько секунд"
 )
+
+var errSvoegoNet = errors.New("такого сервера в разделе «Свой VPN» нет")
+
+// pishutZapis это задания, что пишут запись о сервере целиком, с названием,
+// взятым в начале дела. Проверка, пароль, снос и снятие ключа правят запись
+// по полям и названия не трогают.
+var pishutZapis = map[string]bool{vidUstanovka: true, vidPodbor: true, vidVzyat: true}
+
+// svoyVpsPereimenovat меняет название своего сервера (ИМ1) в записи и в
+// именах ключей группы одной правкой набора. На сервер название не уходит,
+// входа нет. Ключи на телефоне носят прежнее имя, пока их не добавят заново.
+func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
+	var telo struct {
+		Id   string `json:"id"`
+		Imya string `json:"imya"`
+	}
+	if err := json.Unmarshal(k.Telo, &telo); err != nil {
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "тело команды не разобрано")
+	}
+	imya := obrezatImya(telo.Imya)
+	if imya == "" {
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "название пустое")
+	}
+	// Запор, а не проверка: установка, подбор и захват этого сервера пишут
+	// запись и ключи с названием, взятым в начале дела, и затёрли бы новое.
+	// Прочие задания идут дальше. Задание, чей сервер ещё не назван в
+	// снимке, могло начаться над этим.
+	otperet, tekst := s.zaperetVpsKrome(time.Now().Add(zaporNaZabyt), otkazImenuetsya, func(h HodVps) bool {
+		return !pishutZapis[h.Vid] || (h.Server != "" && h.Server != telo.Id)
+	})
+	if otperet == nil {
+		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
+	}
+	defer otperet()
+	imena := map[string]string{}
+	err := s.pravitNabor(func(n *Nabor) error {
+		clear(imena)
+		i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == telo.Id })
+		if i < 0 {
+			return errSvoegoNet
+		}
+		z := &n.SvoiServery[i]
+		z.Imya = imya
+		vsego := map[string]int{}
+		for _, srv := range n.Servery {
+			if slices.Contains(z.Servery, srv.Id) {
+				vsego[srv.Transport]++
+			}
+		}
+		for j := range n.Servery {
+			if srv := &n.Servery[j]; slices.Contains(z.Servery, srv.Id) {
+				srv.Imya = konfig.ImyaKlyucha(imya, srv.Transport, srv.Port, vsego[srv.Transport])
+				imena[srv.Id] = srv.Imya
+			}
+		}
+		return nil
+	})
+	otv := map[string]any{"id": telo.Id, "imya": imya}
+	switch {
+	case errors.Is(err, errSvoegoNet):
+		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
+	case errors.Is(err, errPravilaOtstali):
+		// Набор записан, названия сменились. Правила от имён не зависят, а
+		// отставшие человек увидит предупреждением: отказ здесь сказал бы,
+		// что переименование не прошло.
+		log.Printf("свой сервер %s: переименован, %v", telo.Id, err)
+		otv["preduprezhdenie"] = OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
+	case err != nil:
+		return otkazIz(k, kodSohraneniya(err), err)
+	}
+	s.obnovitImenaYadra(imena)
+	return otvet(k.Id, k.Imya, otv)
+}
+
+// obnovitImenaYadra переносит новые имена ключей (id - имя) в снимок ядра и в
+// имя несущего: при том же несущем его имя иначе не перечитывается до
+// переподключения. Отпечаток ключа имени не включает, ядро не поднимается.
+func (s *Sluzhba) obnovitImenaYadra(imena map[string]string) {
+	s.mu.Lock()
+	for i := range s.serveryYadra {
+		if im, ok := imena[s.serveryYadra[i].Id]; ok {
+			s.serveryYadra[i].Imya = im
+		}
+	}
+	im, ok := imena[s.nesushchiyId]
+	smenilos := ok && s.nesushchiyImya != im
+	if smenilos {
+		s.nesushchiyImya = im
+	}
+	s.mu.Unlock()
+	if smenilos {
+		s.izvestit("state", s.Status())
+	}
+}
 
 // ubratZapisSvoego убирает запись о сервере id с её ключами одной правкой
 // набора.

@@ -272,9 +272,15 @@ func (s *Sluzhba) svoyVpsIdyot() string {
 // otperet снимает только этот запор: истёкший и занятый другим он не
 // трогает. Отказ - otperet nil, а второе значение говорит почему.
 func (s *Sluzhba) zaperetVps(do time.Time, tekst string) (otperet func(), otkaz string) {
+	return s.zaperetVpsKrome(do, tekst, nil)
+}
+
+// zaperetVpsKrome это zaperetVps, который пропускает идущее задание, если
+// terpimo говорит о его снимке true: запор тогда держит только новые.
+func (s *Sluzhba) zaperetVpsKrome(do time.Time, tekst string, terpimo func(HodVps) bool) (otperet func(), otkaz string) {
 	s.muVps.Lock()
 	defer s.muVps.Unlock()
-	if tekst := s.deloVpsIdyot(); tekst != "" {
+	if tekst := s.deloVpsIdyot(); tekst != "" && (terpimo == nil || !terpimo(s.vps.snimok)) {
 		return nil, tekst
 	}
 	if time.Now().Before(s.vpsZaporDo) {
@@ -603,7 +609,7 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 		}
 	}
 	if z.Imya == "" {
-		z.Imya = imyaSvoegoPoUmolchaniyu
+		z.Imya = imyaPoUmolchaniyu(n.SvoiServery, id)
 	}
 	return s.zapustitVps(k, vidUstanovka, func(ctx context.Context, zad *zadanieVps) error {
 		s.pravitHod(zad, func(h *HodVps) { h.Server, h.Adres = id, adres.String() })
@@ -611,18 +617,57 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 	})
 }
 
+// imyaPoUmolchaniyu это «Мой сервер», а если его уже носит другой свой
+// сервер, «Мой сервер 2», «Мой сервер 3»: иначе ключи двух серверов в списке и
+// на телефоне звались бы одинаково. Имя сервера krome занятым не считается:
+// это он сам. Окно считает то же для подсказки в поле (imyaPoUmolchaniyu).
+func imyaPoUmolchaniyu(servery []SvoyServer, krome string) string {
+	zanyato := map[string]bool{}
+	for _, x := range servery {
+		if x.Id != krome {
+			zanyato[x.Imya] = true
+		}
+	}
+	imya := imyaSvoegoPoUmolchaniyu
+	for i := 2; zanyato[imya]; i++ {
+		imya = imyaSvoegoPoUmolchaniyu + " " + strconv.Itoa(i)
+	}
+	return imya
+}
+
+// dlinaImeni это предел имени своего сервера: Happ показывает из имени ключа
+// 30 знаков, а хвост «, hysteria2» занимает 11. Окно держит то же число
+// (DLINA_IMENI) и считает, как здесь, по знакам Юникода.
+const dlinaImeni = 19
+
 // obrezatImya чистит имя от управляющих и невидимых знаков, разрывов строки, пробелов
-// по краям и режет до 40 знаков. Пустое имя заменяет вызывающий.
+// по краям и режет до dlinaImeni знаков. Флаг, разрезанный на краю, уходит
+// целиком: одинокая половина пары региональных букв рисуется буквой в рамке.
+// Пустое имя заменяет вызывающий.
 func obrezatImya(s string) string {
 	// Cf это невидимые знаки и переворот направления письма (U+202E).
 	r := slices.DeleteFunc([]rune(s), func(c rune) bool {
 		return unicode.IsControl(c) || unicode.Is(unicode.Cf, c) || c == ' ' || c == ' '
 	})
 	r = []rune(strings.TrimSpace(string(r)))
-	if len(r) > 40 {
-		r = r[:40]
+	if len(r) > dlinaImeni {
+		r = r[:dlinaImeni]
+		// Флаг это пара региональных букв: при нечётном их числе на конце
+		// последняя осталась без пары.
+		n := 0
+		for n < len(r) && regionalnaya(r[len(r)-1-n]) {
+			n++
+		}
+		if n%2 == 1 {
+			r = r[:len(r)-1]
+		}
 	}
 	return strings.TrimSpace(string(r))
+}
+
+// regionalnaya: региональная буква, половина флага (U+1F1E6-U+1F1FF).
+func regionalnaya(c rune) bool {
+	return c >= 0x1F1E6 && c <= 0x1F1FF
 }
 
 func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, z zaprosUstanovkiVps, zapros ssh.Zapros) error {

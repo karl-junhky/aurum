@@ -12,7 +12,7 @@ import { podpisDeystviya, tekstOtkaza } from "./otkazy";
 import { Vygruzka, type VygruzkaOtvet } from "./Vygruzka";
 import { vozrast, vygruzkaIz } from "./Servery";
 import {
-  ocenitServer, portyNyneshnie, PUSTAYA_FORMA, svezhayaProverka, zapomnitUvidennuyu,
+  DLINA_IMENI, imyaPoUmolchaniyu, imyaZanyato, ocenitServer, portyNyneshnie, PUSTAYA_FORMA, svezhayaProverka, zapomnitUvidennuyu,
   type Forma, type HodVps, type KlyuchFayla, type KlyuchHoda, type Master, type OsmotrVps, type OtkazVps,
   type ProverkaVps, type SostoyanieServera, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
@@ -206,6 +206,25 @@ export function teloDostupa(f: Forma): Record<string, unknown> {
 function portIzPolya(s: string): number | undefined {
   const t = s.trim();
   return t === "" ? undefined : Number(t);
+}
+
+/** Поле названия сервера с пояснением под ним. */
+function PoleImeni({ znachenie, naVvod, poyasnenie, placeholder, testId }: {
+  znachenie: string;
+  naVvod: (v: string) => void;
+  poyasnenie: string;
+  /** Имя, которое служба даст при пустом поле. */
+  placeholder?: string;
+  testId: string;
+}) {
+  return (
+    <div className="flex max-w-[320px] flex-col gap-1.5">
+      <PolePodpisannoe podpis="Название">
+        <Pole testId={testId} znachenie={znachenie} naVvod={naVvod} placeholder={placeholder} maxDlina={DLINA_IMENI} />
+      </PolePodpisannoe>
+      <span className="text-fg-muted text-xs">{poyasnenie}</span>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------- детали
@@ -686,14 +705,17 @@ export function punktyOsmotra(h: HodVps | undefined, sposob: Forma["sposob"] | n
   return punkty;
 }
 
-function ShagProverka({ h, forma, pustoy, otkaz, idyot, aktiven, naPustoy, naNazad, naOtmenu, naPostavit, naVzyat, naPovtor, naServery, naPrinyatKlyuch }: {
+function ShagProverka({ h, forma, imyaPoUmolch, pustoy, otkaz, idyot, aktiven, naPustoy, naImya, naNazad, naOtmenu, naPostavit, naVzyat, naPovtor, naServery, naPrinyatKlyuch }: {
   h: HodVps | undefined;
   forma: Forma;
+  /** Название, которое служба даст при пустом поле. */
+  imyaPoUmolch: string;
   pustoy: boolean;
   otkaz?: OtkazVps;
   idyot: boolean;
   aktiven: boolean;
   naPustoy: (v: boolean) => void;
+  naImya: (v: string) => void;
   naNazad: () => void;
   naOtmenu: () => void;
   naPostavit: (o: OsmotrVps) => void;
@@ -747,6 +769,7 @@ function ShagProverka({ h, forma, pustoy, otkaz, idyot, aktiven, naPustoy, naNaz
       )}
       {o && !vzyat && o.mozhno_stavit && (
         <>
+          <PoleImeni testId="svoy-imya" znachenie={forma.imya} naVvod={naImya} placeholder={imyaPoUmolch} poyasnenie="Так сервер будет называться в списке и в ключах на телефоне" />
           <Flazhok vkl={pustoy} naSmenu={naPustoy} testId="svoy-pustoy" podpis="На сервере нет ничего нужного, Affory может занять его целиком" />
           <Podval
             sleva={<Knopka rang="tekst" onClick={naNazad}>Назад</Knopka>}
@@ -1318,6 +1341,29 @@ function ZadatPorty({ server, aktiven, naPodobrat, naOtmenu }: {
   );
 }
 
+/** Новое название сервера (ИМ1): ключи в списке переименуются сразу, на
+ *  телефоне останутся с прежним, пока их не добавят заново. */
+function Pereimenovat({ server, aktiven, naSohranit, naOtmenu }: {
+  server: SvoyServer;
+  aktiven: boolean;
+  naSohranit: (imya: string) => void;
+  naOtmenu: () => void;
+}) {
+  // Имя длиннее предела (запись прежней версии) сразу видно обрезанным: при
+  // сохранении служба обрезала бы его молча.
+  const [imya, zadatImya] = useState(() => Array.from(server.imya).slice(0, DLINA_IMENI).join(""));
+  const novoe = imya.trim();
+  return (
+    <div className="border-border flex flex-col gap-3 border-t px-4 py-4" data-testid="svoy-pereimenovat">
+      <PoleImeni testId="svoy-novoe-imya" znachenie={imya} naVvod={zadatImya} poyasnenie="Ключи в списке сменят имя сразу, на телефоне после того, как добавишь их заново" />
+      <div className="flex gap-2">
+        <Knopka rang="glavnaya" testId="svoy-sohranit-imya" aktiven={aktiven && novoe !== "" && novoe !== server.imya} onClick={() => naSohranit(novoe)}>Сохранить</Knopka>
+        <Knopka rang="tekst" onClick={naOtmenu}>Отмена</Knopka>
+      </div>
+    </div>
+  );
+}
+
 /** Строка ключа в карточке. Ключ, мёртвый на самом сервере, главнее всего:
  *  его чинит подбор портов, а не другой адрес. Дальше то, что он не прошёл
  *  из сети человека, хотя на сервере работает: так его и увидит человек. */
@@ -1340,7 +1386,7 @@ function formaIzZapisi(s: SvoyServer): Forma {
 /** Мастер поверх записи о сервере. Пароль выключен этим или другим
  *  компьютером: войти можно только ключом. */
 function formaPostavitZanovo(s: SvoyServer): Forma {
-  return { ...formaIzZapisi(s), poverhZapisi: s.adres, sposob: s.parol_vyklyuchen ? "klyuch" : "parol" };
+  return { ...formaIzZapisi(s), poverhZapisi: s.adres, imya: s.imya, sposob: s.parol_vyklyuchen ? "klyuch" : "parol" };
 }
 
 function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot }: {
@@ -1359,10 +1405,14 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
   naOtchyot: (s: SvoyServer) => void;
 }) {
   const [zadayu, zadatZadayu] = useState(false);
+  const [imenuyu, zadatImenuyu] = useState(false);
   const ocenka = ocenitServer(s, trevogi, hody);
   const vid = SOSTOYANIE[ocenka.sostoyanie];
   const upravlyaem = s.klyuch_upravleniya && !s.novyy_otpechatok && !s.klyuch_ne_chitaetsya;
   const mozhno = aktiven && upravlyaem && !zanyato;
+  // Название правится на компьютере, сервер не нужен: мешают только дела,
+  // что перепишут запись с прежним названием.
+  const mozhnoImya = aktiven && !imyaZanyato(hody, s.id);
   const delo = posledniy(hody.filter((h) => h.server === s.id && !skryty.includes(h.id)));
   const p = svezhayaProverka(s, hody);
   // «Повторить» повторяет упавшее дело. Снос и снятие ключа снова через
@@ -1393,15 +1443,18 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
         <span className="text-fg-muted flex h-8 w-8 shrink-0 items-center justify-center"><IkServer className="h-[18px] w-[18px]" /></span>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex flex-wrap items-center gap-2">
-            <span className="text-foreground text-[15px] font-semibold tabular-nums">{s.adres}</span>
+            <span className="text-foreground min-w-0 break-words text-[15px] font-semibold" data-testid="svoy-imya-servera">{s.imya || s.adres}</span>
             <Teg ton={vid.ton} testId="svoy-sostoyanie">{vid.slovo}</Teg>
           </span>
-          <span className="text-fg-muted text-xs">{proveren ? `Проверен ${proveren}` : "Ещё не проверялся с этого компьютера"}</span>
+          <span className="text-fg-muted text-xs">
+            <span className="tabular-nums">{s.adres}</span>, {proveren ? `проверен ${proveren}` : "ещё не проверялся с этого компьютера"}
+          </span>
         </div>
         <Knopka rang="vtoraya" aktiven={mozhno} testId="svoy-proverit" onClick={() => naDelo("svoyVpsProverit", { id: s.id })}><IkObnovit className="h-3.5 w-3.5" />Проверить</Knopka>
         <MenyuDeystviy
           podpis="Действия с сервером"
           punkty={[
+            { podpis: "Переименовать", aktiven: mozhnoImya, naZhmyh: () => zadatImenuyu(true) },
             { podpis: "Подобрать порты заново", aktiven: mozhno, naZhmyh: () => naDelo("svoyVpsPodobratPorty", { id: s.id }) },
             { podpis: "Задать порты", aktiven: mozhno, naZhmyh: () => zadatZadayu(true) },
             { podpis: "Скопировать отчёт", naZhmyh: () => naOtchyot(s) },
@@ -1451,6 +1504,17 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
           naSkryt={() => naSkryt(delo.id)}
           deystviya={deystviya}
           dop={zabytBezSnyatiya}
+        />
+      )}
+      {imenuyu && (
+        <Pereimenovat
+          server={s}
+          aktiven={mozhnoImya}
+          naSohranit={(imya) => {
+            zadatImenuyu(false);
+            naDelo("svoyVpsPereimenovat", { id: s.id, imya });
+          }}
+          naOtmenu={() => zadatImenuyu(false)}
         />
       )}
       {zadayu && (
@@ -1568,6 +1632,7 @@ export function SvoyVpn(p: SvoyVpnProps) {
       zadatOtkazKomandy(r.otkaz);
       return;
     }
+    if ("preduprezhdenie" in r && r.preduprezhdenie) zadatOtkazKomandy(r.preduprezhdenie);
     // Новый ключ хоста принят: проверка сразу, отказ её был про прежний.
     if (imya === "svoyVpsPrinyatKlyuchHosta") {
       const id = typeof telo.id === "string" ? telo.id : "";
@@ -1796,7 +1861,7 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
       pustoy: true,
       klyuch_hosta_tip: o.klyuch_hosta_tip,
       klyuch_hosta: o.klyuch_hosta,
-      imya: "",
+      imya: forma.imya.trim(),
       reality: portIzPolya(forma.portReality),
       hy2: portIzPolya(forma.portHy2),
       poverh: forma.poverhZapisi || undefined,
@@ -1838,7 +1903,9 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
             otkaz={m.otkaz}
             idyot={zhdyom !== null}
             aktiven={aktiven}
+            imyaPoUmolch={imyaPoUmolchaniyu(servery ?? [], m.forma.poverhZapisi)}
             naPustoy={(v) => zadatMaster({ ...m, pustoy: v })}
+            naImya={(v) => zadatMaster({ ...m, forma: { ...m.forma, imya: v } })}
             naNazad={() => zadatMaster({ shag: "dostup", cel: "postavit", forma: m.forma })}
             naOtmenu={() => void otmenit()}
             naPostavit={(o) => void postavit(m.forma, o, m.id)}

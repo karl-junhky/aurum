@@ -337,7 +337,7 @@ func TestSvoyVpsOtmenaPosleKonca(t *testing.T) {
 }
 
 func TestObrezatImya(t *testing.T) {
-	if got := obrezatImya(strings.Repeat("я", 50)); got != strings.Repeat("я", 40) {
+	if got := obrezatImya(strings.Repeat("я", 50)); got != strings.Repeat("я", dlinaImeni) {
 		t.Errorf("длинное имя: %q", got)
 	}
 	if got := obrezatImya("Да\x00ча\x1b\x7f\u0085  ‮​"); got != "Дача" {
@@ -348,9 +348,31 @@ func TestObrezatImya(t *testing.T) {
 			t.Errorf("пустое на вид имя %q: %q", pustoe, got)
 		}
 	}
-	// Обрезка по 40 знакам не оставляет пробела на конце.
-	if got := obrezatImya("  " + strings.Repeat("я", 39) + " ж"); got != strings.Repeat("я", 39) {
+	// Обрезка по пределу не оставляет пробела на конце.
+	if got := obrezatImya("  " + strings.Repeat("я", dlinaImeni-1) + " ж"); got != strings.Repeat("я", dlinaImeni-1) {
 		t.Errorf("пробел на месте обрезки: %q", got)
+	}
+	// Флаг, разрезанный обрезкой, уходит целиком, а влезший остаётся.
+	flag := "\U0001F1F7\U0001F1FA"
+	if got := obrezatImya(strings.Repeat("я", dlinaImeni-1) + flag); got != strings.Repeat("я", dlinaImeni-1) {
+		t.Errorf("половина флага на краю: %q", got)
+	}
+	if got := obrezatImya(strings.Repeat("я", dlinaImeni-2) + flag + "ж"); got != strings.Repeat("я", dlinaImeni-2)+flag {
+		t.Errorf("целый флаг на краю: %q", got)
+	}
+}
+
+func TestImyaPoUmolchaniyu(t *testing.T) {
+	servery := []SvoyServer{{Id: "a", Imya: "Мой сервер"}, {Id: "b", Imya: "Мой сервер 2"}, {Id: "c", Imya: "Дача"}}
+	if got := imyaPoUmolchaniyu(servery, "novyy"); got != "Мой сервер 3" {
+		t.Errorf("третий сервер: %q", got)
+	}
+	// Сам сервер своё имя не занимает.
+	if got := imyaPoUmolchaniyu(servery, "a"); got != "Мой сервер" {
+		t.Errorf("поставить заново: %q", got)
+	}
+	if got := imyaPoUmolchaniyu(nil, "novyy"); got != "Мой сервер" {
+		t.Errorf("первый сервер: %q", got)
 	}
 }
 

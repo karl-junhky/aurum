@@ -40,6 +40,7 @@ function parametr(imya: string, poumolchaniyu: string): string {
 }
 
 import type { Server } from "../protokol";
+import { DLINA_IMENI } from "../svoyVps";
 
 const SLUCHAY = parametr("sluchay", "podnyat");
 /** Случаи рекламы живут на поднятом туннеле: строки вкладки про подключение
@@ -311,9 +312,9 @@ class OtkazStenda extends Error {
 
 type Zapis = Record<string, unknown>;
 
-function svoyZapis(adres: string, reality: number, hy2: number): Zapis {
+function svoyZapis(adres: string, reality: number, hy2: number, imya = "Мой сервер"): Zapis {
   return {
-    id: SVOY_ID, imya: "Мой сервер", adres, port_ssh: 22, polzovatel: "root",
+    id: SVOY_ID, imya, adres, port_ssh: 22, polzovatel: "root",
     klyuch_hosta_tip: "ssh-ed25519", maska: "www.example.net", versiya: "0.6.0",
     reality, hy2, prodlenie: "80",
     servery: [`${SVOY_ID}-reality`, `${SVOY_ID}-hy2`],
@@ -328,10 +329,10 @@ function svoyZapis(adres: string, reality: number, hy2: number): Zapis {
 }
 
 /** Ключи группы в общем списке: имена и транспорты, как у konfig.go. */
-function klyuchiSvoego(adres: string, reality: number, hy2: number): Server[] {
+function klyuchiSvoego(adres: string, reality: number, hy2: number, imya = "Мой сервер"): Server[] {
   return [
-    { id: `${SVOY_ID}-reality`, imya: "Мой сервер, reality", transport: "reality-tcp", host: adres, port: reality, iz_podpiski: false, svoy: true },
-    { id: `${SVOY_ID}-hy2`, imya: "Мой сервер, hysteria2", transport: "hy2", host: adres, port: hy2, iz_podpiski: false, svoy: true },
+    { id: `${SVOY_ID}-reality`, imya: `${imya}, reality`, transport: "reality-tcp", host: adres, port: reality, iz_podpiski: false, svoy: true },
+    { id: `${SVOY_ID}-hy2`, imya: `${imya}, hysteria2`, transport: "hy2", host: adres, port: hy2, iz_podpiski: false, svoy: true },
   ];
 }
 
@@ -443,11 +444,12 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
   },
   svoyVpsUstanovit: (v) => {
     const adres = stroka(v.adres);
+    const imya = stroka(v.imya).trim() || "Мой сервер";
     const posle = (h: Zapis) => {
       zakonchit(h, "gotovo", { ustanovlen: ustanovlen() });
       ustanovkaEst = true;
-      svoi = [...svoi.filter((z) => z.id !== SVOY_ID), { ...svoyZapis(adres, 2087, 5443), proveren: new Date().toISOString(), klyuch_upravleniya: true }];
-      servery = [...servery.filter((s) => !s.id.startsWith(`${SVOY_ID}-`)), ...klyuchiSvoego(adres, 2087, 5443)];
+      svoi = [...svoi.filter((z) => z.id !== SVOY_ID), { ...svoyZapis(adres, 2087, 5443, imya), proveren: new Date().toISOString(), klyuch_upravleniya: true }];
+      servery = [...servery.filter((s) => !s.id.startsWith(`${SVOY_ID}-`)), ...klyuchiSvoego(adres, 2087, 5443, imya)];
     };
     const h = nachatDelo("ustanovka", SVOY_ID, [
       (x) => { x.shag = "vhod"; x.adres = adres; },
@@ -524,6 +526,15 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     const z = poId(v);
     ubratSvoego(stroka(z.id));
     return { id: z.id };
+  },
+  svoyVpsPereimenovat: (v) => {
+    if (hodVps && hodVps.faza === "idyot") throw new OtkazStenda("vps-busy", "со своим сервером уже идёт дело: дождись его конца или отмени");
+    const z = poId(v);
+    const imya = Array.from(stroka(v.imya).trim()).slice(0, DLINA_IMENI).join("");
+    if (imya === "") throw new OtkazStenda("request-invalid", "название пустое");
+    z.imya = imya;
+    servery = servery.map((s) => (s.id === `${z.id}-reality` ? { ...s, imya: `${imya}, reality` } : s.id === `${z.id}-hy2` ? { ...s, imya: `${imya}, hysteria2` } : s));
+    return { id: z.id, imya };
   },
   svoyVpsVzyat: (v) => {
     const z = svoi.find((x) => x.adres === stroka(v.adres));

@@ -33,6 +33,7 @@ test("установка от письма хостера до готовых к
   await page.getByTestId("svoy-dalshe").click();
   await expect(page.getByTestId("svoy-punkty")).toContainText("Ubuntu 24.04");
   await expect(page.getByTestId("svoy-postavit-vpn")).toBeDisabled();
+  await page.getByTestId("svoy-imya").fill("Дача");
   await page.getByTestId("svoy-pustoy").click();
   await page.getByTestId("svoy-postavit-vpn").click();
 
@@ -48,7 +49,16 @@ test("установка от письма хостера до готовых к
   const kartochka = page.locator("[data-testid^=svoy-server-]");
   await expect(kartochka).toHaveCount(1);
   await expect(kartochka).toContainText("203.0.113.10");
+  await expect(kartochka.getByTestId("svoy-imya-servera")).toHaveText("Дача");
   await expect(kartochka.getByTestId("svoy-sostoyanie")).toHaveText("работает");
+
+  // Переименование сразу меняет карточку.
+  await kartochka.getByRole("button", { name: "Действия с сервером" }).click();
+  await page.getByRole("menuitem", { name: "Переименовать" }).click();
+  await page.getByTestId("svoy-novoe-imya").fill("Офис");
+  await page.getByTestId("svoy-sohranit-imya").click();
+  await expect(kartochka.getByTestId("svoy-imya-servera")).toHaveText("Офис");
+  await expect(page.getByTestId("svoy-pereimenovat")).toHaveCount(0);
 
   await nichegoNeSlomalos(page, oshibki);
 });
@@ -88,7 +98,7 @@ test("давний сервер проверяется при открытии, 
   const kartochka = page.locator("[data-testid^=svoy-server-]");
   await expect(kartochka).toContainText("203.0.113.40");
   // Заглушка ставит проверку двухчасовой давности: раздел проверяет сам.
-  await expect(kartochka).toContainText("Проверен только что", { timeout: 15_000 });
+  await expect(kartochka).toContainText("проверен только что", { timeout: 15_000 });
   await expect(kartochka.getByTestId("svoy-sostoyanie")).toHaveText("работает");
 
   await kartochka.getByRole("button", { name: "Действия с сервером" }).click();

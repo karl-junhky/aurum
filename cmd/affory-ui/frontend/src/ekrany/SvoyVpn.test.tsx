@@ -224,6 +224,45 @@ describe("шаг «Проверка»", () => {
     expect(telo.poverh).toBeUndefined();
   });
 
+  it("название из мастера уходит в установку без пробелов по краям", async () => {
+    const s = stend({
+      master: { shag: "proverka", forma, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+      otvety: { svoyVpsUstanovit: () => ({ hod: hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "zagruzka" }) }) },
+    });
+    const pole = screen.getByTestId("svoy-imya");
+    expect(pole).toHaveAttribute("placeholder", "Мой сервер");
+    fireEvent.change(pole, { target: { value: "  Дача " } });
+    fireEvent.click(screen.getByTestId("svoy-postavit-vpn"));
+    await waitFor(() => expect(s.vyzovy[0]?.[1]).toMatchObject({ imya: "Дача" }));
+  });
+
+  it("подсказка в поле названия называет имя, которое даст служба", () => {
+    stend({
+      servery: [server({ id: "svoy-1", imya: "Мой сервер" }), server({ id: "svoy-2", imya: "Мой сервер 2" })],
+      master: { shag: "proverka", forma, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+    });
+    expect(screen.getByTestId("svoy-imya")).toHaveAttribute("placeholder", "Мой сервер 3");
+  });
+
+  it("при «Поставить заново» подсказка называет прежнее имя записи, а без него саму запись занятой не считает", () => {
+    const poverh = { ...forma, poverhZapisi: "203.0.113.40", imya: "" };
+    stend({
+      servery: [server({ id: "svoy-1", imya: "Мой сервер" }), server({ id: "svoy-2", adres: "203.0.113.41", imya: "Дача" })],
+      master: { shag: "proverka", forma: poverh, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+    });
+    expect(screen.getByTestId("svoy-imya")).toHaveAttribute("placeholder", "Мой сервер");
+    cleanup();
+    stend({
+      servery: [server({ id: "svoy-1", imya: "" }), server({ id: "svoy-2", adres: "203.0.113.41", imya: "Мой сервер" })],
+      master: { shag: "proverka", forma: poverh, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+    });
+    expect(screen.getByTestId("svoy-imya")).toHaveAttribute("placeholder", "Мой сервер 2");
+  });
+
   it("мастер из «Поставить заново» просит ставить поверх записи этого адреса", async () => {
     const s = stend({
       master: { shag: "proverka", forma: { ...forma, poverhZapisi: "203.0.113.10" }, id: 10, pustoy: true },
@@ -514,6 +553,58 @@ describe("карточка сервера", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Забыть сервер" }));
     fireEvent.click(screen.getByTestId("svoy-zabyt-snyat"));
     await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsOtpustit", { id: "svoy-1" }]]));
+  });
+
+  it("карточка называет сервер именем, адрес строкой ниже, и переименовывает его", async () => {
+    const s = stend({ servery: [server({ imya: "Дача" })] });
+    expect(screen.getByTestId("svoy-imya-servera")).toHaveTextContent("Дача");
+    expect(screen.getByText("203.0.113.40")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Переименовать" }));
+    const pole = screen.getByTestId("svoy-novoe-imya");
+    expect(pole).toHaveValue("Дача");
+    // То же или пустое название не сохраняется.
+    expect(screen.getByTestId("svoy-sohranit-imya")).toBeDisabled();
+    fireEvent.change(pole, { target: { value: "   " } });
+    expect(screen.getByTestId("svoy-sohranit-imya")).toBeDisabled();
+    // Предел считается знаками, как в службе: эмодзи это один знак, а не два.
+    fireEvent.change(pole, { target: { value: `🏠${"я".repeat(30)}` } });
+    expect(pole).toHaveValue(`🏠${"я".repeat(18)}`);
+    fireEvent.change(pole, { target: { value: " Офис " } });
+    fireEvent.click(screen.getByTestId("svoy-sohranit-imya"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsPereimenovat", { id: "svoy-1", imya: "Офис" }]]));
+    expect(screen.queryByTestId("svoy-pereimenovat")).toBeNull();
+  });
+
+  it("переименовать можно посреди проверки, но не посреди подбора портов этого сервера", () => {
+    stend({ servery: [server()], hody: [hod({ id: 7, vid: "proverka", faza: "idyot", server: "svoy-1" })] });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    expect(screen.getByRole("menuitem", { name: "Переименовать" })).toBeEnabled();
+    cleanup();
+    stend({ servery: [server()], hody: [hod({ id: 8, vid: "podbor", faza: "idyot", server: "svoy-1" })] });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    expect(screen.getByRole("menuitem", { name: "Переименовать" })).toBeDisabled();
+  });
+
+  it("имя прежней версии длиннее предела видно в форме уже обрезанным", () => {
+    stend({ servery: [server({ imya: "я".repeat(30) })] });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Переименовать" }));
+    expect(screen.getByTestId("svoy-novoe-imya")).toHaveValue("я".repeat(19));
+    expect(screen.getByTestId("svoy-sohranit-imya")).toBeEnabled();
+  });
+
+  it("переименование с отставшими правилами показывает предупреждение, а не отказ", async () => {
+    const preduprezhdenie = { kod: "firewall-disabled", tekst: "правила брандмауэра отстали" };
+    stend({
+      servery: [server()],
+      otvety: { svoyVpsPereimenovat: () => ({ telo: {}, preduprezhdenie }) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Переименовать" }));
+    fireEvent.change(screen.getByTestId("svoy-novoe-imya"), { target: { value: "Офис" } });
+    fireEvent.click(screen.getByTestId("svoy-sohranit-imya"));
+    await waitFor(() => expect(screen.getByText(/правила брандмауэра отстали/i)).toBeInTheDocument());
   });
 
   it("порты руками: reality на порту SSH сервера не пускается", () => {

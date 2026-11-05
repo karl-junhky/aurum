@@ -424,6 +424,21 @@ type Klyuch struct {
 	Ssylka string
 }
 
+// ImyaKlyucha это имя ключа своего сервера imya вида transport:
+// «Мой сервер, reality» и «Мой сервер, hysteria2», а при нескольких портах
+// вида (vsego) ещё и порт. Так ключи видны и в списке, и на телефоне, вид
+// назван тем же словом, что в окне. Переименование правит ключи им же.
+func ImyaKlyucha(imya, transport string, port, vsego int) string {
+	vid := "reality"
+	if transport == "hy2" {
+		vid = "hysteria2"
+	}
+	if vsego > 1 {
+		return imya + ", " + vid + " " + strconv.Itoa(port)
+	}
+	return imya + ", " + vid
+}
+
 // Klyuchi собирает ключи на входы v. Ссылка собирается сборкой клиента и
 // разбирается его же разбором: запись в набор кладётся та, что даёт разбор,
 // как при вставке ссылки руками, и обязана совпасть с задуманной. Иначе
@@ -437,24 +452,16 @@ func Klyuchi(s Sekrety, v Vhody) ([]Klyuch, error) {
 		return nil, err
 	}
 	adres := a.String()
-	// «Мой сервер, reality» и «Мой сервер, hysteria2»: так ключи видны и в
-	// списке, и на телефоне, вид назван тем же словом, что в окне.
-	imya := func(vid string, port, vsego int) string {
-		if vsego > 1 {
-			return v.Imya + ", " + vid + " " + strconv.Itoa(port)
-		}
-		return v.Imya + ", " + vid
-	}
 	zadumannye := make([]protokol.Server, 0, len(v.Reality)+len(v.Hy2))
 	for _, port := range v.Reality {
 		zadumannye = append(zadumannye, protokol.Server{
-			Imya: imya("reality", port, len(v.Reality)), Transport: "reality-tcp", Host: adres, Port: port,
+			Imya: ImyaKlyucha(v.Imya, "reality-tcp", port, len(v.Reality)), Transport: "reality-tcp", Host: adres, Port: port,
 			Uuid: s.Uuid, PublicKey: s.RealityOtkr, ShortId: s.ShortId, Flow: flowVision, Sni: s.Maska, Fp: fpTelefona,
 		})
 	}
 	for _, port := range v.Hy2 {
 		zadumannye = append(zadumannye, protokol.Server{
-			Imya: imya("hysteria2", port, len(v.Hy2)), Transport: "hy2", Host: adres, Port: port,
+			Imya: ImyaKlyucha(v.Imya, "hy2", port, len(v.Hy2)), Transport: "hy2", Host: adres, Port: port,
 			Parol: s.Parol, Obfs: obfsHy2, ObfsParol: s.ObfsParol, Sni: adres,
 		})
 	}

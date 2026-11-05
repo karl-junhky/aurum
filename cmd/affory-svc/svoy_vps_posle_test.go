@@ -10,13 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/protokol"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/porty"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
@@ -413,6 +416,166 @@ func TestSvoyVpsZabyt(t *testing.T) {
 	}
 	if kod := kodOtkaza(s.svoyVpsZabyt(kadrVps(t, "svoyVpsZabyt", map[string]string{"id": id}))); kod != protokol.KodTeloNegodno {
 		t.Fatalf("повторное «забыть»: %q", kod)
+	}
+}
+
+func TestSvoyVpsPereimenovat(t *testing.T) {
+	s := sPustymNaborom(t)
+	id, ids := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+	chuzhoy := protokol.Server{Id: "chuzhoy", Imya: "Чужой", Transport: "hy2", Host: "198.51.100.7", Port: 443, Parol: "p", Sni: "198.51.100.7"}
+	if err := s.pravitNabor(func(n *Nabor) error { n.Servery = append(n.Servery, chuzhoy); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	pereimenovat := func(id, imya string) protokol.Kadr {
+		return s.svoyVpsPereimenovat(kadrVps(t, "svoyVpsPereimenovat", map[string]string{"id": id, "imya": imya}))
+	}
+	// Ядро поднято на ключе reality этого сервера.
+	s.mu.Lock()
+	s.serveryYadra = []protokol.Server{{Id: ids[0], Imya: "Дача, reality"}, {Id: "chuzhoy", Imya: "Чужой"}}
+	s.nesushchiyId, s.nesushchiyImya = ids[0], "Дача, reality"
+	s.mu.Unlock()
+
+	// Знаки, которые ссылка кодирует, доезжают до ключа на телефоне как есть.
+	if otv := pereimenovat(id, "  Офис #1 %20 & ?‮ "); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	s.mu.Lock()
+	nesushchiy, yadro := s.nesushchiyImya, slices.Clone(s.serveryYadra)
+	s.mu.Unlock()
+	if nesushchiy != "Офис #1 %20 & ?, reality" || yadro[0].Imya != nesushchiy || yadro[1].Imya != "Чужой" {
+		t.Fatalf("имя несущего %q, снимок ядра %+v", nesushchiy, yadro)
+	}
+	n, err := s.nabor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.SvoiServery) != 1 || n.SvoiServery[0].Imya != "Офис #1 %20 & ?" {
+		t.Fatalf("запись после переименования: %+v", n.SvoiServery)
+	}
+	imena := map[string]string{}
+	for _, srv := range n.Servery {
+		imena[srv.Id] = srv.Imya
+		if !slices.Contains(ids, srv.Id) {
+			continue
+		}
+		ssylka, err := ssylki.Sobrat(srv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := ssylki.Razobrat(ssylka)
+		if err != nil || r.Imya != srv.Imya {
+			t.Fatalf("имя %q в ссылке %q вернулось %q: %v", srv.Imya, ssylka, r.Imya, err)
+		}
+	}
+	want := map[string]string{ids[0]: "Офис #1 %20 & ?, reality", ids[1]: "Офис #1 %20 & ?, hysteria2", "chuzhoy": "Чужой"}
+	if !reflect.DeepEqual(imena, want) {
+		t.Fatalf("имена ключей: %v", imena)
+	}
+	// Запор снят за собой.
+	otperet, _ := s.zaperetVps(time.Now().Add(time.Minute), "x")
+	if otperet == nil {
+		t.Fatal("переименование оставило запор")
+	}
+
+	if kod := kodOtkaza(pereimenovat(id, "Дача")); kod != protokol.KodVpsZanyato {
+		t.Fatalf("переименование посреди запора: %q", kod)
+	}
+	otperet()
+	if otv := pereimenovat(id, strings.Repeat("я", 30)); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	if n, err := s.nabor(); err != nil || n.SvoiServery[0].Imya != strings.Repeat("я", dlinaImeni) {
+		t.Fatalf("длинное название не обрезано: %v", err)
+	}
+	for _, plohoe := range []struct{ id, imya string }{{id, " ​ "}, {"svoy-net", "Дача"}} {
+		if kod := kodOtkaza(pereimenovat(plohoe.id, plohoe.imya)); kod != protokol.KodTeloNegodno {
+			t.Fatalf("%q, %q: %q", plohoe.id, plohoe.imya, kod)
+		}
+	}
+}
+
+// Переименованию мешают только задания, что пишут запись этого сервера
+// целиком: осмотр и прочие идут дальше.
+func TestSvoyVpsPereimenovatPosredDela(t *testing.T) {
+	s := sPustymNaborom(t)
+	id, _ := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), true)
+	pereimenovat := func(imya string) protokol.Kadr {
+		return s.svoyVpsPereimenovat(kadrVps(t, "svoyVpsPereimenovat", map[string]string{"id": id, "imya": imya}))
+	}
+
+	pusk := make(chan struct{})
+	s.vpsOsmotret = func(ctx context.Context, _ upravlenie.Puti, _ ssh.Zapros) (upravlenie.Otchet, error) {
+		close(pusk)
+		<-ctx.Done()
+		return upravlenie.Otchet{}, ctx.Err()
+	}
+	s.svoyVpsOsmotret(kadrVps(t, "svoyVpsOsmotret", dostupVps{Adres: adresSvoego, Polzovatel: "root", Parol: "x"}))
+	<-pusk
+	if otv := pereimenovat("Офис"); otv.Oshib != nil {
+		t.Fatalf("переименование посреди осмотра: %v", otv.Oshib)
+	}
+	s.svoyVpsOtmenit(protokol.Kadr{Imya: "svoyVpsOtmenit"})
+	dozhdatsyaVps(t, s)
+
+	pusk = make(chan struct{})
+	s.vpsPodobratPorty = func(ctx context.Context, _ upravlenie.Podbor) (upravlenie.Itog, error) {
+		close(pusk)
+		<-ctx.Done()
+		return upravlenie.Itog{}, ctx.Err()
+	}
+	if otv := s.svoyVpsPodobratPorty(kadrVps(t, "svoyVpsPodobratPorty", zaprosPodboraVps{Id: id})); otv.Oshib != nil {
+		t.Fatal(otv.Oshib)
+	}
+	<-pusk
+	if kod := kodOtkaza(pereimenovat("Дача")); kod != protokol.KodVpsZanyato {
+		t.Fatalf("переименование посреди подбора: %q", kod)
+	}
+	s.svoyVpsOtmenit(protokol.Kadr{Imya: "svoyVpsOtmenit"})
+	dozhdatsyaVps(t, s)
+	if z := zapisPoId(t, s, id); z.Imya != "Офис" {
+		t.Fatalf("название после подбора: %q", z.Imya)
+	}
+}
+
+// Правила, отставшие после записи набора, не делают переименование отказом:
+// названия уже сменились, а отставание приходит предупреждением.
+func TestSvoyVpsPereimenovatPravilaOtstali(t *testing.T) {
+	s, _, _ := sKillSwitch(t)
+	s.sobratAdresa = adresaIzNabora(s)
+	if err := s.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetKillSwitch(true); err != nil {
+		t.Fatal(err)
+	}
+	id, ids := postavitSvoy(t, s, klyuchHostaDlyaTesta(t), false)
+	// Тот же список адресов поверх стоящего замка не пересобирается. Отстать
+	// правила могут, только если прошлая пересборка оборвалась: она стирает
+	// отпечаток замка, и следующая запись набора пробует снова.
+	s.muZaslon.Lock()
+	s.otpechatokZamka = ""
+	s.muZaslon.Unlock()
+	s.vklyuchitVes = func(set.Razreshyonnoe, bool) error {
+		return fmt.Errorf("%w: профиль Domain", set.ErrBrandmauerVyklyuchen)
+	}
+	otv := s.svoyVpsPereimenovat(kadrVps(t, "svoyVpsPereimenovat", map[string]string{"id": id, "imya": "Офис"}))
+	if otv.Oshib != nil {
+		t.Fatalf("отставшие правила дали отказ: %v", otv.Oshib)
+	}
+	var telo struct {
+		Preduprezhdenie *OtkazVps `json:"preduprezhdenie"`
+	}
+	if err := json.Unmarshal(otv.Telo, &telo); err != nil || telo.Preduprezhdenie == nil || telo.Preduprezhdenie.Kod != protokol.KodFirewallDisabled {
+		t.Fatalf("предупреждение %+v: %v", telo.Preduprezhdenie, err)
+	}
+	n, err := s.nabor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, srv := range n.Servery {
+		if slices.Contains(ids, srv.Id) && !strings.HasPrefix(srv.Imya, "Офис, ") {
+			t.Fatalf("ключ %s после переименования: %q", srv.Id, srv.Imya)
+		}
 	}
 }
 

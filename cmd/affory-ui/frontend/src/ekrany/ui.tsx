@@ -293,12 +293,15 @@ export function Segment<T extends string>({ znacheniya, vybrano, naVybor, aktive
  *
  *  `priv` exists so a screen can put the caret where the human is about to
  *  type. Nothing else reaches into the input from outside. */
-export function Pole({ testId, znachenie, naVvod, placeholder, aktiven = true, tip = "text", oshibka = false, priv, "aria-label": podpis, className = "" }: {
+export function Pole({ testId, znachenie, naVvod, placeholder, aktiven = true, tip = "text", oshibka = false, maxDlina, priv, "aria-label": podpis, className = "" }: {
   testId?: string;
   znachenie: string;
   naVvod: (v: string) => void;
   placeholder?: string;
   aktiven?: boolean;
+  /** Предел знаков Юникода: лишнее поле отрезает. Не maxLength: тот считает
+   *  половинки UTF-16, и эмодзи шёл бы за два знака. */
+  maxDlina?: number;
   /** password прячет знаки и не зовёт браузерную память паролей. */
   tip?: "text" | "search" | "password";
   /** Значение не годится: поле так и объявляется голосом. Текст ошибки
@@ -320,7 +323,11 @@ export function Pole({ testId, znachenie, naVvod, placeholder, aktiven = true, t
       disabled={!aktiven}
       placeholder={placeholder}
       spellCheck={false}
-      onChange={(e) => naVvod(e.target.value)}
+      onChange={(e) => {
+        const v = e.target.value;
+        const znaki = Array.from(v);
+        naVvod(maxDlina !== undefined && znaki.length > maxDlina ? znaki.slice(0, maxDlina).join("") : v);
+      }}
       className={`bg-elevated border-border text-foreground placeholder:text-fg-faint hover:border-border-hover focus:border-border-active h-9 min-w-0 rounded-md border px-3 text-[13px] disabled:opacity-40 ${className}`}
     />
   );

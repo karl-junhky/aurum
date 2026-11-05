@@ -531,6 +531,8 @@ export interface Forma {
   parolKlyucha: string;
   portReality: string;
   portHy2: string;
+  /** Название сервера; пусто значит прежнее или «Мой сервер». */
+  imya: string;
   /** Адрес сервера из раздела, если мастер открыт его «Поставить заново»:
    *  только так служба ставит поверх записи. */
   poverhZapisi: string;
@@ -547,6 +549,7 @@ export const PUSTAYA_FORMA: Forma = {
   parolKlyucha: "",
   portReality: "",
   portHy2: "",
+  imya: "",
   poverhZapisi: "",
 };
 
@@ -559,7 +562,39 @@ export type Master =
   | { shag: "proverka"; forma: Forma; id: number; pustoy: boolean; otkaz?: OtkazVps }
   | { shag: "ustanovka"; forma: Forma | null; id: number; neZhdat?: boolean };
 
-export type ItogKomandy = { hod: HodVps } | { telo: unknown } | { otkaz: OtkazVps };
+/** Команда удалась, а служба предупреждает: переименование записало набор,
+ *  а правила брандмауэра отстали. */
+export type ItogKomandy = { hod: HodVps } | { telo: unknown; preduprezhdenie?: OtkazVps } | { otkaz: OtkazVps };
+
+/** Предел названия своего сервера, тот же, что у службы (dlinaImeni): Happ
+ *  показывает из имени ключа 30 знаков, хвост «, hysteria2» занимает 11.
+ *  Считается по знакам Юникода, как в службе. */
+export const DLINA_IMENI = 19;
+
+const IMYA_PO_UMOLCHANIYU = "Мой сервер";
+
+/** Дела, что пишут запись о сервере целиком, с названием из начала дела
+ *  (pishutZapis службы): переименование посреди них служба не пустит. */
+const PISHUT_ZAPIS = new Set(["ustanovka", "podbor", "vzyat"]);
+
+/** Идёт дело, которое затёрло бы новое название сервера id. Дело, чей сервер
+ *  в снимке ещё не назван, могло начаться над ним же. */
+export function imyaZanyato(hody: HodVps[], id: string): boolean {
+  return hody.some((h) => h.faza === "idyot" && PISHUT_ZAPIS.has(h.vid) && (!h.server || h.server === id));
+}
+
+/** Название, которое служба даст серверу с пустым полем: «Мой сервер», а
+ *  если оно занято другим своим сервером, «Мой сервер 2» и дальше
+ *  (imyaPoUmolchaniyu службы). Установка поверх записи с адресом poverh
+ *  оставляет её прежнее название, а сама запись занятым не считается. */
+export function imyaPoUmolchaniyu(servery: SvoyServer[], poverh = ""): string {
+  const bylo = poverh === "" ? undefined : servery.find((s) => s.adres === poverh);
+  if (bylo?.imya) return bylo.imya;
+  const zanyato = new Set(servery.filter((s) => s !== bylo).map((s) => s.imya));
+  let imya = IMYA_PO_UMOLCHANIYU;
+  for (let i = 2; zanyato.has(imya); i++) imya = `${IMYA_PO_UMOLCHANIYU} ${i}`;
+  return imya;
+}
 
 export interface SvoyVps {
   /** null - список ещё не пришёл или не прочитался (тогда spisokOtkaz). */
@@ -798,13 +833,19 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
       vneshnie.current.naSboy(e);
       return { otkaz: { kod: KOD_OBOLOCHKI, tekst: tekstOshibki(e) } };
     }
-    if (k.oshibka) return { otkaz: { kod: k.oshibka.kod, tekst: k.oshibka.tekst } };
-    // Эти две служба делает сразу, без задания: события хода не будет, и
-    // запись, а у «забыть» и ключи общего списка, перечитываются отсюда.
-    if (imya === "svoyVpsZabyt" || imya === "svoyVpsPrinyatKlyuchHosta") {
+    // Эти команды служба делает сразу, без задания: события хода не будет, и
+    // запись, а у «забыть» и переименования и ключи общего списка,
+    // перечитываются отсюда. И при отказе тоже: «забыть» могло успеть стереть
+    // ключ управления, а запись набора могла пройти до отказа.
+    const sraznu = imya === "svoyVpsZabyt" || imya === "svoyVpsPrinyatKlyuchHosta" || imya === "svoyVpsPereimenovat";
+    if (sraznu) {
       void obnovitSpisok();
-      if (imya === "svoyVpsZabyt") vneshnie.current.naSmenuKlyuchey();
-      return { telo: k.telo };
+      if (imya !== "svoyVpsPrinyatKlyuchHosta") vneshnie.current.naSmenuKlyuchey();
+    }
+    if (k.oshibka) return { otkaz: { kod: k.oshibka.kod, tekst: k.oshibka.tekst } };
+    if (sraznu) {
+      const preduprezhdenie = otkazVpsIz(obekt(k.telo)?.preduprezhdenie);
+      return preduprezhdenie ? { telo: k.telo, preduprezhdenie } : { telo: k.telo };
     }
     if (imya.startsWith("svoyVps")) {
       const h = hodIz(k.telo);
