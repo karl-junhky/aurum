@@ -1813,10 +1813,10 @@ function RyadRossii({ s, happ, aktiven, zhdyot, kodyQr, naSmenu }: {
   const poyasnenie = podpiskoy
     ? (s.rf_cherez_vpn
       ? "Выключено: в подписке правила, где всё идёт через VPN. Happ заберёт их при обновлении подписки"
-      : "Включено: правила в подписке пускают их мимо VPN, а YouTube и Telegram через VPN")
+      : "Включено: правила в подписке пускают мимо VPN только их, всё остальное идёт через VPN, YouTube и Telegram тоже")
     : (s.rf_cherez_vpn
       ? "Выключено: код для Happ заменяет правила, и на телефоне всё идёт через VPN"
-      : "Включено: правила для Happ пускают их на телефоне мимо VPN, а YouTube и Telegram через VPN");
+      : "Включено: правила для Happ пускают мимо VPN только их, всё остальное на телефоне идёт через VPN, YouTube и Telegram тоже");
   return (
     <>
       <Ryad nazvanie="Российские сайты напрямую" poyasnenie={poyasnenie}>
