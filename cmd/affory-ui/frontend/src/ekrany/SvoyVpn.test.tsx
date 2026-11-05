@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { useCallback, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, opisanieMaski, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
+  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, opisanieMaski, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov, programmaBezMaski,
   punktyOsmotra, sostoyanieKlyucha, strokaPerehvata, teloDostupa, zanyatyeDlyaReality,
 } from "./SvoyVpn";
 import {
@@ -908,6 +908,39 @@ describe("смена маски", () => {
     fireEvent.click(within(plashka).getByTestId("svoy-maska-trevoga-smenit"));
     expect(screen.getByTestId("svoy-podobrat-masku")).toBeInTheDocument();
     expect(within(screen.getByTestId("svoy-maska-trevoga")).queryByTestId("svoy-maska-trevoga-smenit")).toBeNull();
+  });
+
+  it("сервер 1.11.0 с известной маской: «Подобрать другую» одной кнопкой", async () => {
+    const s = stend({ servery: [server({ maska: "DL.google.com" })] });
+    const plashka = screen.getByTestId("svoy-maska-1-11");
+    expect(plashka).toHaveTextContent("Маску DL.google.com глушат на мобильном интернете");
+    fireEvent.click(within(plashka).getByTestId("svoy-maska-1-11-podobrat"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsMaska", { id: "svoy-1" }]]));
+  });
+
+  it("сервер 1.11.0 со старой программой: сначала обновить, кнопки смены нет", () => {
+    stend({ servery: [server({ maska: "www.adobe.com", versiya: "0.6.0", novaya_versiya: "0.7.0" })] });
+    const plashka = screen.getByTestId("svoy-maska-1-11");
+    expect(plashka).toHaveTextContent("Сменить её можно после обновления программы на сервере");
+    expect(within(plashka).queryByRole("button")).toBeNull();
+  });
+
+  it("старая программа это версия до 0.7.0, а не наличие обновления", () => {
+    expect(programmaBezMaski(server({ versiya: "0.6.9" }))).toBe(true);
+    expect(programmaBezMaski(server({ versiya: "0.7.0", novaya_versiya: "0.7.1" }))).toBe(false);
+    expect(programmaBezMaski(server({ versiya: "1.0.0" }))).toBe(false);
+    expect(programmaBezMaski(server({ versiya: "0.10.2" }))).toBe(false);
+    expect(programmaBezMaski(server())).toBe(false);
+  });
+
+  it("известная маска с согласием, без ключа управления или с тревогой сторожа: предложения нет", () => {
+    stend({ servery: [
+      server({ id: "svoy-1", maska: "www.adobe.com", maska_istochnik: "brend" }),
+      server({ id: "svoy-2", maska: "dl.google.com", klyuch_upravleniya: false }),
+      server({ id: "svoy-3", maska: "dl.google.com", maska_ne_otvechaet: "нет" }),
+    ] });
+    expect(screen.queryByTestId("svoy-maska-1-11")).toBeNull();
+    expect(screen.getByTestId("svoy-maska-trevoga")).toBeInTheDocument();
   });
 
   it("маска перестала отвечать, а ключа управления нет: кнопки нет", () => {

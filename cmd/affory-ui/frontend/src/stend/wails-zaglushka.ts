@@ -304,7 +304,8 @@ const CHAS_MS = 3600 * 1000;
 // ?obnovlenie=est: окно ставит программу сервера новее, чем на нём;
 // otkaz - и обновление не выходит.
 const OBNOVLENIE = parametr("obnovlenie", "net");
-// ?maska=mertva: сторож программы сервера не достаёт маску (МА3).
+// ?maska=mertva: сторож программы сервера не достаёт маску (МА3); 1-11 -
+// сервер 1.11.0 с прежней известной маской (МА4).
 const MASKA = parametr("maska", "zhiva");
 
 /** Отказ команды тем же кадром, что у службы: полем oshibka, а не
@@ -332,6 +333,7 @@ function svoyZapis(adres: string, reality: number, hy2: number, imya = "Мой �
     ...(SVOY === "klyuch-hosta" ? { novyy_otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDI" } : {}),
     ...(OBNOVLENIE !== "net" ? { novaya_versiya: "0.7.0" } : {}),
     ...(MASKA === "mertva" ? { maska_ne_otvechaet: "сайт отвечает без h2" } : {}),
+    ...(MASKA === "1-11" ? { maska: "dl.google.com", maska_istochnik: undefined, versiya: "0.7.0" } : {}),
   };
 }
 

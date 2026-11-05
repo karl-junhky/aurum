@@ -51,7 +51,8 @@ func (m *MaskaNegodna) Error() string {
 	return t
 }
 
-// ErrNetDrugoyMaski: подбор не нашёл годной маски, кроме той, что стоит.
+// ErrNetDrugoyMaski: подбор не нашёл годной маски, кроме той, что стоит, или
+// ответили только известные имена (прежние маски 1.11.0).
 var ErrNetDrugoyMaski = errors.New("другой годной маски не нашлось")
 
 // MaskaIzvestnaya: введённое имя из известных, а согласия ставить его нет.
@@ -167,6 +168,10 @@ func SmenitMasku(ctx context.Context, p SmenaMaski) (itog Itog, err error) {
 		return Itog{}, fmt.Errorf("%w: %w", ErrNetDrugoyMaski, err)
 	} else if err != nil {
 		return Itog{}, err
+	} else if mk.Istochnik == MaskaBrend {
+		// Подбор упал на прежние маски 1.11.0: менять известное имя на
+		// известное незачем, их глушат одинаково.
+		return Itog{}, fmt.Errorf("%w: ответила только известная маска %s", ErrNetDrugoyMaski, mk.Imya)
 	}
 	uzhe := odnaMaska(mk.Imya, sek.Maska)
 	sek.Maska = mk.Imya

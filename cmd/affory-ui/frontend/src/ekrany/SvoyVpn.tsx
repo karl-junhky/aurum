@@ -1431,6 +1431,28 @@ export function opisanieMaski(s: SvoyServer): string | undefined {
   return MASKI_1_11.includes(imyaMaski(s.maska)) ? "известный сайт: на мобильном интернете такие имена глушат" : undefined;
 }
 
+/** Сервер 1.11.0 с маской из прежнего списка (МА4): карточка предлагает
+ *  сменить её. Известное имя, поставленное с согласием, источник «brend»
+ *  помнит, и ему не предлагается. */
+export function predlozhitSmenuMaski(s: SvoyServer): boolean {
+  return s.reality !== undefined && s.maska_istochnik === undefined && MASKI_1_11.includes(imyaMaski(s.maska));
+}
+
+/** С этой версии программа сервера подбирает и проверяет маску. */
+const VERSIYA_S_MASKOY = [0, 7, 0];
+
+/** Программа сервера по последней проверке старше VERSIYA_S_MASKOY. Версия
+ *  неизвестна - нет: отказ смены сам скажет, что программу пора обновить. */
+export function programmaBezMaski(s: SvoyServer): boolean {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(s.versiya ?? "");
+  if (!m) return false;
+  for (let i = 0; i < 3; i++) {
+    const d = Number(m[i + 1]) - VERSIYA_S_MASKOY[i];
+    if (d !== 0) return d < 0;
+  }
+  return false;
+}
+
 /** Смена маски (МА2): подобрать другую рядом с сервером или поставить свою.
  *  Годится ли своя, проверяет сервер. */
 function SmenaMaski({ server, aktiven, naPodobrat, naSvoyu, naOtmenu }: {
@@ -1647,6 +1669,20 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
         <Plashka ton={vid.kromka} zagolovok={ocenka.prichina} tekst={ocenka.sovet} testId={ocenka.maska ? "svoy-maska-trevoga" : undefined}>
           {ocenka.maska && upravlyaem && !menyayuMasku && (
             <Knopka rang="vtoraya" aktiven={mozhno} testId="svoy-maska-trevoga-smenit" onClick={() => zadatMenyayuMasku(true)}>Сменить маску</Knopka>
+          )}
+        </Plashka>
+      )}
+      {upravlyaem && predlozhitSmenuMaski(s) && !ocenka.maska && !menyayuMasku && (
+        <Plashka
+          testId="svoy-maska-1-11"
+          zagolovok={`Маску ${s.maska} глушат на мобильном интернете`}
+          tekst={programmaBezMaski(s)
+            ? "Сменить её можно после обновления программы на сервере"
+            : "Подберу малоизвестный сайт рядом с сервером. После смены ключ reality на телефоне нужно добавить заново"}
+        >
+          {!programmaBezMaski(s) && (
+            <Knopka rang="vtoraya" aktiven={mozhno} zhdyot={delo?.vid === "maska" && delo.faza === "idyot"} testId="svoy-maska-1-11-podobrat"
+              onClick={() => naDelo("svoyVpsMaska", { id: s.id })}>Подобрать другую</Knopka>
           )}
         </Plashka>
       )}
