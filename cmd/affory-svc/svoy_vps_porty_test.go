@@ -29,7 +29,7 @@ func postavitDlyaPodbora(t *testing.T, s *Sluzhba, kh ssh.KlyuchHosta) (string, 
 	id := idSvoego(netip.MustParseAddr(adresSvoego))
 	it := itogSoSekretami(t, sek, kh, 443, 8443)
 	it.MaskaIstochnik = upravlenie.MaskaSosedi
-	ids, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "admin", Postavlen: postavlenDlyaTesta}, it)
+	ids, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "admin", Postavlen: postavlenDlyaTesta}, it)
 	if err != nil {
 		t.Fatal(err)
 	}

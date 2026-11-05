@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/podpiska"
+	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sayt"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sertip"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/vhody"
 )
@@ -21,7 +22,9 @@ import (
 // раздаёт людям, и свой сертификат сервера на его IP для TLS-входов. Третья
 // это свой VPN без центра: сертификат на IP программа выпускает и продлевает
 // сама (SertIPSam), а SertIP, если есть, это копия, сохранённая клиентом с
-// прошлой установки. Proba делает пакет пробным (подбор портов).
+// прошлой установки. Proba делает пакет пробным (подбор портов). Sayt это
+// режим своего домена (vpn-uzel 0.7.0): сайт-заглушка и подписка на петле,
+// цель reality; сертификат на домен ведёт тот же выпуск (SertIPSam.Domen).
 type Paket struct {
 	Versiya   int               `json:"versiya"`
 	Yadro     json.RawMessage   `json:"yadro"` // конфиг sing-box как есть
@@ -30,6 +33,7 @@ type Paket struct {
 	SertIP    *podpiska.Sert    `json:"sert_ip,omitempty"`
 	SertIPSam *sertip.Nastroyka `json:"sert_ip_sam,omitempty"`
 	Proba     *Proba            `json:"proba,omitempty"`
+	Sayt      *sayt.Nastroyka   `json:"sayt,omitempty"`
 
 	tlsSert   *tls.Certificate // разобранный Sert
 	tlsSertIP *tls.Certificate // разобранный SertIP
@@ -78,6 +82,20 @@ func razobratPaket(syroe []byte) (Paket, error) {
 		if err := p.SertIPSam.Proverit(); err != nil {
 			return Paket{}, err
 		}
+	}
+	if p.Sayt != nil {
+		switch {
+		case p.Versiya < 3:
+			return Paket{}, fmt.Errorf("в пакете версии %d sayt: режим домена есть с версии 3", p.Versiya)
+		case p.SertIPSam == nil || p.SertIPSam.Domen != p.Sayt.Domen:
+			return Paket{}, fmt.Errorf("сайт на %s без выпуска сертификата на этот домен", p.Sayt.Domen)
+		}
+		if err := p.Sayt.Proverit(); err != nil {
+			return Paket{}, err
+		}
+	}
+	if p.SertIP != nil && p.SertIPSam != nil && p.SertIPSam.Domen != "" {
+		return Paket{}, fmt.Errorf("копия своего сертификата на IP, а выпуск на домен %s", p.SertIPSam.Domen)
 	}
 	if len(bytes.TrimSpace(p.Yadro)) == 0 {
 		return Paket{}, fmt.Errorf("в пакете нет конфига ядра")

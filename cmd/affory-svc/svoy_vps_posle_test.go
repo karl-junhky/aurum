@@ -55,7 +55,7 @@ func itogSoSekretami(t *testing.T, sek konfig.Sekrety, kh ssh.KlyuchHosta, reali
 func postavitSvoy(t *testing.T, s *Sluzhba, kh ssh.KlyuchHosta, sKlyuchom bool) (string, []string) {
 	t.Helper()
 	id := idSvoego(netip.MustParseAddr(adresSvoego))
-	ids, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "root"}, itogSvoego(t, kh, 443, 8443))
+	ids, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "root"}, itogSvoego(t, kh, 443, 8443))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestSvoyVpsObhodRf(t *testing.T) {
 		t.Fatal("выключение не записано")
 	}
 	// Подбор портов заново пишет запись целиком: выбор человека остаётся.
-	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "root", ZapisEst: true}, itogSvoego(t, kh, 8443, 443)); err != nil {
+	if _, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "root", ZapisEst: true}, itogSvoego(t, kh, 8443, 443)); err != nil {
 		t.Fatal(err)
 	}
 	if !zapisPoId(t, s, id).RfCherezVpn {

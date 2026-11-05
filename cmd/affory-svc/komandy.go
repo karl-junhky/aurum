@@ -26,6 +26,7 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/set"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sostoyanie"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/domen"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/proverka"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/server"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/ssh"
@@ -563,6 +564,9 @@ type Sluzhba struct {
 	vpsPodobratPorty   func(context.Context, upravlenie.Podbor) (upravlenie.Itog, error)
 	vpsObnovit         func(context.Context, upravlenie.Obnovlenie) (upravlenie.ObnovlenieItog, error)
 	vpsSmenitMasku     func(context.Context, upravlenie.SmenaMaski) (upravlenie.Itog, error)
+	vpsSmenitRezhim    func(context.Context, upravlenie.SmenaRezhima) (upravlenie.Itog, error)
+	vpsObnovitPodpisku func(context.Context, upravlenie.SmenaPodpiski) (upravlenie.Itog, error)
+	vpsProveritDomen   func(context.Context, string, netip.Addr) domen.Itog
 	programmaUzla      func(context.Context) (io.ReadSeekCloser, error)
 	istochnikUzla      string
 	vshityyUzel        func() (vypuskUzla, error)
@@ -661,6 +665,9 @@ func NovayaSluzhba() *Sluzhba {
 	s.vpsPodobratPorty = upravlenie.PodobratPorty
 	s.vpsObnovit = upravlenie.Obnovit
 	s.vpsSmenitMasku = upravlenie.SmenitMasku
+	s.vpsSmenitRezhim = upravlenie.SmenitRezhim
+	s.vpsObnovitPodpisku = upravlenie.ObnovitPodpisku
+	s.vpsProveritDomen = domen.Proverit
 	s.programmaUzla = s.programmaSVypuska
 	s.istochnikUzla = os.Getenv(peremennayaUzla)
 	s.vshityyUzel = prochitatVshityyUzel

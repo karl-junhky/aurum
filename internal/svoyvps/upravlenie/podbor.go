@@ -125,7 +125,7 @@ func PodobratPorty(ctx context.Context, p Podbor) (itog Itog, err error) {
 		if err != nil {
 			return Itog{}, err
 		}
-		pr, otkazSerta, err := vypustitSert(ctx, s, adres, paketSerta, &itog.Sert)
+		pr, otkazSerta, err := vypustitSert(ctx, s, adres, "", paketSerta, &itog.Sert)
 		if err != nil {
 			return Itog{}, err
 		}
@@ -136,7 +136,8 @@ func PodobratPorty(ctx context.Context, p Podbor) (itog Itog, err error) {
 
 	pp := podborPortov{Adres: adres, Imya: p.Imya, PortSsh: p.Vhod.Port, Ruchnye: p.Ruchnye,
 		Rabochie: porty.Ruchnye{Reality: portVida(vh, "reality-tcp"), Hy2: portVida(vh, "hy2")},
-		Opcii:    opcii, Proverka: p.Proverka, Zapusk: p.Zapusk, Pryamo: p.Pryamo, Hod: hod, Klyuchi: p.Klyuchi}
+		Opcii:    opcii, Proverka: p.Proverka, Zapusk: p.Zapusk, Pryamo: p.Pryamo, Hod: hod, Klyuchi: p.Klyuchi,
+		Sayt: vh.Sayt}
 	if err := podobratIPostavit(ctx, s, o, sek, itog.Prodlenie, pp, &itog); err != nil {
 		return Itog{}, err
 	}

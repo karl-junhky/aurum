@@ -49,6 +49,34 @@ type mashina struct {
 	proveryal []protokol.Server
 	lovushka  int
 	maski     []string
+	// versiya это версия программы в sostoyanie; пусто - 0.6.0.
+	versiya string
+	// saytOshibka: сайт режима домена из последнего пакета не встал.
+	saytOshibka string
+	// stoit: пакет, что стоял на сервере до первого принятого.
+	stoit []byte
+}
+
+// saytPaketa это сайт режима домена по последнему принятому пакету, как его
+// поднимает программа сервера, а пока пакетов не было - по stoit; nil -
+// сайта в пакете нет.
+func (m *mashina) saytPaketa() *server.SaytUzla {
+	paket := m.stoit
+	if len(m.pakety) > 0 {
+		paket = m.pakety[len(m.pakety)-1]
+	}
+	if len(paket) == 0 {
+		return nil
+	}
+	var p struct {
+		Sayt *struct {
+			Domen string `json:"domen"`
+		} `json:"sayt"`
+	}
+	if err := json.Unmarshal(paket, &p); err != nil || p.Sayt == nil {
+		return nil
+	}
+	return &server.SaytUzla{Domen: p.Sayt.Domen, Https: m.saytOshibka == "", Http: true, Sert: true, Oshibka: m.saytOshibka}
 }
 
 func novayaMashina(t *testing.T) *mashina {
@@ -119,7 +147,11 @@ func novayaMashina(t *testing.T) *mashina {
 		rootom(x, "состояние")
 		s := m.serty[min(m.sprosov, len(m.serty)-1)]
 		m.sprosov++
-		return server.SostoyanieUzla{Versiya: "0.6.0", YadroZhivo: true, Sert: s}, nil
+		v := m.versiya
+		if v == "" {
+			v = "0.6.0"
+		}
+		return server.SostoyanieUzla{Versiya: v, YadroZhivo: true, Sert: s, Sayt: m.saytPaketa()}, nil
 	}
 	otkrytPorty = func(_ context.Context, x server.Mashina, tcp, udp []int) (server.Porty, error) {
 		rootom(x, "порты")
@@ -216,6 +248,91 @@ func TestUstanovitPodborMaski(t *testing.T) {
 	if itog.Sekrety.Maska != "sosed.example.net" || itog.MaskaIstochnik != MaskaSosedi ||
 		!slices.Equal(m.maski, []string{"подбор 203.0.113.10"}) {
 		t.Fatalf("маска %q из %q, вызовы %q", itog.Sekrety.Maska, itog.MaskaIstochnik, m.maski)
+	}
+}
+
+// Установка сразу на свой домен: маска это домен, сертификат на него, сайт
+// с подпиской в окончательном пакете.
+func TestUstanovitNaDomen(t *testing.T) {
+	m := novayaMashina(t)
+	m.serty = []*server.SertUzla{nil, {IP: "203.0.113.10", Domen: domenTesta, Idyot: true},
+		{IP: "203.0.113.10", Domen: domenTesta, Est: true, Sposob: "http-01"}}
+	u := m.ustanovka()
+	sayt, err := konfig.NovyySayt(domenTesta, "happ://routing/onadd/vkl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Sayt = sayt
+	itog, err := Ustanovit(context.Background(), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sert := razobratPaket(t, m.pakety[0]).SertIPSam; sert == nil || sert.Domen != domenTesta {
+		t.Fatalf("сертификат не на домен: %s", m.pakety[0])
+	}
+	if posle := razobratPaket(t, m.pakety[len(m.pakety)-1]); posle.Sayt == nil || posle.Sayt.Domen != domenTesta {
+		t.Fatalf("окончательный пакет без сайта: %s", m.pakety[len(m.pakety)-1])
+	}
+	if itog.Vhody.Sayt == nil || itog.Sekrety.Maska != domenTesta || itog.MaskaIstochnik != MaskaDomen ||
+		len(itog.Preduprezhdeniya) != 0 || len(m.maski) != 0 {
+		t.Fatalf("итог %+v, маски %q", itog, m.maski)
+	}
+
+	// Сайт с окончательным пакетом не встал: сервер поставлен, а человек
+	// узнаёт про сайт, а не ищет причину неудачной проверки reality в сети.
+	m = novayaMashina(t)
+	m.serty = []*server.SertUzla{nil, {IP: "203.0.113.10", Domen: domenTesta, Idyot: true},
+		{IP: "203.0.113.10", Domen: domenTesta, Est: true, Sposob: "http-01"}}
+	m.saytOshibka = "address already in use"
+	u = m.ustanovka()
+	u.Sayt = sayt
+	if itog, err = Ustanovit(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	if len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Vid != SaytNeOtvetil || itog.Preduprezhdeniya[0].Domen != domenTesta {
+		t.Fatalf("предупреждения %+v", itog.Preduprezhdeniya)
+	}
+}
+
+// Сертификат на домен не вышел: сервер встаёт с простыми ключами и
+// сертификатом на адрес, а человек видит, почему домен не подключился.
+func TestUstanovitDomenNeVyshel(t *testing.T) {
+	m := novayaMashina(t)
+	otkaz := &server.SertUzla{IP: "203.0.113.10", Domen: domenTesta, Popytka: 200, Otkaz: "DNS problem: NXDOMAIN"}
+	m.serty = []*server.SertUzla{nil, {IP: "203.0.113.10", Domen: domenTesta, Idyot: true, Popytka: 100}, otkaz,
+		otkaz, {IP: "203.0.113.10", Idyot: true, Popytka: 300}, {IP: "203.0.113.10", Est: true, Sposob: "http-01"}}
+	u := m.ustanovka()
+	sayt, err := konfig.NovyySayt(domenTesta, "happ://routing/onadd/vkl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Sayt = sayt
+	bezDomena := 0
+	u.Hod = func(h Hod) {
+		if h.BezDomena {
+			bezDomena++
+		}
+	}
+	itog, err := Ustanovit(context.Background(), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bezDomena != 1 {
+		t.Fatalf("о простых ключах ход сказал %d раз", bezDomena)
+	}
+	if len(itog.Preduprezhdeniya) != 1 || itog.Preduprezhdeniya[0].Vid != DomenNeVyshel ||
+		itog.Preduprezhdeniya[0].Domen != domenTesta || itog.Preduprezhdeniya[0].Otkaz != "DNS problem: NXDOMAIN" {
+		t.Fatalf("предупреждения %+v", itog.Preduprezhdeniya)
+	}
+	if sert := razobratPaket(t, m.pakety[1]).SertIPSam; sert == nil || sert.Domen != "" {
+		t.Fatalf("второй выпуск не на адрес: %s", m.pakety[1])
+	}
+	if posle := razobratPaket(t, m.pakety[len(m.pakety)-1]); posle.Sayt != nil {
+		t.Fatalf("сайт без сертификата на домен: %s", m.pakety[len(m.pakety)-1])
+	}
+	if itog.Vhody.Sayt != nil || itog.Sekrety.Maska != "www.example.com" || itog.Prodlenie != porty.Cherez80 ||
+		len(itog.Vhody.Hy2) != 1 {
+		t.Fatalf("итог %+v", itog)
 	}
 }
 

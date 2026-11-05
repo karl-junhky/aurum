@@ -129,6 +129,9 @@ func SmenitMasku(ctx context.Context, p SmenaMaski) (itog Itog, err error) {
 	if err != nil {
 		return Itog{}, err
 	}
+	if vh.Sayt != nil {
+		return Itog{}, ErrRezhimDomena
+	}
 	st, err := sostoyanie(ctx, s)
 	if err != nil {
 		return Itog{}, err

@@ -51,6 +51,9 @@ func (s *Sluzhba) svoyVpsMaska(k protokol.Kadr) protokol.Kadr {
 	if o != nil {
 		return *o
 	}
+	if z.Domen != "" {
+		return otkaz(k.Id, k.Imya, protokol.KodVpsMaska, tekstMaskaDomen)
+	}
 	zapros, kod, err := s.vhodUpravleniya(z)
 	if err != nil {
 		return otkazIz(k, kod, err)

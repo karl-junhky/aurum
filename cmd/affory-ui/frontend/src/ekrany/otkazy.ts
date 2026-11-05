@@ -99,6 +99,10 @@ export const tekstOtkaza: Record<string, ZapisOtkaza> = {
   "vps-update-failed": { deystvie: "povtorit", tekst: "программа сервера не обновилась" },
   "vps-mask-failed": { deystvie: "nichego", tekst: "маска не сменилась" },
   "vps-mask-known": { deystvie: "nichego", tekst: "эту маску глушат на мобильном" },
+  "vps-domain-failed": { deystvie: "nichego", tekst: "свой домен не подключился" },
+  "vps-site-down": { deystvie: "nichego", tekst: "сайт своего домена не отвечает" },
+  "vps-site-unchecked": { deystvie: "nichego", tekst: "сайт своего домена не проверен" },
+  "vps-subscription-changed": { deystvie: "nichego", tekst: "ссылка подписки сменилась" },
 };
 
 /** Button label per action; null means the screen only informs. */

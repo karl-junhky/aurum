@@ -87,14 +87,33 @@ type SostoyanieUzla struct {
 	ProbaDo int64 `json:"proba_do,omitempty"`
 	// Sert пуст, если в пакете нет самостоятельного выпуска.
 	Sert *SertUzla `json:"sert_ip_sam,omitempty"`
-	// Maska пуст у программы старше 0.7.0 и у ядра без reality.
+	// Maska пуст у программы старше 0.7.0, у ядра без reality и в режиме
+	// своего домена.
 	Maska *StorozhMaski `json:"maska,omitempty"`
+	// Sayt это сайт режима своего домена (0.7.0); простой режим - nil.
+	Sayt *SaytUzla `json:"sayt,omitempty"`
+}
+
+// SaytUzla это сайт режима домена глазами программы сервера (sayt.Sostoyanie
+// в uzel).
+type SaytUzla struct {
+	Domen string `json:"domen"`
+	// Https: поднят HTTPS для reality, Http: поднят 80/tcp.
+	Https bool `json:"https"`
+	Http  bool `json:"http"`
+	// Sert: сайту есть чем ответить на домене.
+	Sert    bool   `json:"sert"`
+	Oshibka string `json:"oshibka,omitempty"`
+	// Zabrana: когда подписку последний раз забирали, Unix-секунды.
+	Zabrana int64 `json:"zabrana,omitempty"`
 }
 
 // SertUzla это выпуск сертификата на IP глазами программы сервера
 // (sertip.Sostoyanie в uzel). Время в Unix-секундах.
 type SertUzla struct {
-	IP      string `json:"ip"`
+	IP string `json:"ip"`
+	// Domen: выпуск на имя домена (режим своего домена), а не на IP.
+	Domen   string `json:"domen,omitempty"`
 	Staging bool   `json:"staging,omitempty"`
 	// Est: настоящий сертификат на этот адрес лежит на диске.
 	Est bool  `json:"est"`

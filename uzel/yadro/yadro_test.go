@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
+	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sayt"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sertip"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/trafik"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/vhody"
@@ -878,6 +880,79 @@ func TestSvoyVPNSertifikatVypuska(t *testing.T) {
 	if err := s.mozhet(s.klientTLS([]chelovek{lyudA}, s.porty["hy2"], doveryaet(c2)), "trojan-anna"); err != nil {
 		t.Fatalf("trojan не предъявляет сертификат центра: %v", err)
 	}
+}
+
+// Режим своего домена: сайт поднимается вместе с пакетом, гаснет с пакетом
+// без него и встаёт с диска после перезапуска программы.
+func TestSaytVPakete(t *testing.T) {
+	s := novyyStend(t)
+	podklyuchit := func(y *yadro.Yadro) (*sertip.Vypusk, *sayt.Sayt) {
+		v := y.PodklyuchitVypusk(sertip.Opcii{KatalogACME: "https://127.0.0.1:1/dir"})
+		return v, y.PodklyuchitSayt(sayt.Opcii{Port80: "127.0.0.1:0", Brandmauer: &bezBrandmauera{}})
+	}
+	v, st := podklyuchit(s.y)
+	portSayta := svobodnyyPortTCP(t)
+	nastroyka := map[string]any{"domen": "kot.example.net", "port": 443, "slushat": "127.0.0.1:" + strconv.Itoa(portSayta),
+		"zerno":    "0123456789abcdef0123456789abcdef",
+		"podpiska": map[string]any{"put": "fedcba9876543210fedcba9876543210", "telo": "x"}}
+	sDomenom := func(saytV any) []byte {
+		p := map[string]any{"versiya": 3, "yadro": map[string]any{},
+			"sert_ip_sam": map[string]any{"ip": "127.0.0.1", "domen": "kot.example.net"}}
+		if saytV != nil {
+			p["sayt"] = saytV
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	if k := s.y.Primenit(sDomenom(nastroyka)); k.Oshibka != "" {
+		t.Fatal(k.Oshibka)
+	}
+	if sost := st.Sostoyanie(); sost == nil || !sost.Https || !sost.Http || sost.Domen != "kot.example.net" {
+		t.Fatalf("сайт после пакета: %+v", sost)
+	}
+	if sost := v.Sostoyanie(); sost == nil || sost.Domen != "kot.example.net" {
+		t.Fatalf("выпуск не на домен: %+v", sost)
+	}
+	if k := s.y.Primenit(sDomenom(nil)); k.Oshibka != "" {
+		t.Fatal(k.Oshibka)
+	}
+	if st.Sostoyanie() != nil {
+		t.Fatal("пакет без сайта его не погасил")
+	}
+	if k := s.y.Primenit(sDomenom(nastroyka)); k.Oshibka != "" {
+		t.Fatal(k.Oshibka)
+	}
+	s.y.Ostanovit()
+	st.Ostanovit()
+
+	y2 := yadro.Novoe(s.katalog, trafik.NovyySchyotchik(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_, st2 := podklyuchit(y2)
+	t.Cleanup(y2.Ostanovit)
+	t.Cleanup(st2.Ostanovit)
+	if err := y2.Zapustit(); err != nil {
+		t.Fatal(err)
+	}
+	if sost := st2.Sostoyanie(); sost == nil || !sost.Https {
+		t.Fatalf("сайт не встал с диска: %+v", sost)
+	}
+}
+
+type bezBrandmauera struct{}
+
+func (bezBrandmauera) Otkryt80() error { return nil }
+func (bezBrandmauera) Ubrat() error    { return nil }
+
+func svobodnyyPortTCP(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
 }
 
 // naSvoySert переводит TLS-входы конфига на файлы каталога своего

@@ -64,11 +64,12 @@ else
     rm -rf -- /var/lib/vpn-uzel /var/lib/affory || ne_vyshlo "каталоги программы"
 fi
 
-# Временные правила программы (проверка сертификата и подбор портов): она
-# снимает их сама, но могла упасть посреди проверки.
+# Правила программы мимо её брандмауэра: временные (проверка сертификата и
+# подбор портов) она снимает сама, но могла упасть посреди проверки, а 80/tcp
+# сайта своего домена (affory-sayt) держится, пока стоит режим домена.
 for ipt in iptables ip6tables; do
     command -v "$ipt" >/dev/null || continue
-    pravila="$("$ipt" -w 5 -S INPUT 2>/dev/null | grep -E -- '--comment "?affory-(acme|podbor)"?( |$)' | head -n 200)"
+    pravila="$("$ipt" -w 5 -S INPUT 2>/dev/null | grep -E -- '--comment "?affory-(acme|podbor|sayt)"?( |$)' | head -n 200)"
     while IFS= read -r p; do
         [ -n "$p" ] || continue
         read -ra chasti <<<"${p#-A }"

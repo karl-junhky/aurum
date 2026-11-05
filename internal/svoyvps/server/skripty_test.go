@@ -218,11 +218,12 @@ func (k koren) prognat(t *testing.T, tekst string, env []string, argumenty ...st
 func novyyKoren(t *testing.T) koren {
 	t.Helper()
 	k := pustoyKoren(t)
-	// Временные правила программы, оставшиеся от упавшей проверки, рядом с
-	// правилом человека.
+	// Временные правила программы, оставшиеся от упавшей проверки, и 80/tcp
+	// сайта своего домена рядом с правилом человека.
 	zapisat(t, k.ipt, "-P INPUT ACCEPT", "-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT",
 		"-A INPUT -p tcp -m tcp --dport 80 -m comment --comment affory-acme -j ACCEPT",
-		"-A INPUT -p udp -m udp --dport 9443 -m comment --comment affory-podbor -j ACCEPT")
+		"-A INPUT -p udp -m udp --dport 9443 -m comment --comment affory-podbor -j ACCEPT",
+		"-A INPUT -p tcp -m tcp --dport 80 -m comment --comment affory-sayt -j ACCEPT")
 	zapisat(t, k.f("/etc/affory/klyuchi"), "AAAAnash1", "AAAAnash2")
 	zapisat(t, k.f("/etc/affory/sostav.json"), `{"format":1,"sostoyanie":"gotovo"}`)
 	zapisat(t, k.f("/etc/affory/prezhnee"), "net.core.rmem_default=212992", "net.core.default_qdisc=fq_codel",
@@ -315,7 +316,8 @@ func TestSnosSkript(t *testing.T) {
 		log := chitat(t, k.log)
 		for _, z := range []string{"tc qdisc replace dev eth0 root pfifo", "tc qdisc del dev eth0 root", "sshd -t", "systemctl try-reload-or-restart ssh.service",
 			"iptables -w 5 -D INPUT -p tcp -m tcp --dport 80 -m comment --comment affory-acme -j ACCEPT",
-			"iptables -w 5 -D INPUT -p udp -m udp --dport 9443 -m comment --comment affory-podbor -j ACCEPT"} {
+			"iptables -w 5 -D INPUT -p udp -m udp --dport 9443 -m comment --comment affory-podbor -j ACCEPT",
+			"iptables -w 5 -D INPUT -p tcp -m tcp --dport 80 -m comment --comment affory-sayt -j ACCEPT"} {
 			if !slices.Contains(log, z) {
 				t.Errorf("нет вызова %q: %q", z, log)
 			}

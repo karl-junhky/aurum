@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/brandmauer"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/podpiska"
+	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sayt"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/sertip"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/trafik"
 	"github.com/zxczxczxczxczxczxc1111/affory/uzel/vhody"
@@ -151,6 +153,7 @@ type Yadro struct {
 	zhurnal    *slog.Logger
 	podpiska   *podpiska.Server
 	vypusk     *sertip.Vypusk
+	sayt       *sayt.Sayt
 	brandmauer Brandmauer
 
 	rabotaet  *zapushchennoe
@@ -178,6 +181,14 @@ func (y *Yadro) PodklyuchitBrandmauer(b Brandmauer) { y.brandmauer = b }
 // PodklyuchitPodpisku отдаёт ядру раздачу подписки: она меняется вместе с
 // пакетом и поднимается из него же после перезапуска. Зовётся до Zapustit.
 func (y *Yadro) PodklyuchitPodpisku(s *podpiska.Server) { y.podpiska = s }
+
+// PodklyuchitSayt создаёт сайт режима своего домена на выпуске сертификата:
+// он меняется вместе с пакетом, как подписка. Зовётся после
+// PodklyuchitVypusk и до Zapustit.
+func (y *Yadro) PodklyuchitSayt(o sayt.Opcii) *sayt.Sayt {
+	y.sayt = sayt.Novyy(y.zhurnal, y.vypusk, o)
+	return y.sayt
+}
 
 // PodklyuchitVypusk создаёт самостоятельный выпуск сертификата на IP: пакет
 // третьей версии его включает, прежние выключают. Зовётся до Zapustit, а
@@ -289,6 +300,8 @@ func (y *Yadro) podnyatPrinyatoe() error {
 	}
 	y.zapomnitSerty(p)
 	y.postavitPodpisku(p)
+	// Сайт тоже до ядра: он цель reality, и без него reality не пустит никого.
+	y.postavitSayt(p)
 	y.schyotchik.BezAdresov(p.Versiya >= 3)
 	return y.podnyatSohranennoe()
 }
@@ -430,6 +443,7 @@ func (y *Yadro) smenit(p Paket, paket []byte, karkas string) (string, int, error
 	}
 	y.rabotaet.paket = paket
 	y.postavitPodpisku(p)
+	y.postavitSayt(p)
 	return kak, zakryto, nil
 }
 
@@ -539,6 +553,7 @@ func (y *Yadro) istekla(pr *idushchayaProba) {
 		}
 		y.zapomnitSerty(Paket{})
 		y.postavitPodpisku(Paket{})
+		y.postavitSayt(Paket{})
 		y.hesh = ""
 		return
 	}
@@ -622,6 +637,14 @@ func zanyatIz(err error, paket []byte) *Zanyat {
 func (y *Yadro) postavitPodpisku(p Paket) {
 	if y.podpiska != nil {
 		y.podpiska.Primenit(p.Podpiska, p.tlsSert)
+	}
+}
+
+// postavitSayt включает сайт режима домена из пакета и гасит его, если в
+// пакете сайта нет.
+func (y *Yadro) postavitSayt(p Paket) {
+	if y.sayt != nil {
+		y.sayt.Primenit(p.Sayt)
 	}
 }
 
@@ -919,7 +942,8 @@ func (y *Yadro) Zdorove() Zdorove {
 }
 
 // Maska отдаёт сайт первого по тегу входа reality работающего ядра; пусто -
-// ядро не поднято или reality в нём нет.
+// ядро не поднято, reality в нём нет или он ведёт на свой сайт на петле
+// (режим домена): сторожить там нечего.
 func (y *Yadro) Maska() string {
 	y.mu.Lock()
 	defer y.mu.Unlock()
@@ -927,9 +951,13 @@ func (y *Yadro) Maska() string {
 		return ""
 	}
 	for _, v := range y.rabotaet.vhody {
-		if v.Maska != "" {
-			return v.Maska
+		if v.Maska == "" {
+			continue
 		}
+		if a, err := netip.ParseAddr(v.Maska); err == nil && a.IsLoopback() {
+			return ""
+		}
+		return v.Maska
 	}
 	return ""
 }

@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"github.com/letsencrypt/pebble/v2/db"
 	"github.com/letsencrypt/pebble/v2/va"
 	"github.com/letsencrypt/pebble/v2/wfe"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 const ip = "127.0.0.1"
@@ -93,7 +95,7 @@ func novyyStend(t *testing.T) *stend {
 		"shortlived": {Description: "как у Let's Encrypt на IP", ValidityPeriod: 160 * 3600},
 	}
 	c := ca.New(tiho, baza, "", "ecdsa", 0, 1, profili)
-	proveryayushchiy := va.New(tiho, portHTTP, portTLS, false, "", baza)
+	proveryayushchiy := va.New(tiho, portHTTP, portTLS, false, dnsNaPetlyu(t), baza)
 	w := wfe.New(tiho, baza, proveryayushchiy, c, []string{"pebble.letsencrypt.org"}, false, false, 0, 0)
 	// Let's Encrypt в ответе на finalize даёт адрес заказа в Location, и
 	// x/crypto по нему ждёт сертификат. Pebble заголовок не ставит, здесь он
@@ -109,7 +111,7 @@ func novyyStend(t *testing.T) *stend {
 	s := &stend{katalog: t.TempDir(), brandmauer: &zapisBrandmauera{otkryto: map[int]int{}}, chasy: &chasy{}}
 	s.opcii = s.chasy.opcii(Opcii{
 		PortHTTP: portHTTP, PortTLS: portTLS, Brandmauer: s.brandmauer,
-		KatalogACME: srv.URL + wfe.DirectoryPath, HTTPKlient: srv.Client(),
+		KatalogACME: srv.URL + wfe.DirectoryPath, HTTPKlient: srv.Client(), ProfilDomena: "default",
 	})
 	return s
 }
@@ -119,6 +121,66 @@ func (s *stend) novyyV(t *testing.T, katalog string) *Vypusk {
 	zhurnal := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return Novyy(filepath.Join(katalog, "acme"), filepath.Join(katalog, "sert-ip"), zhurnal,
 		func() { s.obnovleno.Add(1) }, s.opcii)
+}
+
+// dnsNaPetlyu поднимает DNS по TCP (так спрашивает Pebble), который на любое
+// имя отвечает A 127.0.0.1 и пустым AAAA: проверка домена идёт запросом на
+// слушатели теста.
+func dnsNaPetlyu(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go otvetitDNS(c)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func otvetitDNS(c net.Conn) {
+	defer c.Close()
+	for {
+		var dlina [2]byte
+		if _, err := io.ReadFull(c, dlina[:]); err != nil {
+			return
+		}
+		vopros := make([]byte, int(dlina[0])<<8|int(dlina[1]))
+		if _, err := io.ReadFull(c, vopros); err != nil {
+			return
+		}
+		var p dnsmessage.Parser
+		zag, err := p.Start(vopros)
+		if err != nil {
+			return
+		}
+		v, err := p.Question()
+		if err != nil {
+			return
+		}
+		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: zag.ID, Response: true, Authoritative: true})
+		_ = b.StartQuestions()
+		_ = b.Question(v)
+		_ = b.StartAnswers()
+		if v.Type == dnsmessage.TypeA {
+			_ = b.AResource(dnsmessage.ResourceHeader{Name: v.Name, Class: dnsmessage.ClassINET, TTL: 60},
+				dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}})
+		}
+		otvet, err := b.Finish()
+		if err != nil {
+			return
+		}
+		if _, err := c.Write(append([]byte{byte(len(otvet) >> 8), byte(len(otvet))}, otvet...)); err != nil {
+			return
+		}
+	}
 }
 
 func svobodnyyPort(t *testing.T) int {
@@ -353,6 +415,126 @@ func TestZanyat(t *testing.T) {
 	v.krug(context.Background())
 	if v.Tekushchiy() == nil {
 		t.Fatalf("после освобождения не выпущен: %+v", v.Sostoyanie())
+	}
+}
+
+const domen = "kot.example.net"
+
+// Режим своего домена: сертификат на имя обычным профилем на 90 дней,
+// продление с двух третей срока, тревога за неделю до конца.
+func TestVypuskNaDomen(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	if err := v.Nastroit(&Nastroyka{IP: ip, Domen: "Kot.Example.NET."}, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	sost := v.Sostoyanie()
+	if !sost.Est || sost.Domen != domen || sost.Sposob != SposobHTTP || sost.Trevoga {
+		t.Fatalf("после выпуска на домен: %+v", sost)
+	}
+	if srok := time.Unix(sost.Do, 0).Sub(time.Unix(sost.Ot, 0)); srok < 89*24*time.Hour {
+		t.Fatalf("срок %v, ждали обычный профиль на 90 дней", srok)
+	}
+	pervyy := v.Tekushchiy()
+	if pervyy == nil || !slices.Contains(pervyy.Leaf.DNSNames, domen) || len(pervyy.Leaf.IPAddresses) != 0 {
+		t.Fatalf("сертификат не на домен: %+v", pervyy)
+	}
+	if sled := time.Unix(sost.Sleduyushchaya, 0); sled.Before(time.Unix(sost.Ot, 0).Add(59 * 24 * time.Hour)) {
+		t.Fatalf("следующий выпуск %v, ждали после двух третей срока", sled)
+	}
+	s.chasy.vperyod(59 * 24 * time.Hour)
+	if v.krug(context.Background()); v.Tekushchiy() != pervyy {
+		t.Fatal("продлён раньше двух третей срока")
+	}
+	s.chasy.vperyod(24 * 24 * time.Hour)
+	if sost := v.Sostoyanie(); !sost.Trevoga {
+		t.Fatalf("за шесть дней до конца срока нет тревоги: %+v", sost)
+	}
+	v.krug(context.Background())
+	if vtoroy := v.Tekushchiy(); vtoroy == nil || vtoroy.Leaf.SerialNumber.Cmp(pervyy.Leaf.SerialNumber) == 0 {
+		t.Fatalf("после двух третей срока не продлён: %+v", v.Sostoyanie())
+	}
+}
+
+// Смена адреса на домен: сертификат на IP домену не годится, выпуск идёт
+// заново, а обратная смена снова просит IP.
+func TestSmenaIPNaDomen(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	if err := v.Nastroit(&Nastroyka{IP: ip}, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	if v.Tekushchiy() == nil {
+		t.Fatal(v.Sostoyanie().Otkaz)
+	}
+	if err := v.Nastroit(&Nastroyka{IP: ip, Domen: domen}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v.Tekushchiy() != nil || v.Sostoyanie().Est {
+		t.Fatal("сертификат на IP выдан за сертификат домена")
+	}
+	v.krug(context.Background())
+	if c := v.Tekushchiy(); c == nil || !slices.Contains(c.Leaf.DNSNames, domen) {
+		t.Fatalf("на домен не выпущен: %+v", v.Sostoyanie())
+	}
+	if err := v.Nastroit(&Nastroyka{IP: ip}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v.Tekushchiy() != nil {
+		t.Fatal("сертификат домена выдан за сертификат на IP")
+	}
+}
+
+// 80/tcp держит сайт режима домена: свой слушатель выпуск не поднимает и
+// брандмауэр не трогает, ответ отдаёт сайт.
+func TestProverkaCherezSayt(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	v.Derzhat80(true)
+	ln, err := net.Listen("tcp", net.JoinHostPort("", itoa(s.opcii.PortHTTP)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chuzhih atomic.Int32
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !v.OtvetitProverke(w, r) {
+			chuzhih.Add(1)
+			http.NotFound(w, r)
+		}
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { srv.Close() })
+
+	if err := v.Nastroit(&Nastroyka{IP: ip, Domen: domen}, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	if sost := v.Sostoyanie(); !sost.Est || sost.Sposob != SposobHTTP {
+		t.Fatalf("через сайт не выпущен: %+v", sost)
+	}
+	if s.brandmauer.vsego != 0 {
+		t.Fatalf("брандмауэр открывался %d раз, а 80 держит сайт", s.brandmauer.vsego)
+	}
+	if chuzhih.Load() != 0 {
+		t.Fatalf("сайт не узнал проверку %d раз", chuzhih.Load())
+	}
+	if len(v.otvety80) != 0 {
+		t.Fatal("ответ проверки остался после попытки")
+	}
+}
+
+func TestNastroykaDomena(t *testing.T) {
+	for _, d := range []string{"kot.example.net", "xn--80ak6aa92e.xn--p1ai", "a.b.co"} {
+		if err := (Nastroyka{IP: ip, Domen: d}).Proverit(); err != nil {
+			t.Errorf("%s: %v", d, err)
+		}
+	}
+	for _, d := range []string{"localhost", "127.0.0.1", "Kot.example.net", "kot..net", "-kot.net", "*.kot.net", "kot.net/x"} {
+		if err := (Nastroyka{IP: ip, Domen: d}).Proverit(); err == nil {
+			t.Errorf("%s принят за имя сайта", d)
+		}
 	}
 }
 

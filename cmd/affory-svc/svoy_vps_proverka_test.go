@@ -365,7 +365,7 @@ func TestZapisatSvoySert(t *testing.T) {
 	id := idSvoego(netip.MustParseAddr(adresSvoego))
 	itog := itogSvoego(t, klyuchHostaDlyaTesta(t), 443, 8443)
 	itog.Sert = &server.SertUzla{Est: true, Do: 1_800_000_000, Trevoga: true, Otkaz: "порт 80 закрыт"}
-	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача"}, itog); err != nil {
+	if _, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача"}, itog); err != nil {
 		t.Fatal(err)
 	}
 	z := zapisPoId(t, s, id)
@@ -374,7 +374,7 @@ func TestZapisatSvoySert(t *testing.T) {
 		t.Fatalf("запись после установки: %+v", z)
 	}
 	itog.Sert = &server.SertUzla{Est: false, Do: 1_800_000_000, Trevoga: true, Otkaz: "порт 80 закрыт"}
-	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача"}, itog); err != nil {
+	if _, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача"}, itog); err != nil {
 		t.Fatal(err)
 	}
 	if z := zapisPoId(t, s, id); z.SertDo != 0 || !z.SertTrevoga {
@@ -454,7 +454,7 @@ func TestSvoyVpsMaskaNeOtvechaet(t *testing.T) {
 		t.Fatalf("программа молчит, а тревога %q", m)
 	}
 	// Захват или подбор портов пересобирают запись с той же маской.
-	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: imya, ZapisEst: true}, itogSoSekretami(t, sek, kh, 443, 8443)); err != nil {
+	if _, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: imya, ZapisEst: true}, itogSoSekretami(t, sek, kh, 443, 8443)); err != nil {
 		t.Fatal(err)
 	}
 	if m := zapisPoId(t, s, id).MaskaNeOtvechaet; m != "сайт не отвечает h2" {
@@ -472,7 +472,7 @@ func TestSvoyVpsMaskaNeOtvechaet(t *testing.T) {
 	}
 	novye := sek
 	novye.Maska = "sosed.example.net"
-	if _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: imya, ZapisEst: true}, itogSoSekretami(t, novye, kh, 443, 8443)); err != nil {
+	if _, _, err := s.zapisatSvoy(id, osnovaZapisi{Imya: imya, ZapisEst: true}, itogSoSekretami(t, novye, kh, 443, 8443)); err != nil {
 		t.Fatal(err)
 	}
 	if m := zapisPoId(t, s, id).MaskaNeOtvechaet; m != "" {

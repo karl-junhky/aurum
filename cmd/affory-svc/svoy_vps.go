@@ -27,6 +27,7 @@ import (
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/sboi"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/ssylki"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/blok"
+	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/domen"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/happ"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/konfig"
 	"github.com/zxczxczxczxczxczxc1111/affory/internal/svoyvps/porty"
@@ -44,8 +45,8 @@ import (
 // svoyVpsHod. Окно можно закрыть: задание дорабатывает в службе.
 
 // SvoyServer это запись о своём сервере в наборе (§3.6 плана). Секретов в ней
-// нет: ключи VPN лежат в наборе как у всех серверов, ключ управления в своём
-// файле.
+// нет, кроме ссылки подписки, а она того же рода, что ключи VPN: они лежат в
+// наборе как у всех серверов, ключ управления в своём файле.
 type SvoyServer struct {
 	Id         string `json:"id"`
 	Imya       string `json:"imya"`
@@ -108,6 +109,11 @@ type SvoyServer struct {
 	// умолчанию они напрямую. В простом режиме окно по нему показывает QR,
 	// что включает правила в Happ, или тот, что их выключает.
 	RfCherezVpn bool `json:"rf_cherez_vpn,omitempty"`
+	// Domen: сервер в режиме своего домена (ДМ1-3), маска reality это он.
+	// Podpiska это ссылка подписки на сайте сервера (ПД1): по ней телефон
+	// забирает ключи и правила Happ, в журнал она не пишется.
+	Domen    string `json:"domen,omitempty"`
+	Podpiska string `json:"podpiska,omitempty"`
 }
 
 // idSvoego выводит id своего сервера из адреса: та же машина после
@@ -241,6 +247,7 @@ type HodVps struct {
 	Proverka         *ProverkaVps   `json:"proverka,omitempty"`
 	Obnovlenie       *ObnovlenieVps `json:"obnovlenie,omitempty"`
 	Maska            *MaskaVps      `json:"maska,omitempty"`
+	Domen            *DomenVps      `json:"domen,omitempty"`
 	Otkaz            *OtkazVps      `json:"otkaz,omitempty"`
 	Preduprezhdeniya []OtkazVps     `json:"preduprezhdeniya,omitempty"`
 	Nachalo          time.Time      `json:"nachalo"`
@@ -575,6 +582,8 @@ type zaprosUstanovkiVps struct {
 	// «Поставить заново». Без него запись не заменяется: адрес рабочего
 	// сервера, введённый в «Поставить ещё», сменил бы ключи на всех телефонах.
 	Poverh string `json:"poverh,omitempty"`
+	// Domen это «Свой домен» в «Как выдавать ключи»: пусто - просто ключи.
+	Domen string `json:"domen,omitempty"`
 }
 
 const imyaSvoegoPoUmolchaniyu = "Мой сервер"
@@ -590,6 +599,11 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 	}
 	if !z.Pustoy {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "без галочки «На сервере нет ничего нужного» на машине ничего не меняется")
+	}
+	if z.Domen != "" {
+		if z.Domen, err = domen.Normalizovat(z.Domen); err != nil {
+			return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
+		}
 	}
 	kh, err := ssh.KlyuchHostaIzZapisi(z.KlyuchHostaTip, z.KlyuchHosta)
 	if err != nil {
@@ -607,6 +621,7 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 	// сменившийся принимает только «Систему переустановили». Запись и ключи
 	// заменяет zapisatSvoy.
 	z.Imya = obrezatImya(z.Imya)
+	rfCherezVpn := false
 	if i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == id }); i >= 0 {
 		if p, err := netip.ParseAddr(z.Poverh); err != nil || idSvoego(p) != id {
 			return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "этот сервер уже в разделе «Свой VPN»: действия в его карточке")
@@ -622,14 +637,57 @@ func (s *Sluzhba) svoyVpsUstanovit(k protokol.Kadr) protokol.Kadr {
 		if z.Imya == "" {
 			z.Imya = bylo.Imya
 		}
+		rfCherezVpn = bylo.RfCherezVpn
 	}
 	if z.Imya == "" {
 		z.Imya = imyaPoUmolchaniyu(n.SvoiServery, id)
 	}
+	var sayt *konfig.Sayt
+	if z.Domen != "" {
+		routing, err := routingDlya(rfCherezVpn)
+		if err != nil {
+			return otkazIz(k, protokol.KodVpsDomen, err)
+		}
+		if sayt, err = konfig.NovyySayt(z.Domen, routing); err != nil {
+			return otkazIz(k, protokol.KodVpsDomen, err)
+		}
+		// Заново на тот же домен или переезд домена: путь подписки прежний.
+		// Если и порт reality встанет прежний, ссылка та же, и телефоны
+		// заберут новые ключи по ней сами; иначе zapisatIPokazat скажет, что
+		// её надо добавить заново.
+		if put := putPodpiskiDomena(n.SvoiServery, id, z.Domen); put != "" {
+			sayt.Put = put
+		}
+	}
 	return s.zapustitVps(k, vidUstanovka, func(ctx context.Context, zad *zadanieVps) error {
-		s.pravitHod(zad, func(h *HodVps) { h.Server, h.Adres = id, adres.String() })
-		return s.ustanovitVps(ctx, zad, id, z, zapros)
+		s.pravitHod(zad, func(h *HodVps) {
+			h.Server, h.Adres = id, adres.String()
+			if sayt != nil {
+				h.Domen = &DomenVps{Domen: sayt.Domen}
+			}
+		})
+		return s.ustanovitVps(ctx, zad, id, z, zapros, sayt)
 	})
+}
+
+// putPodpiskiDomena это путь подписки, который сохраняет ссылку на телефонах:
+// с записи id, если она на домене domen, а иначе с другого своего сервера на
+// нём (домен переезжает на новую машину). Пусто - такого нет.
+func putPodpiskiDomena(servery []SvoyServer, id, domen string) string {
+	if domen == "" {
+		return ""
+	}
+	for _, svoya := range []bool{true, false} {
+		for _, x := range servery {
+			if (x.Id == id) != svoya || x.Domen != domen {
+				continue
+			}
+			if put := konfig.PutPodpiski(x.Podpiska); put != "" {
+				return put
+			}
+		}
+	}
+	return ""
 }
 
 // imyaPoUmolchaniyu это «Мой сервер», а если его уже носит другой свой
@@ -685,7 +743,7 @@ func regionalnaya(c rune) bool {
 	return c >= 0x1F1E6 && c <= 0x1F1FF
 }
 
-func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, z zaprosUstanovkiVps, zapros ssh.Zapros) error {
+func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, z zaprosUstanovkiVps, zapros ssh.Zapros, sayt *konfig.Sayt) error {
 	podpis, err := s.zavestiKlyuchUpravleniya(id)
 	if err != nil {
 		return err
@@ -705,7 +763,7 @@ func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, 
 	u := upravlenie.Ustanovka{
 		Puti: s.putiVps(), Vhod: zapros, Pustoy: z.Pustoy, Imya: z.Imya,
 		Upravlenie: podpis, Kommentariy: kommentariyKlyucha(imyaPK, time.Now()),
-		Programma: prog, Ruchnye: porty.Ruchnye{Reality: z.Reality, Hy2: z.Hy2},
+		Programma: prog, Ruchnye: porty.Ruchnye{Reality: z.Reality, Hy2: z.Hy2}, Sayt: sayt,
 		Opcii:    konfig.Opcii{Staging: s.vpsStaging},
 		Proverka: proverka.Opcii{Adapter: a.Imya},
 		Zapusk:   s.zapuskProverki,
@@ -713,6 +771,9 @@ func (s *Sluzhba) ustanovitVps(ctx context.Context, zad *zadanieVps, id string, 
 		Hod:      func(h upravlenie.Hod) { s.pravitHod(zad, func(x *HodVps) { primenitHod(x, h, pom) }) },
 	}
 	osn := osnovaZapisi{Imya: z.Imya, Port: z.Port, Polzovatel: z.Polzovatel, PortyRuchnye: z.Reality != 0 || z.Hy2 != 0, Pomehi: pom}
+	if sayt != nil {
+		osn.RfCherezVpn = rfIzRoutinga(sayt.Routing)
+	}
 	return s.zapisatPoHodu(zad, id, osn, func(klyuchi func(upravlenie.Itog) error) (upravlenie.Itog, error) {
 		u.Klyuchi = klyuchi
 		return s.vpsUstanovit(ctx, u)
@@ -799,10 +860,15 @@ func (o *oshibkaZapisi) Unwrap() error { return o.err }
 
 // zapisatIPokazat кладёт ключи в набор и итог в снимок. Набор записан, а
 // правила брандмауэра отстали - это предупреждение, а не отказ: ключи уже
-// в списке, и повтор установки их только задвоил бы.
+// в списке, и повтор установки их только задвоил бы. Ссылка подписки,
+// сменившаяся не по просьбе (установка заново, другой домен, переезд
+// домена на новый сервер), тоже предупреждение: телефоны с прежней больше
+// ничего не получат.
 func (s *Sluzhba) zapisatIPokazat(zad *zadanieVps, id string, osn osnovaZapisi, itog upravlenie.Itog) error {
 	zhurnalPreduprezhdeniy(id, itog.Preduprezhdeniya)
-	ids, err := s.zapisatSvoy(id, osn, itog)
+	ids, bylaPodpiska, err := s.zapisatSvoy(id, osn, itog)
+	novaya := itog.Vhody.SsylkaPodpiski()
+	smenilas := bylaPodpiska != "" && novaya != "" && bylaPodpiska != novaya
 	var otstali *OtkazVps
 	switch {
 	case errors.Is(err, errPravilaOtstali):
@@ -819,6 +885,11 @@ func (s *Sluzhba) zapisatIPokazat(zad *zadanieVps, id string, osn osnovaZapisi, 
 		h.Preduprezhdeniya = append(h.Preduprezhdeniya, preduprezhdeniyaVps(itog.Preduprezhdeniya, osn.Pomehi)...)
 		if otstali != nil {
 			h.Preduprezhdeniya = append(h.Preduprezhdeniya, *otstali)
+		}
+		// Новую ссылку по просьбе человека окно показывает само.
+		if smenilas && h.Vid != vidPodpiska {
+			h.Preduprezhdeniya = append(h.Preduprezhdeniya, OtkazVps{Kod: protokol.KodVpsPodpiskaSmenilas,
+				Tekst: "ссылка подписки сменилась, и по прежней телефоны ничего не получат: добавь в Happ новую из карточки сервера"})
 		}
 	})
 	return nil
@@ -930,6 +1001,11 @@ func primenitHod(x *HodVps, h upravlenie.Hod, pom pomehiKompyutera) {
 	if h.Shag != upravlenie.ShagDetektor {
 		x.Povtory, x.KrugTekst = nil, ""
 	}
+	// Установка на домен пошла с простыми ключами: домен в ходе больше не
+	// правда, о нём скажет предупреждение.
+	if h.BezDomena {
+		x.Domen = nil
+	}
 }
 
 // osnovaZapisi это то, что запись о сервере берёт от человека, а не от
@@ -951,6 +1027,9 @@ type osnovaZapisi struct {
 	// человека» переходит из прежней записи: дело их не проверяло и не
 	// меняло.
 	PrezhnyayaSet []string
+	// RfCherezVpn: выбор о российских сайтах, который дело поставило на
+	// сервер (подписка режима домена); nil - выбор берётся из записи.
+	RfCherezVpn *bool
 }
 
 // errSvoyZabyt: запись о сервере убрали посреди дела, которое её только
@@ -962,7 +1041,10 @@ var errSvoyZabyt = errors.New("сервер забыли, пока шёл под
 // остаётся одной записью и получает пометку своего сервера. Ключи прежней
 // записи того же сервера, которых нет среди новых, уходят из набора, а выбор
 // и исключение из авто с них переходят на новый ключ того же вида.
-func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (ids []string, err error) {
+// bylaPodpiska это ссылка подписки прежней записи, а если у неё своей не
+// было - другого своего сервера на том же домене; пусто - нет ни той, ни
+// другой.
+func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (ids []string, bylaPodpiska string, err error) {
 	port := osn.Port
 	if port == 0 {
 		port = 22
@@ -992,8 +1074,16 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		zapis.SertTrevoga, zapis.SertOtkaz = it.Sert.Trevoga, it.Sert.Otkaz
 	}
 	zapis.Proveren, zapis.SertProveren = seychas, seychas
+	if sayt := it.Vhody.Sayt; sayt != nil {
+		zapis.Domen, zapis.Podpiska, zapis.MaskaIstochnik = sayt.Domen, it.Vhody.SsylkaPodpiski(), upravlenie.MaskaDomen
+		// Сервер, взятый без записи: выбор о российских сайтах виден по
+		// правилам в его подписке.
+		if rf := rfIzRoutinga(sayt.Routing); rf != nil {
+			zapis.RfCherezVpn = *rf
+		}
+	}
 	err = s.pravitNabor(func(n *Nabor) error {
-		ids = nil
+		ids, bylaPodpiska = nil, ""
 		poVidu := map[string]string{}
 		for _, k := range it.Klyuchi {
 			var itog protokol.Server
@@ -1011,10 +1101,20 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 		if i < 0 && osn.ZapisEst {
 			return errSvoyZabyt
 		}
+		// Своей подписки у записи не было, а домен уже у другого своего
+		// сервера: телефоны подписаны на его ссылку.
+		if j := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool {
+			return x.Id != id && zapis.Domen != "" && x.Domen == zapis.Domen
+		}); j >= 0 && (i < 0 || n.SvoiServery[i].Podpiska == "") {
+			bylaPodpiska = n.SvoiServery[j].Podpiska
+		}
 		if i >= 0 {
 			// Подбор портов заново и захват маску не подбирают: откуда она,
 			// знает прежняя запись.
 			bylo := n.SvoiServery[i]
+			if bylo.Podpiska != "" {
+				bylaPodpiska = bylo.Podpiska
+			}
 			if it.MaskaIstochnik == "" && bylo.Maska == zapis.Maska {
 				zapis.MaskaIstochnik = bylo.MaskaIstochnik
 			}
@@ -1040,10 +1140,15 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 			ubratServery(n, uhodyat)
 			n.SvoiServery = slices.Delete(n.SvoiServery, i, i+1)
 		}
+		// Выбор, что дело само поставило на сервер, главнее записи: правила
+		// у телефона берутся из подписки.
+		if osn.RfCherezVpn != nil {
+			zapis.RfCherezVpn = *osn.RfCherezVpn
+		}
 		n.SvoiServery = append(n.SvoiServery, zapis)
 		return nil
 	})
-	return ids, err
+	return ids, bylaPodpiska, err
 }
 
 // prichinaVida это почему вид t записи x не проходит из сети: своя причина

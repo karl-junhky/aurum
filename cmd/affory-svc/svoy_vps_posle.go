@@ -53,24 +53,31 @@ type OtpuskVps struct {
 
 // zapisSvoego находит запись о своём сервере по id.
 func (s *Sluzhba) zapisSvoego(k protokol.Kadr) (SvoyServer, *protokol.Kadr) {
+	z, _, o := s.zapisISvoi(k)
+	return z, o
+}
+
+// zapisISvoi это zapisSvoego и заодно все свои серверы того же чтения
+// набора.
+func (s *Sluzhba) zapisISvoi(k protokol.Kadr) (SvoyServer, []SvoyServer, *protokol.Kadr) {
 	var telo struct {
 		Id string `json:"id"`
 	}
 	if err := json.Unmarshal(k.Telo, &telo); err != nil {
 		o := otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "тело команды не разобрано")
-		return SvoyServer{}, &o
+		return SvoyServer{}, nil, &o
 	}
 	n, err := s.nabor()
 	if err != nil {
 		o := otkazIz(k, protokol.KodSecretsUnreadable, err)
-		return SvoyServer{}, &o
+		return SvoyServer{}, nil, &o
 	}
 	i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == telo.Id })
 	if i < 0 {
 		o := otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "такого сервера в разделе «Свой VPN» нет")
-		return SvoyServer{}, &o
+		return SvoyServer{}, nil, &o
 	}
-	return n.SvoiServery[i], nil
+	return n.SvoiServery[i], n.SvoiServery, nil
 }
 
 var errNetKlyuchaUpravleniya = errors.New("ключа управления этим сервером на компьютере нет: сначала возьми сервер под управление")
@@ -350,14 +357,19 @@ const (
 
 var errSvoegoNet = errors.New("такого сервера в разделе «Свой VPN» нет")
 
+var errStalDomen = errors.New("сервер как раз перешёл на свой домен: переключи ещё раз, правила поедут подпиской")
+
 // pishutZapis это задания, что пишут запись о сервере целиком, с названием,
 // взятым в начале дела. Проверка, пароль, снос и снятие ключа правят запись
 // по полям и названия не трогают.
-var pishutZapis = map[string]bool{vidUstanovka: true, vidPodbor: true, vidVzyat: true, vidMaska: true}
+var pishutZapis = map[string]bool{vidUstanovka: true, vidPodbor: true, vidVzyat: true, vidMaska: true,
+	vidDomen: true, vidPodpiska: true}
 
 // svoyVpsPereimenovat меняет название своего сервера (ИМ1) в записи и в
-// именах ключей группы одной правкой набора. На сервер название не уходит,
-// входа нет. Ключи на телефоне носят прежнее имя, пока их не добавят заново.
+// именах ключей группы одной правкой набора. В простом режиме на сервер
+// название не уходит, входа нет, и ключи на телефоне носят прежнее имя, пока
+// их не добавят заново. В режиме домена следом идёт задание: подписка на
+// сервере пересобирается с новым названием, и телефон заберёт его сам.
 func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
 	var telo struct {
 		Id   string `json:"id"`
@@ -380,8 +392,8 @@ func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
 	if otperet == nil {
 		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
 	}
-	defer otperet()
 	imena := map[string]string{}
+	var posle SvoyServer
 	err := s.pravitNabor(func(n *Nabor) error {
 		clear(imena)
 		i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == telo.Id })
@@ -390,6 +402,7 @@ func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
 		}
 		z := &n.SvoiServery[i]
 		z.Imya = imya
+		posle = *z
 		vsego := map[string]int{}
 		for _, srv := range n.Servery {
 			if slices.Contains(z.Servery, srv.Id) {
@@ -404,7 +417,11 @@ func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
 		}
 		return nil
 	})
+	// Запор держался только на правку записи: задание подписки ниже его же
+	// и упёрлось бы.
+	otperet()
 	otv := map[string]any{"id": telo.Id, "imya": imya}
+	var preduprezhdenie *OtkazVps
 	switch {
 	case errors.Is(err, errSvoegoNet):
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
@@ -413,19 +430,50 @@ func (s *Sluzhba) svoyVpsPereimenovat(k protokol.Kadr) protokol.Kadr {
 		// отставшие человек увидит предупреждением: отказ здесь сказал бы,
 		// что переименование не прошло.
 		log.Printf("свой сервер %s: переименован, %v", telo.Id, err)
-		otv["preduprezhdenie"] = OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
+		preduprezhdenie = &OtkazVps{Kod: kodSohraneniya(err), Tekst: sboi.DlyaCheloveka(err)}
 	case err != nil:
 		return otkazIz(k, kodSohraneniya(err), err)
 	}
 	s.obnovitImenaYadra(imena)
+	if posle.Domen != "" {
+		h, otk := s.podpiskaSNovymImenem(posle)
+		switch {
+		case h != nil:
+			otv["hod"] = *h
+		case preduprezhdenie == nil:
+			preduprezhdenie = otk
+		default:
+			log.Printf("свой сервер %s: подписка с новым названием не пересобрана: %s", telo.Id, otk.Tekst)
+		}
+	}
+	if preduprezhdenie != nil {
+		otv["preduprezhdenie"] = *preduprezhdenie
+	}
 	return otvet(k.Id, k.Imya, otv)
 }
 
-// svoyVpsObhodRf включает и выключает «Российские сайты напрямую» (РФ1) в
-// записи о сервере. Входа на сервер нет: в простом режиме правила едут на
+// podpiskaSNovymImenem заводит задание подписки следом за переименованием.
+// Не завелось - предупреждение: запись уже сменилась, а подписка на сервере
+// осталась с прежним названием до следующего дела, что её пересоберёт.
+func (s *Sluzhba) podpiskaSNovymImenem(z SvoyServer) (*HodVps, *OtkazVps) {
+	const nachalo = "в подписке на сервере прежнее название: "
+	zapros, kod, err := s.vhodUpravleniya(z)
+	if err != nil {
+		return nil, &OtkazVps{Kod: kod, Tekst: nachalo + sboi.DlyaCheloveka(err)}
+	}
+	h, tekst := s.nachatVps(vidPodpiska, false, s.deloPodpiski(z, zapros, zachemImya, nil))
+	if tekst != "" {
+		return nil, &OtkazVps{Kod: protokol.KodVpsZanyato, Tekst: nachalo + tekst}
+	}
+	return &h, nil
+}
+
+// svoyVpsObhodRf включает и выключает «Российские сайты напрямую» (РФ1). В
+// простом режиме это только запись о сервере, входа нет: правила едут на
 // телефон отдельным QR, и окно по записи показывает нужный. Дела, что пишут
 // запись целиком, берут этот выбор из записи в миг записи, поэтому запор не
-// нужен.
+// нужен. В режиме домена правила едут подпиской: идёт задание, и запись
+// меняется, только когда подписка на сервере пересобрана.
 func (s *Sluzhba) svoyVpsObhodRf(k protokol.Kadr) protokol.Kadr {
 	var telo struct {
 		Id  string `json:"id"`
@@ -434,10 +482,31 @@ func (s *Sluzhba) svoyVpsObhodRf(k protokol.Kadr) protokol.Kadr {
 	if err := json.Unmarshal(k.Telo, &telo); err != nil || telo.Vkl == nil {
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, "тело команды не разобрано")
 	}
+	z, o := s.zapisSvoego(k)
+	if o != nil {
+		return *o
+	}
+	if z.Domen != "" {
+		zapros, kod, err := s.vhodUpravleniya(z)
+		if err != nil {
+			return otkazIz(k, kod, err)
+		}
+		vkl := *telo.Vkl
+		h, tekst := s.nachatVps(vidPodpiska, false, s.deloPodpiski(z, zapros, zachemRf, &vkl))
+		if tekst != "" {
+			return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, tekst)
+		}
+		return otvet(k.Id, k.Imya, map[string]any{"id": telo.Id, "vkl": vkl, "hod": h})
+	}
 	err := s.pravitNabor(func(n *Nabor) error {
 		i := slices.IndexFunc(n.SvoiServery, func(x SvoyServer) bool { return x.Id == telo.Id })
 		if i < 0 {
 			return errSvoegoNet
+		}
+		// Сервер перешёл на домен, пока шла команда: правила теперь в его
+		// подписке, и одна запись их не сменит.
+		if n.SvoiServery[i].Domen != "" {
+			return errStalDomen
 		}
 		n.SvoiServery[i].RfCherezVpn = !*telo.Vkl
 		return nil
@@ -446,6 +515,8 @@ func (s *Sluzhba) svoyVpsObhodRf(k protokol.Kadr) protokol.Kadr {
 	switch {
 	case errors.Is(err, errSvoegoNet):
 		return otkaz(k.Id, k.Imya, protokol.KodTeloNegodno, err.Error())
+	case errors.Is(err, errStalDomen):
+		return otkaz(k.Id, k.Imya, protokol.KodVpsZanyato, err.Error())
 	case errors.Is(err, errPravilaOtstali):
 		// Выбор записан, а правила брандмауэра от него не зависят.
 		log.Printf("свой сервер %s: выбор о российских сайтах записан, %v", telo.Id, err)

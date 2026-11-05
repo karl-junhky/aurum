@@ -116,6 +116,40 @@ export interface MaskaVps {
   istochnik?: string;
 }
 
+/** Дело своего домена (ДМ1-3, ПД1). У domen: domen - что просили, пусто -
+ *  вернуться к простым ключам; у установки - домен, на который она идёт. У
+ *  podpiska: zachem - put (новая ссылка), rf (российские сайты, vkl - что
+ *  просили) или imya (новое название). */
+export interface DomenVps {
+  domen?: string;
+  zachem?: string;
+  vkl?: boolean;
+}
+
+const KODY_DOMENA = ["cloudflare", "drugoy_adres", "net_zapisi", "ne_vezde", "sovpadaet", "net_svyazi"] as const;
+
+/** Итог проверки домена (Kod в internal/svoyvps/domen). */
+export type KodDomena = (typeof KODY_DOMENA)[number];
+
+function kodDomena(s: string): s is KodDomena {
+  return (KODY_DOMENA as readonly string[]).includes(s);
+}
+
+/** Ответ svoyVpsDomenProverit: ведёт ли домен на сервер. */
+export interface ItogDomena {
+  domen: string;
+  kod: KodDomena;
+  adresa: string[];
+  aaaa: string[];
+  /** У ne_vezde: кто из DNS ещё не видит, что домен ведёт на сервер. */
+  otstayut: string[];
+  /** Кто из DNS видит, что домен ведёт только на сервер. */
+  podtverdili: string[];
+  /** Кто не ответил вовсе; у sovpadaet запись подтвердил другой. */
+  ne_otvetili: string[];
+  oshibka?: string;
+}
+
 /** Снимок задания своего сервера (HodVps службы). */
 export interface HodVps {
   id: number;
@@ -143,6 +177,7 @@ export interface HodVps {
   parol?: ParolVps;
   obnovlenie?: ObnovlenieVps;
   maska?: MaskaVps;
+  domen?: DomenVps;
   proverka?: ProverkaVps;
   otkaz?: OtkazVps;
   preduprezhdeniya: OtkazVps[];
@@ -193,6 +228,10 @@ export interface SvoyServer {
   novaya_versiya?: string;
   /** Человек выключил «Российские сайты напрямую» (РФ1). */
   rf_cherez_vpn: boolean;
+  /** Сервер на своём домене: маска reality это он, ключи и правила телефон
+   *  берёт подпиской по ссылке podpiska. */
+  domen?: string;
+  podpiska?: string;
 }
 
 /** Ссылки правил Happ из ответа svoyVpsSpisok (РФ1): одна ставит профиль
@@ -348,6 +387,7 @@ export function hodIz(v: unknown): HodVps | null {
   const obnovlenie = obekt(o.obnovlenie);
   const novaya = stroka(obnovlenie?.versiya);
   const maska = obekt(o.maska);
+  const domen = obekt(o.domen);
   return {
     id,
     vid,
@@ -382,6 +422,10 @@ export function hodIz(v: unknown): HodVps | null {
     maska: maska ? {
       svoya: stroka(maska.svoya), brend_soglasen: maska.brend_soglasen === true || undefined,
       imya: stroka(maska.imya), istochnik: stroka(maska.istochnik),
+    } : undefined,
+    domen: domen ? {
+      domen: stroka(domen.domen), zachem: stroka(domen.zachem),
+      vkl: typeof domen.vkl === "boolean" ? domen.vkl : undefined,
     } : undefined,
     proverka: proverkaIz(o.proverka) ?? undefined,
     otkaz: otkazVpsIz(o.otkaz) ?? undefined,
@@ -437,6 +481,26 @@ function serverIz(v: unknown): SvoyServer | null {
     novyy_otpechatok: stroka(o.novyy_otpechatok),
     novaya_versiya: stroka(o.novaya_versiya),
     rf_cherez_vpn: o.rf_cherez_vpn === true,
+    domen: stroka(o.domen) || undefined,
+    podpiska: stroka(o.podpiska) || undefined,
+  };
+}
+
+/** Ответ проверки домена. null - чужая форма. */
+export function itogDomenaIz(v: unknown): ItogDomena | null {
+  const o = obekt(v);
+  const domen = stroka(o?.domen);
+  const kod = stroka(o?.kod);
+  if (!o || domen === undefined || kod === undefined || !kodDomena(kod)) return null;
+  return {
+    domen,
+    kod,
+    adresa: spisok(o.adresa, (x) => stroka(x) ?? null),
+    aaaa: spisok(o.aaaa, (x) => stroka(x) ?? null),
+    otstayut: spisok(o.otstayut, (x) => stroka(x) ?? null),
+    podtverdili: spisok(o.podtverdili, (x) => stroka(x) ?? null),
+    ne_otvetili: spisok(o.ne_otvetili, (x) => stroka(x) ?? null),
+    oshibka: stroka(o.oshibka),
   };
 }
 
@@ -618,6 +682,9 @@ export interface Forma {
   /** Адрес сервера из раздела, если мастер открыт его «Поставить заново»:
    *  только так служба ставит поверх записи. */
   poverhZapisi: string;
+  /** «Как выдавать ключи»: свой домен вместо простых ключей, и какой. */
+  sDomenom: boolean;
+  domen: string;
 }
 
 export const PUSTAYA_FORMA: Forma = {
@@ -633,6 +700,8 @@ export const PUSTAYA_FORMA: Forma = {
   portHy2: "",
   imya: "",
   poverhZapisi: "",
+  sDomenom: false,
+  domen: "",
 };
 
 /** Шаг мастера. `cel` у доступа: поставить VPN или взять под управление
@@ -657,7 +726,7 @@ const IMYA_PO_UMOLCHANIYU = "Мой сервер";
 
 /** Дела, что пишут запись о сервере целиком, с названием из начала дела
  *  (pishutZapis службы): переименование посреди них служба не пустит. */
-const PISHUT_ZAPIS = new Set(["ustanovka", "podbor", "vzyat", "maska"]);
+const PISHUT_ZAPIS = new Set(["ustanovka", "podbor", "vzyat", "maska", "domen", "podpiska"]);
 
 /** Идёт дело, которое затёрло бы новое название сервера id. Дело, чей сервер
  *  в снимке ещё не назван, могло начаться над ним же. */
@@ -708,7 +777,7 @@ const HODOV_V_PAMYATI = 8;
 
 // Какие дела меняют набор ключей: по их удачному концу окну пора перечитать
 // и общий список серверов.
-const MENYAYUT_KLYUCHI = new Set(["ustanovka", "vzyat", "podbor", "snos", "otpusk", "maska"]);
+const MENYAYUT_KLYUCHI = new Set(["ustanovka", "vzyat", "podbor", "snos", "otpusk", "maska", "domen", "podpiska"]);
 
 // Номер установки, итог которой человек уже видел. Окно, поднятое заново после
 // упавшей установки, иначе молчало бы о ней, а показанное каждый раз заново
@@ -931,6 +1000,10 @@ export function useSvoyVps({ zvat, naSobytie, naSboy, naSmenuKlyuchey, aktiven }
     }
     if (k.oshibka) return { otkaz: { kod: k.oshibka.kod, tekst: k.oshibka.tekst } };
     if (sraznu) {
+      // На сервере своего домена переименование и выбор о российских
+      // сайтах заводят задание: подписка на сервере пересобирается.
+      const h = hodIz(obekt(k.telo)?.hod);
+      if (h) prinyatNachalo(h);
       const preduprezhdenie = otkazVpsIz(obekt(k.telo)?.preduprezhdenie);
       return preduprezhdenie ? { telo: k.telo, preduprezhdenie } : { telo: k.telo };
     }

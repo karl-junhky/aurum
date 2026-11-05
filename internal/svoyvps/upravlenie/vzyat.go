@@ -115,7 +115,8 @@ func Vzyat(ctx context.Context, v Vzyatie) (itog Itog, err error) {
 // считается, что продлению нужен 443.
 func prodlenieStoyashchego(vh konfig.Vhody, st server.SostoyanieUzla) (*server.SertUzla, porty.Prodlenie) {
 	switch {
-	case len(vh.Hy2) == 0:
+	// В режиме домена сертификат есть и без hy2: на нём стоит сайт.
+	case len(vh.Hy2) == 0 && vh.Sayt == nil:
 		return nil, porty.BezSerta
 	case st.Sert != nil:
 		return st.Sert, prodlenieIz(st.Sert.Sposob)

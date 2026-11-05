@@ -2,12 +2,16 @@
 // центра. Компьютер человека, который ставил сервер, может не включаться
 // неделями, а сертификат Let's Encrypt на IP живёт около 160 часов (профиль
 // shortlived), поэтому продлевает сама программа сервера, с половины срока.
+// В режиме своего домена сертификат тот же один, но на имя домена: обычный
+// профиль на 90 дней, продление с двух третей срока.
 //
 // Владение адресом Let's Encrypt проверяет запросом на сам адрес: HTTP-01 на
 // 80/tcp или TLS-ALPN-01 на 443/tcp, по очереди. Слушатель проверки
 // поднимается только на время попытки, порт на это время открывается своим
 // правилом в начале INPUT (Brandmauer). Правила ufw не трогаются: снос
-// такого правила однажды оставил сервер без продления на двое суток.
+// такого правила однажды оставил сервер без продления на двое суток. Если
+// 80/tcp постоянно держит сайт режима домена (Derzhat80), проверка HTTP-01
+// идёт через него.
 package sertip
 
 import (
@@ -22,16 +26,19 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/acme"
@@ -60,6 +67,9 @@ const (
 	trevogaNeVyhodit = 6 * time.Hour
 	// zapasSroka: осталось меньше - тревога, сколько бы ни было отказов.
 	zapasSroka = 24 * time.Hour
+	// zapasSrokaDomena: то же для сертификата на домен. Он живёт 90 дней,
+	// и за неделю до конца человек успеет починить запись домена.
+	zapasSrokaDomena = 7 * 24 * time.Hour
 
 	imyaSerta   = "fullchain.pem"
 	imyaKlyucha = "privkey.pem"
@@ -67,20 +77,59 @@ const (
 	cnZaglushki = "vpn-uzel placeholder"
 )
 
+// reDomen это имя сайта в ASCII: метки из букв, цифр и дефиса, зона из букв
+// или в punycode (.рф это xn--p1ai).
+var reDomen = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$`)
+
+// GodnyyDomen: имя годится в сертификат Let's Encrypt и в маску reality.
+func GodnyyDomen(s string) bool { return len(s) <= 253 && reDomen.MatchString(s) }
+
 // Nastroyka это поле sert_ip_sam пакета: выпускай сертификат сам, на этот
-// адрес. Staging нужен прогонам приёмки: настоящий сертификат лимитирован.
+// адрес или, в режиме своего домена, на имя Domen. Staging нужен прогонам
+// приёмки: настоящий сертификат лимитирован.
 type Nastroyka struct {
-	IP      string `json:"ip"`
+	IP string `json:"ip"`
+	// Domen: сертификат на это имя, а не на IP. IP остаётся: по нему
+	// выбирается брандмауэр, iptables или ip6tables.
+	Domen   string `json:"domen,omitempty"`
 	Staging bool   `json:"staging,omitempty"`
 }
 
-// Proverit отвергает адрес, который не IP. Публичный ли он, решает Let's
-// Encrypt.
+// Proverit отвергает адрес, который не IP, и имя, которое не имя сайта.
+// Публичный ли адрес и ведёт ли на него имя, решает Let's Encrypt.
 func (n Nastroyka) Proverit() error {
 	if net.ParseIP(n.IP) == nil {
 		return fmt.Errorf("sert_ip_sam: %q не IP", n.IP)
 	}
+	if n.Domen != "" && !GodnyyDomen(n.Domen) {
+		return fmt.Errorf("sert_ip_sam: %q не имя сайта", n.Domen)
+	}
 	return nil
+}
+
+// imya это на что выпускается сертификат: домен или IP.
+func (n Nastroyka) imya() string {
+	if n.Domen != "" {
+		return n.Domen
+	}
+	return n.IP
+}
+
+// porogProdleniya: осталось меньше - пора продлевать. Сертификат на IP с
+// половины срока, на домен с двух третей.
+func (n Nastroyka) porogProdleniya(c *x509.Certificate) time.Duration {
+	srok := c.NotAfter.Sub(c.NotBefore)
+	if n.Domen != "" {
+		return srok / 3
+	}
+	return srok / 2
+}
+
+func (n Nastroyka) zapas() time.Duration {
+	if n.Domen != "" {
+		return zapasSrokaDomena
+	}
+	return zapasSroka
 }
 
 // Pem это сертификат с ключом в том виде, как они едут в пакете.
@@ -105,13 +154,18 @@ type Opcii struct {
 	KatalogACME string // каталог ACME вместо Let's Encrypt
 	HTTPKlient  *http.Client
 	Chasy       func() time.Time
+	// ProfilDomena: профиль заказа на домен. Пусто - профиль каталога по
+	// умолчанию (у Let's Encrypt classic на 90 дней); Pebble без профиля
+	// берёт случайный.
+	ProfilDomena string
 }
 
 // Sostoyanie это выпуск глазами клиента: поле sert_ip_sam ответа sostoyanie.
 type Sostoyanie struct {
 	IP      string `json:"ip"`
+	Domen   string `json:"domen,omitempty"`
 	Staging bool   `json:"staging,omitempty"`
-	// Est: настоящий сертификат на этот адрес лежит на диске.
+	// Est: настоящий сертификат на этот адрес (или домен) лежит на диске.
 	Est    bool   `json:"est"`
 	Ot     int64  `json:"ot,omitempty"`
 	Do     int64  `json:"do,omitempty"`
@@ -126,7 +180,8 @@ type Sostoyanie struct {
 	// Sleduyushchaya: не раньше какого момента будет следующая попытка.
 	Sleduyushchaya int64 `json:"sleduyushchaya,omitempty"`
 	// Trevoga: сертификата нет и выпуск уже отказывал, или до конца срока
-	// меньше суток, или продлить пора, а не выходит дольше шести часов.
+	// меньше суток (у домена недели), или продлить пора, а не выходит
+	// дольше шести часов.
 	Trevoga bool `json:"trevoga,omitempty"`
 }
 
@@ -157,6 +212,12 @@ type Vypusk struct {
 	gotovo     chan struct{} // закрывается, когда идущая попытка кончилась
 	pauza      int           // сколько держателей Zanyat не дают начать попытку
 	otlozheno  bool          // попытка не началась из-за паузы
+
+	// sayt80: 80/tcp держит сайт режима домена, и ответ на проверку HTTP-01
+	// кладётся в otvety80, а не в свой слушатель.
+	sayt80   atomic.Bool
+	otvetyMu sync.Mutex
+	otvety80 map[string]string // путь проверки - ответ
 }
 
 // Novyy читает с диска то, что выпущено раньше. Выпуск выключен, пока
@@ -176,7 +237,7 @@ func Novyy(katalog, katalogSerta string, zhurnal *slog.Logger, obnovleno func(),
 	}
 	v := &Vypusk{
 		katalog: katalog, katalogSerta: katalogSerta, zhurnal: zhurnal, obnovleno: obnovleno, o: o,
-		budit: make(chan struct{}, 1),
+		budit: make(chan struct{}, 1), otvety80: map[string]string{},
 	}
 	t, err := prochitatSert(katalogSerta)
 	switch {
@@ -202,7 +263,8 @@ func Novyy(katalog, katalogSerta string, zhurnal *slog.Logger, obnovleno func(),
 // дольше лежащего. Новая настройка будит выпуск сразу.
 func (v *Vypusk) Nastroit(n *Nastroyka, kopiya *Pem) error {
 	if n != nil {
-		norm := Nastroyka{IP: net.ParseIP(n.IP).String(), Staging: n.Staging}
+		norm := Nastroyka{IP: net.ParseIP(n.IP).String(), Domen: strings.ToLower(strings.TrimSuffix(n.Domen, ".")),
+			Staging: n.Staging}
 		n = &norm
 	}
 	v.mu.Lock()
@@ -230,11 +292,11 @@ func (v *Vypusk) prinyatKopiyu(n Nastroyka, k Pem) (bool, error) {
 	}
 	seychas := v.o.Chasy()
 	switch {
-	case zaglushka(para.Leaf), !dlyaIP(para.Leaf, n.IP):
-		return false, fmt.Errorf("копия сертификата не на %s", n.IP)
+	case zaglushka(para.Leaf), !dlya(para.Leaf, n):
+		return false, fmt.Errorf("копия сертификата не на %s", n.imya())
 	case !seychas.Before(para.Leaf.NotAfter):
 		return false, nil // истекла: выпуск сделает новый
-	case v.tekushchiy != nil && dlyaIP(v.tekushchiy.Leaf, n.IP) && !para.Leaf.NotAfter.After(v.tekushchiy.Leaf.NotAfter):
+	case v.tekushchiy != nil && dlya(v.tekushchiy.Leaf, n) && !para.Leaf.NotAfter.After(v.tekushchiy.Leaf.NotAfter):
 		return false, nil // на диске не хуже
 	}
 	if err := v.zapisat(Pem{Cert: k.Cert, Klyuch: k.Klyuch}); err != nil {
@@ -288,15 +350,34 @@ func (v *Vypusk) Zaglushka(ip string) error {
 	})
 }
 
-// Tekushchiy это настоящий сертификат на настроенный адрес; nil - его нет,
-// выпуск выключен или на диске заглушка.
+// Tekushchiy это настоящий сертификат на настроенный адрес или домен; nil -
+// его нет, выпуск выключен или на диске заглушка.
 func (v *Vypusk) Tekushchiy() *tls.Certificate {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.nastroyka == nil || v.tekushchiy == nil || !dlyaIP(v.tekushchiy.Leaf, v.nastroyka.IP) {
+	if v.nastroyka == nil || v.tekushchiy == nil || !dlya(v.tekushchiy.Leaf, *v.nastroyka) {
 		return nil
 	}
 	return v.tekushchiy
+}
+
+// Derzhat80 говорит выпуску, держит ли 80/tcp сайт режима домена. Пока
+// держит, ответ на проверку HTTP-01 отдаёт сайт через OtvetitProverke, а
+// своего слушателя выпуск не поднимает: порт занят.
+func (v *Vypusk) Derzhat80(da bool) { v.sayt80.Store(da) }
+
+// OtvetitProverke отвечает на запрос проверки HTTP-01, если её ждёт идущая
+// попытка; false - такой проверки нет, и запрос не тронут.
+func (v *Vypusk) OtvetitProverke(w http.ResponseWriter, r *http.Request) bool {
+	v.otvetyMu.Lock()
+	otvet, est := v.otvety80[r.URL.Path]
+	v.otvetyMu.Unlock()
+	if !est {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	_, _ = io.WriteString(w, otvet) // не дошло - Let's Encrypt скажет сам
+	return true
 }
 
 // Zanyat не даёт начаться новой попытке и дожидается идущей: ядро меняется и
@@ -384,7 +465,7 @@ func (v *Vypusk) krug(ctx context.Context) {
 	v.sohranitUchet()
 	v.mu.Unlock()
 
-	v.zhurnal.Info("выпуск своего сертификата", "ip", nastroyka.IP, "staging", nastroyka.Staging)
+	v.zhurnal.Info("выпуск своего сертификата", "na", nastroyka.imya(), "staging", nastroyka.Staging)
 	vypushchen, sposob, err := v.vypustit(ctx, nastroyka, pervym)
 
 	v.mu.Lock()
@@ -395,7 +476,7 @@ func (v *Vypusk) krug(ctx context.Context) {
 		if v.uchet.OtkazS == 0 {
 			v.uchet.OtkazS = v.o.Chasy().Unix()
 		}
-		v.zhurnal.Error("свой сертификат не выпущен", "ip", nastroyka.IP, "oshibka", err)
+		v.zhurnal.Error("свой сертификат не выпущен", "na", nastroyka.imya(), "oshibka", err)
 	case v.nastroyka == nil || *v.nastroyka != nastroyka:
 		// Пока шла попытка, пакет сменил адрес: выпущенное уже не нужно.
 		v.razbudit()
@@ -414,7 +495,7 @@ func (v *Vypusk) krug(ctx context.Context) {
 		}
 		v.tekushchiy, zamena = &para, true
 		v.uchet.Sposob, v.uchet.Otkaz, v.uchet.OtkazS = sposob, "", 0
-		v.zhurnal.Info("свой сертификат выпущен", "ip", nastroyka.IP, "sposob", sposob,
+		v.zhurnal.Info("свой сертификат выпущен", "na", nastroyka.imya(), "sposob", sposob,
 			"do", para.Leaf.NotAfter.UTC().Format(time.DateTime))
 	}
 	v.sohranitUchet()
@@ -427,14 +508,13 @@ func (v *Vypusk) krug(ctx context.Context) {
 }
 
 // pora: сертификата на адрес нет, он из другого каталога (staging против
-// настоящего) или прошла половина срока.
+// настоящего) или прошла половина срока (у домена две трети).
 func (v *Vypusk) pora(n Nastroyka, seychas time.Time) bool {
 	t := v.tekushchiy
-	if t == nil || !dlyaIP(t.Leaf, n.IP) || staging(t.Leaf) != n.Staging {
+	if t == nil || !dlya(t.Leaf, n) || staging(t.Leaf) != n.Staging {
 		return true
 	}
-	srok := t.Leaf.NotAfter.Sub(t.Leaf.NotBefore)
-	return t.Leaf.NotAfter.Sub(seychas) < srok/2
+	return t.Leaf.NotAfter.Sub(seychas) < n.porogProdleniya(t.Leaf)
 }
 
 // mozhno: за последний час попыток меньше popytokVOkne. Старые попытки
@@ -453,19 +533,19 @@ func (v *Vypusk) Sostoyanie() *Sostoyanie {
 		return nil
 	}
 	n, seychas := *v.nastroyka, v.o.Chasy()
-	s := &Sostoyanie{IP: n.IP, Staging: n.Staging, Idyot: v.idyot, Sposob: v.uchet.Sposob,
+	s := &Sostoyanie{IP: n.IP, Domen: n.Domen, Staging: n.Staging, Idyot: v.idyot, Sposob: v.uchet.Sposob,
 		Otkaz: v.uchet.Otkaz, OtkazS: v.uchet.OtkazS}
 	if k := len(v.uchet.Popytki); k > 0 {
 		s.Popytka = v.uchet.Popytki[k-1]
 	}
 	pora := v.pora(n, seychas)
-	if t := v.tekushchiy; t != nil && dlyaIP(t.Leaf, n.IP) {
+	if t := v.tekushchiy; t != nil && dlya(t.Leaf, n) {
 		s.Est, s.Ot, s.Do = true, t.Leaf.NotBefore.Unix(), t.Leaf.NotAfter.Unix()
 		ostalos := t.Leaf.NotAfter.Sub(seychas)
-		s.Trevoga = ostalos < zapasSroka ||
+		s.Trevoga = ostalos < n.zapas() ||
 			pora && s.OtkazS != 0 && seychas.Sub(time.Unix(s.OtkazS, 0)) >= trevogaNeVyhodit
 		if !pora {
-			s.Sleduyushchaya = t.Leaf.NotAfter.Add(-t.Leaf.NotAfter.Sub(t.Leaf.NotBefore) / 2).Unix()
+			s.Sleduyushchaya = t.Leaf.NotAfter.Add(-n.porogProdleniya(t.Leaf)).Unix()
 		}
 	} else {
 		s.Trevoga = s.OtkazS != 0
@@ -495,7 +575,7 @@ func (v *Vypusk) vypustit(ctx context.Context, n Nastroyka, pervym string) (Pem,
 	}
 	var oshibki []error
 	for len(sposoby) > 0 {
-		vypushchen, sposob, otvergnut, err := v.zakaz(ctx, k, n.IP, sposoby)
+		vypushchen, sposob, otvergnut, err := v.zakaz(ctx, k, n, sposoby)
 		if err == nil {
 			if sposob == "" {
 				sposob = pervym // Let's Encrypt помнил прежнюю проверку адреса
@@ -514,8 +594,20 @@ func (v *Vypusk) vypustit(ctx context.Context, n Nastroyka, pervym string) (Pem,
 // zakaz это один заказ. sposob - чем доказано владение (пусто, если Let's
 // Encrypt помнил прежнюю проверку); otvergnut - способ, который Let's Encrypt
 // проверял и отверг.
-func (v *Vypusk) zakaz(ctx context.Context, k *acme.Client, ip string, sposoby []string) (vypushchen Pem, sposob, otvergnut string, err error) {
-	z, err := k.AuthorizeOrder(ctx, acme.IPIDs(ip), acme.WithOrderIssuanceProfile(profil))
+func (v *Vypusk) zakaz(ctx context.Context, k *acme.Client, n Nastroyka, sposoby []string) (vypushchen Pem, sposob, otvergnut string, err error) {
+	// Домен идёт обычным профилем: короткий на 160 часов Let's Encrypt
+	// требует только для IP, а частые продления домена быстрее выберут лимит
+	// пять в неделю на одно имя.
+	ids, profilZakaza := acme.IPIDs(n.IP), []acme.OrderOption{acme.WithOrderIssuanceProfile(profil)}
+	zapros := &x509.CertificateRequest{IPAddresses: []net.IP{net.ParseIP(n.IP)}}
+	if n.Domen != "" {
+		ids, profilZakaza = acme.DomainIDs(n.Domen), nil
+		if v.o.ProfilDomena != "" {
+			profilZakaza = []acme.OrderOption{acme.WithOrderIssuanceProfile(acme.ProfileName(v.o.ProfilDomena))}
+		}
+		zapros = &x509.CertificateRequest{DNSNames: []string{n.Domen}}
+	}
+	z, err := k.AuthorizeOrder(ctx, ids, profilZakaza...)
 	if err != nil {
 		return Pem{}, "", "", fmt.Errorf("заказ: %w", err)
 	}
@@ -527,7 +619,7 @@ func (v *Vypusk) zakaz(ctx context.Context, k *acme.Client, ip string, sposoby [
 		if a.Status == acme.StatusValid {
 			continue
 		}
-		if sposob, otvergnut, err = v.dokazat(ctx, k, a, sposoby); err != nil {
+		if sposob, otvergnut, err = v.dokazat(ctx, k, a, net.ParseIP(n.IP), sposoby); err != nil {
 			return Pem{}, "", otvergnut, err
 		}
 	}
@@ -539,7 +631,7 @@ func (v *Vypusk) zakaz(ctx context.Context, k *acme.Client, ip string, sposoby [
 	if err != nil {
 		return Pem{}, "", "", err
 	}
-	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{IPAddresses: []net.IP{net.ParseIP(ip)}}, klyuch)
+	csr, err := x509.CreateCertificateRequest(rand.Reader, zapros, klyuch)
 	if err != nil {
 		return Pem{}, "", "", err
 	}
@@ -558,9 +650,10 @@ func (v *Vypusk) zakaz(ctx context.Context, k *acme.Client, ip string, sposoby [
 	return Pem{Cert: cert.String(), Klyuch: string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kDer}))}, sposob, "", nil
 }
 
-// dokazat проходит авторизацию первым способом, чей слушатель поднялся.
-func (v *Vypusk) dokazat(ctx context.Context, k *acme.Client, a *acme.Authorization, sposoby []string) (sposob, otvergnut string, err error) {
-	ip := a.Identifier.Value
+// dokazat проходит авторизацию первым способом, чей слушатель поднялся. ip
+// это адрес сервера: по нему брандмауэр выбирает iptables или ip6tables, и
+// при выпуске на домен тоже.
+func (v *Vypusk) dokazat(ctx context.Context, k *acme.Client, a *acme.Authorization, ip net.IP, sposoby []string) (sposob, otvergnut string, err error) {
 	var neVyshlo []error
 	for _, s := range sposoby {
 		var ch *acme.Challenge
@@ -573,7 +666,7 @@ func (v *Vypusk) dokazat(ctx context.Context, k *acme.Client, a *acme.Authorizat
 			neVyshlo = append(neVyshlo, fmt.Errorf("%s: Let's Encrypt его не предложил", s))
 			continue
 		}
-		zakryt, err := v.podnyat(k, ch, ip)
+		zakryt, err := v.podnyat(k, ch, a.Identifier.Value, ip)
 		if err != nil {
 			neVyshlo = append(neVyshlo, fmt.Errorf("%s: %w", s, err))
 			continue
@@ -592,11 +685,15 @@ func (v *Vypusk) dokazat(ctx context.Context, k *acme.Client, a *acme.Authorizat
 }
 
 // podnyat поднимает слушатель проверки и открывает его порт. zakryt гасит
-// слушатель и снимает правило.
-func (v *Vypusk) podnyat(k *acme.Client, ch *acme.Challenge, ip string) (zakryt func(), err error) {
+// слушатель и снимает правило. imya это то, что проверяет Let's Encrypt (IP
+// или домен), ip - адрес сервера для брандмауэра.
+func (v *Vypusk) podnyat(k *acme.Client, ch *acme.Challenge, imya string, ip net.IP) (zakryt func(), err error) {
 	port := v.o.PortHTTP
 	if ch.Type == SposobTLS {
 		port = v.o.PortTLS
+	}
+	if ch.Type == SposobHTTP && v.sayt80.Load() {
+		return v.otvetitCherezSayt(k, ch)
 	}
 	ln, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
 	if err != nil {
@@ -625,7 +722,7 @@ func (v *Vypusk) podnyat(k *acme.Client, ch *acme.Challenge, ip string) (zakryt 
 		}()
 		gasit = func() { srv.Close() }
 	case SposobTLS:
-		sert, err := k.TLSALPN01ChallengeCert(ch.Token, ip)
+		sert, err := k.TLSALPN01ChallengeCert(ch.Token, imya)
 		if err != nil {
 			ln.Close()
 			return nil, err
@@ -651,7 +748,7 @@ func (v *Vypusk) podnyat(k *acme.Client, ch *acme.Challenge, ip string) (zakryt 
 		ln.Close()
 		return nil, fmt.Errorf("способ %s программа не умеет", ch.Type)
 	}
-	snyat, err := v.o.Brandmauer.Otkryt(net.ParseIP(ip), port)
+	snyat, err := v.o.Brandmauer.Otkryt(ip, port)
 	if err != nil {
 		// Брандмауэра может и не быть вовсе; не вышло открыть - пробуем как
 		// есть, ответ Let's Encrypt покажет.
@@ -663,6 +760,24 @@ func (v *Vypusk) podnyat(k *acme.Client, ch *acme.Challenge, ip string) (zakryt 
 		if err := snyat(); err != nil {
 			v.zhurnal.Error("правило проверки не снялось", "port", port, "oshibka", err)
 		}
+	}, nil
+}
+
+// otvetitCherezSayt кладёт ответ проверки HTTP-01 туда, где его найдёт сайт
+// режима домена: 80/tcp он держит сам и открыл в брандмауэре сам.
+func (v *Vypusk) otvetitCherezSayt(k *acme.Client, ch *acme.Challenge) (func(), error) {
+	otvet, err := k.HTTP01ChallengeResponse(ch.Token)
+	if err != nil {
+		return nil, err
+	}
+	put := k.HTTP01ChallengePath(ch.Token)
+	v.otvetyMu.Lock()
+	v.otvety80[put] = otvet
+	v.otvetyMu.Unlock()
+	return func() {
+		v.otvetyMu.Lock()
+		delete(v.otvety80, put)
+		v.otvetyMu.Unlock()
 	}, nil
 }
 
@@ -751,8 +866,13 @@ func zaglushka(c *x509.Certificate) bool {
 	return c.Subject.CommonName == cnZaglushki && c.Issuer.CommonName == cnZaglushki
 }
 
-func dlyaIP(c *x509.Certificate, ip string) bool {
-	adres := net.ParseIP(ip)
+// dlya: сертификат выдан на то, что велит настройка, домен или IP. Имя
+// сверяется точно: сертификат на *.домен для самого домена не годится.
+func dlya(c *x509.Certificate, n Nastroyka) bool {
+	if n.Domen != "" {
+		return slices.Contains(c.DNSNames, n.Domen)
+	}
+	adres := net.ParseIP(n.IP)
 	return adres != nil && slices.ContainsFunc(c.IPAddresses, adres.Equal)
 }
 

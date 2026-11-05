@@ -1,6 +1,9 @@
 package yadro
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestKarkas(t *testing.T) {
 	bazovyy := `{"inbounds":[
@@ -61,6 +64,16 @@ func TestRazobratPaket(t *testing.T) {
 		`{"versiya":2,"yadro":{},"sert":{"cert":"x","klyuch":"y"}}`,
 		`{"versiya":2,"yadro":{},"podpiska":{"slushat":":8443","lyudi":{},"lishnee":1}}`,
 		`не json`,
+		// Режим домена: сайт только с выпуском на тот же домен, копия на IP
+		// при выпуске на домен не годится.
+		`{"versiya":3,"yadro":{},"sayt":` + saytTest + `}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7"},"sayt":` + saytTest + `}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","domen":"drugoy.example.net"},"sayt":` + saytTest + `}`,
+		`{"versiya":2,"yadro":{},"sayt":` + saytTest + `}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","domen":"Kot.example.net"}}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","domen":"kot.example.net"},"sert_ip":{"cert":"x","klyuch":"y"}}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","domen":"kot.example.net"},"sayt":` +
+			strings.Replace(saytTest, `"127.0.0.1:10443"`, `"0.0.0.0:10443"`, 1) + `}`,
 	}
 	for _, p := range plohie {
 		if _, err := razobratPaket([]byte(p)); err == nil {
@@ -69,12 +82,19 @@ func TestRazobratPaket(t *testing.T) {
 	}
 	for _, p := range []string{`{"versiya":1,"yadro":{"log":{}}}`, `{"versiya":2,"yadro":{"log":{}}}`,
 		`{"versiya":3,"yadro":{}}`, `{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","staging":true}}`,
-		`{"versiya":3,"yadro":{},"proba":{"srok":600}}`} {
+		`{"versiya":3,"yadro":{},"proba":{"srok":600}}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","domen":"kot.example.net"}}`,
+		`{"versiya":3,"yadro":{},"sert_ip_sam":{"ip":"198.51.100.7","domen":"kot.example.net"},"sayt":` + saytTest + `}`,
+		`{"versiya":3,"yadro":{},"proba":{"srok":600},"sert_ip_sam":{"ip":"198.51.100.7","domen":"kot.example.net"},"sayt":` + saytTest + `}`} {
 		if _, err := razobratPaket([]byte(p)); err != nil {
 			t.Fatalf("%s: %v", p, err)
 		}
 	}
 }
+
+const saytTest = `{"domen":"kot.example.net","port":443,"slushat":"127.0.0.1:10443",` +
+	`"zerno":"0123456789abcdef0123456789abcdef","podpiska":{"put":"fedcba9876543210fedcba9876543210",` +
+	`"zagolovki":{"profile-update-interval":"12"},"telo":"x"}}`
 
 func TestMaskaRealityIzKonfiga(t *testing.T) {
 	konfig := []byte(`{"inbounds":[
@@ -102,5 +122,12 @@ func TestMaskaRealityIzKonfiga(t *testing.T) {
 	y.rabotaet = &zapushchennoe{vhody: opisatVhody([]byte(`{"inbounds":[{"type":"hysteria2","tag":"hy2-8443"}]}`))}
 	if m := y.Maska(); m != "" {
 		t.Fatalf("без reality маска %q", m)
+	}
+	// Режим домена: reality ведёт на свой сайт на петле, сторожить нечего.
+	y.rabotaet = &zapushchennoe{vhody: opisatVhody([]byte(`{"inbounds":[
+		{"type":"vless","tag":"reality-443","listen_port":443,"tls":{"enabled":true,"server_name":"kot.example.net",
+			"reality":{"enabled":true,"handshake":{"server":"127.0.0.1","server_port":10443}}}}]}`))}
+	if m := y.Maska(); m != "" {
+		t.Fatalf("в режиме домена маска %q", m)
 	}
 }

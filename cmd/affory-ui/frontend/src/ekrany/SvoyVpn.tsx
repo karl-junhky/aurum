@@ -12,8 +12,8 @@ import { podpisDeystviya, tekstOtkaza } from "./otkazy";
 import { KodyQr, Vygruzka, type VygruzkaOtvet } from "./Vygruzka";
 import { vozrast, vygruzkaIz } from "./Servery";
 import {
-  DLINA_IMENI, imyaPoUmolchaniyu, imyaZanyato, ocenitServer, portyNyneshnie, PUSTAYA_FORMA, svezhayaProverka, zapomnitUvidennuyu,
-  type Forma, type HodVps, type KlyuchFayla, type KlyuchHoda, type Master, type OsmotrVps, type OtkazVps,
+  DLINA_IMENI, imyaPoUmolchaniyu, imyaZanyato, itogDomenaIz, ocenitServer, portyNyneshnie, PUSTAYA_FORMA, svezhayaProverka, zapomnitUvidennuyu,
+  type Forma, type HodVps, type ItogDomena, type KlyuchFayla, type KlyuchHoda, type Master, type OsmotrVps, type OtkazVps,
   type PravilaHapp, type ProverkaVps, type SostoyanieServera, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
 
@@ -705,7 +705,7 @@ export function punktyOsmotra(h: HodVps | undefined, sposob: Forma["sposob"] | n
   return punkty;
 }
 
-function ShagProverka({ h, forma, imyaPoUmolch, pustoy, otkaz, idyot, aktiven, naPustoy, naImya, naNazad, naOtmenu, naPostavit, naVzyat, naPovtor, naServery, naPrinyatKlyuch }: {
+function ShagProverka({ h, forma, imyaPoUmolch, pustoy, otkaz, idyot, aktiven, komanda, naPustoy, naImya, naDomen, naNazad, naOtmenu, naPostavit, naVzyat, naPovtor, naServery, naPrinyatKlyuch }: {
   h: HodVps | undefined;
   forma: Forma;
   /** Название, которое служба даст при пустом поле. */
@@ -714,8 +714,11 @@ function ShagProverka({ h, forma, imyaPoUmolch, pustoy, otkaz, idyot, aktiven, n
   otkaz?: OtkazVps;
   idyot: boolean;
   aktiven: boolean;
+  komanda: SvoyVps["komanda"];
   naPustoy: (v: boolean) => void;
   naImya: (v: string) => void;
+  /** «Как выдавать ключи»: свой домен или нет, и какой. */
+  naDomen: (sDomenom: boolean, domen: string) => void;
   naNazad: () => void;
   naOtmenu: () => void;
   naPostavit: (o: OsmotrVps) => void;
@@ -770,10 +773,31 @@ function ShagProverka({ h, forma, imyaPoUmolch, pustoy, otkaz, idyot, aktiven, n
       {o && !vzyat && o.mozhno_stavit && (
         <>
           <PoleImeni testId="svoy-imya" znachenie={forma.imya} naVvod={naImya} placeholder={imyaPoUmolch} poyasnenie="Так сервер будет называться в списке и в ключах на телефоне" />
+          <div className="flex flex-col gap-2">
+            <span className="text-fg-secondary text-xs font-medium">Как выдавать ключи</span>
+            <div>
+              <Segment
+                aria-label="Как выдавать ключи"
+                ton="tihiy"
+                znacheniya={[{ z: "prostye", podpis: "Просто ключи" }, { z: "domen", podpis: "Свой домен" }]}
+                vybrano={forma.sDomenom ? "domen" : "prostye"}
+                naVybor={(z) => naDomen(z === "domen", forma.domen)}
+              />
+            </div>
+            <p className="text-fg-muted text-xs">
+              {forma.sDomenom
+                ? "Телефон добавит одну подписку, ключи и правила Happ в ней обновятся сами. На домене встанет сайт-заглушка"
+                : "Каждый ключ добавляется на телефон отдельно"}
+            </p>
+            {forma.sDomenom && (
+              <PoleDomena znachenie={forma.domen} naVvod={(v: string) => naDomen(true, v)} adres={chistyyAdres(forma.adres)}
+                cel={{ adres: chistyyAdres(forma.adres) }} komanda={komanda} aktiven={aktiven} />
+            )}
+          </div>
           <Flazhok vkl={pustoy} naSmenu={naPustoy} testId="svoy-pustoy" podpis="На сервере нет ничего нужного, Affory может занять его целиком" />
           <Podval
             sleva={<Knopka rang="tekst" onClick={naNazad}>Назад</Knopka>}
-            sprava={<Knopka rang="glavnaya" bolshaya testId="svoy-postavit-vpn" aktiven={pustoy && aktiven} zhdyot={idyot} onClick={() => naPostavit(o)}>Поставить VPN</Knopka>}
+            sprava={<Knopka rang="glavnaya" bolshaya testId="svoy-postavit-vpn" aktiven={pustoy && aktiven && (!forma.sDomenom || forma.domen.trim() !== "")} zhdyot={idyot} onClick={() => naPostavit(o)}>Поставить VPN</Knopka>}
           />
         </>
       )}
@@ -831,6 +855,7 @@ const ETAPY: { id: IdEtapa; imya: string; zhdyot: string }[] = [
 // Куда отнести предупреждение дошедшей до ключей установки.
 const ETAP_PREDUPREZHDENIYA: Record<string, IdEtapa> = {
   "vps-cert-blocked": "sertifikat",
+  "vps-domain-failed": "sertifikat",
   "vps-address-blocked": "porty",
   "vps-hoster-firewall": "porty",
   "vps-network-limited": "porty",
@@ -853,12 +878,14 @@ export function etapyUstanovki(h: HodVps | undefined): Etap[] {
       return { id: e.id, imya: e.imya, itog: "da", podrobno: "готово" };
     }
     if (i < nomer) return { id: e.id, imya: e.imya, itog: "da", podrobno: "готово" };
-    if (i > nomer) return { id: e.id, imya: e.imya, itog: "zhdyot", podrobno: h.faza === "idyot" ? e.zhdyot : "не начинался" };
+    // Установка на свой домен выпускает сертификат на него.
+    const zhdyot = e.id === "sertifikat" && h.domen?.domen ? `на ${h.domen.domen}` : e.zhdyot;
+    if (i > nomer) return { id: e.id, imya: e.imya, itog: "zhdyot", podrobno: h.faza === "idyot" ? zhdyot : "не начинался" };
     if (h.faza === "idyot") {
       // На проверке ключей служба называет ключ, который сейчас везёт 2 МБ.
       const podrobno = e.id === "klyuchi" && h.klyuch
         ? `${vidKlyucha(h.klyuch.transport).imya} ${h.klyuch.port}: качаю 2 МБ`
-        : CHTO_IDYOT[h.shag ?? ""] ?? e.zhdyot;
+        : chtoIdyot(h) ?? zhdyot;
       return { id: e.id, imya: e.imya, itog: "idyot", podrobno };
     }
     return { id: e.id, imya: e.imya, itog: "net", podrobno: h.faza === "otmeneno" ? "отменено" : "не прошёл" };
@@ -1166,10 +1193,18 @@ function ShagGotovo({ h, server, happ, aktivenObhod, zhdyotObhod, naObhodRf, idy
           <Vygruzka vygruzka={vygruzka} zakryt={naZakrytVygruzku} skopirovat={skopirovat} kodyQr={kodyQr} zagolovok="Ключи для телефона" />
         </div>
       )}
-      {/* Правила от выгрузки ключей не зависят: строка есть и при её отказе. */}
+      {/* На своём домене телефон берёт ключи и правила подпиской. */}
+      {server?.podpiska && (
+        <Panel testId="svoy-gotovo-podpiska">
+          <PodpiskaServera ssylka={server.podpiska} skopirovat={skopirovat} kodyQr={kodyQr} />
+        </Panel>
+      )}
+      {/* Правила от выгрузки ключей не зависят: строка есть и при её отказе.
+          На своём домене переключатель заводит дело, а пока идёт
+          перепроверка, служба второе не начнёт. */}
       {server && happ && (
         <Panel testId="svoy-gotovo-pravila">
-          <RyadRossii s={server} happ={happ} aktiven={aktivenObhod} zhdyot={zhdyotObhod} kodyQr={kodyQr} naSmenu={naObhodRf} />
+          <RyadRossii s={server} happ={happ} aktiven={aktivenObhod && !(server.domen && idyot)} zhdyot={zhdyotObhod} kodyQr={kodyQr} naSmenu={naObhodRf} />
         </Panel>
       )}
       {server && (
@@ -1217,7 +1252,7 @@ const DELO_ITOG: Record<string, string> = {
 /** Строка итога законченного дела. null - сказать нечего, строки не будет. */
 export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlashki; zagolovok: string; tekst?: string } | null {
   const gde = adres ? ` ${adres}` : "";
-  if (h.faza === "otmeneno") return { zagolovok: `${DELO_ITOG[h.vid] ?? "Дело"}: отменено` };
+  if (h.faza === "otmeneno") return { zagolovok: `${imyaDela(h).itog}: отменено` };
   if (h.faza !== "gotovo") return null;
   switch (h.vid) {
     case "snos":
@@ -1264,17 +1299,63 @@ export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlash
       const hy2 = h.ustanovlen?.klyuchi.some((k) => k.transport === "hy2") ? ". Ключ hysteria2 прежний" : "";
       return { zagolovok: `Маска сменилась на ${imya}`, tekst: `Ключ reality на телефоне со старой маской больше не подключится, добавь его заново${hy2}` };
     }
+    case "domen":
+      if (!h.domen) return null;
+      return h.domen.domen
+        ? { zagolovok: `Сервер работает на домене ${h.domen.domen}`, tekst: "Добавь на телефон подписку из карточки: прежние ключи больше не подключатся" }
+        : { zagolovok: "Сервер снова выдаёт простые ключи", tekst: "Подписка больше не отвечает: добавь на телефон новые ключи" };
+    case "podpiska":
+      switch (h.domen?.zachem) {
+        case "put":
+          return { zagolovok: "Ссылка подписки сменилась", tekst: "Прежняя больше не отвечает: добавь новую в Happ на каждом телефоне" };
+        case "rf":
+          return {
+            zagolovok: h.domen.vkl ? "Российские сайты в подписке идут напрямую" : "В подписке всё идёт через VPN",
+            tekst: "Happ заберёт правила при следующем обновлении подписки",
+          };
+        case "imya":
+          return { zagolovok: "Название в подписке сменилось", tekst: "Happ покажет его при следующем обновлении подписки" };
+      }
+      return null;
   }
   return null;
 }
 
-/** Что делается сейчас. Смена маски идёт шагами установки, но говорит о
- *  своём. */
+/** Имя дела в строке хода («идёт» глаголом) и в заголовке итога.
+ *  Свой домен и подписка называются по тому, что просили. Первый снимок
+ *  дела служба отдаёт до того, как дело назовёт просьбу: до этого имя общее. */
+function imyaDela(h: HodVps): { idyot: string; itog: string } {
+  if (h.vid === "domen") {
+    if (!h.domen) return { idyot: "Меняю способ выдачи ключей", itog: "Смена способа выдачи ключей" };
+    return h.domen.domen
+      ? { idyot: `Перевожу сервер на домен ${h.domen.domen}`, itog: "Переход на свой домен" }
+      : { idyot: "Возвращаю сервер к простым ключам", itog: "Возврат к простым ключам" };
+  }
+  if (h.vid === "podpiska") {
+    switch (h.domen?.zachem) {
+      case "put":
+        return { idyot: "Меняю ссылку подписки", itog: "Смена ссылки подписки" };
+      case "rf":
+        return { idyot: "Меняю правила в подписке", itog: "Смена правил в подписке" };
+      case "imya":
+        return { idyot: "Меняю название в подписке", itog: "Смена названия в подписке" };
+    }
+    return { idyot: "Пересобираю подписку на сервере", itog: "Пересборка подписки" };
+  }
+  return { idyot: DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером", itog: DELO_ITOG[h.vid] ?? "Дело" };
+}
+
+/** Что делается сейчас. Смена маски, свой домен и подписка идут шагами
+ *  установки, но говорят о своём. */
 function chtoIdyot(h: HodVps): string | undefined {
   if (h.vid === "maska") {
     if (h.shag === "maska" && h.maska?.svoya) return `проверяю с сервера, годится ли ${h.maska.svoya} в маску`;
     if (h.shag === "paket") return "перезапускаю VPN на сервере с новой маской";
   }
+  const domen = h.vid === "podpiska" ? undefined : h.domen?.domen;
+  if (h.shag === "sertifikat" && domen) return `выпускаю сертификат на ${domen}: Let's Encrypt проверяет домен через порт 80, это до трёх минут`;
+  if (h.shag === "paket" && h.vid === "domen") return "перезапускаю VPN на сервере с новыми ключами";
+  if (h.shag === "paket" && h.vid === "podpiska") return "пересобираю подписку на сервере";
   return CHTO_IDYOT[h.shag ?? ""];
 }
 
@@ -1311,7 +1392,7 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtm
   if (h.faza === "idyot") {
     const imya = h.planovaya
       ? "Плановая проверка сервера"
-      : h.ustanovlen && PEREPROVERYAYUT.has(h.vid) ? zagolovokPerepoverki(h) : DELO_IDYOT[h.vid] ?? "Идёт дело со своим сервером";
+      : h.ustanovlen && PEREPROVERYAYUT.has(h.vid) ? zagolovokPerepoverki(h) : imyaDela(h).idyot;
     const tekst = h.shag === "detektor" && h.povtory.length > 0
       ? [h.krug_tekst ? sPropisnoy(h.krug_tekst) : "", povtoryTekstom(h)].filter(Boolean).join(". ")
       : chtoIdyot(h);
@@ -1340,7 +1421,7 @@ function StrokaDela({ h, adres, aktiven, zanyato = false, bezSeti = false, naOtm
       h.otkaz.podozhdat ? `Следующий вход не раньше чем через ${h.otkaz.podozhdat} с` : "",
     ].filter((s) => s !== "").join(". ");
     return (
-      <Plashka testId="svoy-delo" ton="danger" zagolovok={`${DELO_ITOG[h.vid] ?? "Дело"}: не вышло`} tekst={tekst}>
+      <Plashka testId="svoy-delo" ton="danger" zagolovok={`${imyaDela(h).itog}: не вышло`} tekst={tekst}>
         {deystvie && podpis && <Knopka rang="vtoraya" aktiven={aktiven && !zanyato} onClick={deystvie}>{podpis}</Knopka>}
         {dop}
         {zakryt}
@@ -1523,23 +1604,182 @@ export function sostoyanieKlyucha(s: SvoyServer, p: ProverkaVps | undefined, tra
   return s.porty_ruchnye ? "порт задан руками" : "порт подобран из твоей сети";
 }
 
-/** QR правил Happ (РФ1): ставит профиль «российские сайты напрямую» или,
- *  когда человек их выключил, под тем же именем профиль, где всё идёт через
- *  VPN (не happ://routing/off: тот выключил бы и правила чужих подписок).
- *  Код, нарисованный для прежнего выбора, не показывается: камера прочла бы
- *  не то. */
-function KodPravilHapp({ cherezVpn, happ, kodyQr }: { cherezVpn: boolean; happ: PravilaHapp; kodyQr: (tekst: string) => Promise<string[]> }) {
-  const ssylka = cherezVpn ? happ.vyklyuchit : happ.vklyuchit;
-  const [kod, zadatKod] = useState<{ ssylka: string; kody?: string[]; otkaz?: string } | null>(null);
+/** Коды QR текста. Код, нарисованный для прежнего текста, не отдаётся:
+ *  камера прочла бы не то. null - код ещё рисуется. */
+function useKodyQr(tekst: string, kodyQr: (tekst: string) => Promise<string[]>): { kody?: string[]; otkaz?: string } | null {
+  const [kod, zadatKod] = useState<{ tekst: string; kody?: string[]; otkaz?: string } | null>(null);
   useEffect(() => {
     let aktualen = true;
-    kodyQr(ssylka).then(
-      (kody) => { if (aktualen) zadatKod({ ssylka, kody }); },
-      (e: unknown) => { if (aktualen) zadatKod({ ssylka, otkaz: tekstOshibki(e) }); },
+    kodyQr(tekst).then(
+      (kody) => { if (aktualen) zadatKod({ tekst, kody }); },
+      (e: unknown) => { if (aktualen) zadatKod({ tekst, otkaz: tekstOshibki(e) }); },
     );
     return () => { aktualen = false; };
-  }, [ssylka, kodyQr]);
-  const svezhiy = kod?.ssylka === ssylka ? kod : null;
+  }, [tekst, kodyQr]);
+  return kod?.tekst === tekst ? kod : null;
+}
+
+// ---------------------------------------------------------------- свой домен
+
+/** Что сказать об итоге проверки домена (ДМ1). */
+export function opisanieItogaDomena(it: ItogDomena, adres: string): { ton: "da" | "warn" | "danger"; tekst: string } {
+  switch (it.kod) {
+    case "sovpadaet": {
+      if (it.aaaa.length > 0) {
+        return { ton: "warn", tekst: `Домен ведёт на сервер, но у него есть адрес IPv6 ${it.aaaa.join(", ")}: Let's Encrypt идёт по нему первым. Убери запись AAAA или направь её на сервер` };
+      }
+      // Один из двух не ответил: запись подтвердил второй.
+      const neOtvetil = it.ne_otvetili.length > 0 && it.podtverdili.length > 0
+        ? ` по ответу ${it.podtverdili.join(" и ")}: ${it.ne_otvetili.join(" и ")} не ответил`
+        : "";
+      return { ton: "da", tekst: `Домен ведёт на сервер${neOtvetil}` };
+    }
+    case "ne_vezde": {
+      const kto = it.otstayut.length > 0 ? it.otstayut.join(" и ") : "Google или Cloudflare";
+      return { ton: "warn", tekst: `${kto} ещё не видит, что домен ведёт на сервер: запись расходится не сразу. Подожди несколько минут и проверь ещё раз` };
+    }
+    case "net_zapisi":
+      return { ton: "warn", tekst: "У домена пока нет A-записи. Свежая запись появляется не сразу, проверь через несколько минут" };
+    case "drugoy_adres":
+      return {
+        ton: "danger",
+        tekst: `Домен ведёт на ${it.adresa.join(", ")}, а сервер ${adres}: поправь A-запись. Если в записи адрес сервера, значит, для неё включены проксирование или CDN, выключи их`,
+      };
+    case "cloudflare":
+      return { ton: "danger", tekst: "Домен ведёт не прямо на сервер, а через прокси Cloudflare: нажми оранжевое облачко у A-записи, чтобы оно стало серым" };
+    case "net_svyazi":
+      // Причина (сбой соединения по-английски) уходит в журнал службы.
+      return { ton: "warn", tekst: "Не вышло спросить у Google и Cloudflare, куда ведёт домен: проверь интернет на этом компьютере и повтори" };
+  }
+}
+
+const CVET_ITOGA_DOMENA = { da: "text-fg-secondary", warn: "text-warn", danger: "text-danger" } as const;
+
+/** Поле своего домена с проверкой A-записи у Google и Cloudflare. Итог
+ *  показан, пока в поле тот же текст, для которого он пришёл. */
+function PoleDomena({ znachenie, naVvod, adres, cel, komanda, aktiven }: {
+  znachenie: string;
+  naVvod: (v: string) => void;
+  /** IP сервера, на который должна вести A-запись. */
+  adres: string;
+  /** Чей адрес сверять: запись по id или адрес из мастера. */
+  cel: { id: string } | { adres: string };
+  komanda: SvoyVps["komanda"];
+  aktiven: boolean;
+}) {
+  const [itog, zadatItog] = useState<{ dlya: string; it?: ItogDomena; otkaz?: string } | null>(null);
+  const [zhdyot, zadatZhdyot] = useState(false);
+  const vvod = znachenie.trim();
+  const proverit = async () => {
+    const dlya = vvod;
+    zadatZhdyot(true);
+    const r = await komanda("svoyVpsDomenProverit", { ...cel, domen: dlya });
+    zadatZhdyot(false);
+    if ("otkaz" in r) {
+      zadatItog({ dlya, otkaz: sPropisnoy(r.otkaz.tekst || tekstOtkaza[r.otkaz.kod]?.tekst || r.otkaz.kod) });
+      return;
+    }
+    const it = itogDomenaIz("telo" in r ? r.telo : undefined);
+    zadatItog(it ? { dlya, it } : { dlya, otkaz: "Служба ответила без итога проверки" });
+  };
+  const svezhiy = itog?.dlya === vvod ? itog : null;
+  const opis = svezhiy?.it ? opisanieItogaDomena(svezhiy.it, adres) : null;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex max-w-[420px] items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <PolePodpisannoe podpis="Домен">
+            <Pole testId="svoy-domen" znachenie={znachenie} naVvod={naVvod} placeholder="vpn.example.com" maxDlina={253} />
+          </PolePodpisannoe>
+        </div>
+        <Knopka rang="vtoraya" testId="svoy-domen-proverit" aktiven={aktiven && vvod !== ""} zhdyot={zhdyot} onClick={() => void proverit()}>Проверить</Knopka>
+      </div>
+      <p className="text-fg-muted text-xs">
+        В настройках домена заведи A-запись на {adres}. Запись должна вести прямо на сервер: если для неё включены проксирование, CDN или защита сайта, выключи их. В Cloudflare это оранжевое облачко рядом с записью, нажми его, чтобы оно стало серым
+      </p>
+      {opis && <p role="status" data-testid="svoy-domen-itog" className={`text-xs ${CVET_ITOGA_DOMENA[opis.ton]}`}>{opis.tekst}</p>}
+      {svezhiy?.otkaz && <p role="alert" className="text-danger text-xs">{svezhiy.otkaz}</p>}
+    </div>
+  );
+}
+
+/** Подключение своего домена из карточки сервера с простыми ключами. */
+function PodklyuchitDomen({ server, komanda, aktiven, aktivenDelo, naPodklyuchit, naOtmenu }: {
+  server: SvoyServer;
+  komanda: SvoyVps["komanda"];
+  /** Служба на связи: проверка домена на сервер не ходит. */
+  aktiven: boolean;
+  /** Можно начать дело над сервером. */
+  aktivenDelo: boolean;
+  naPodklyuchit: (domen: string) => void;
+  naOtmenu: () => void;
+}) {
+  const [domen, zadatDomen] = useState("");
+  return (
+    <div className="border-border flex flex-col gap-3 border-t px-4 py-4" data-testid="svoy-podklyuchit-domen">
+      <p className="text-fg-muted text-xs">
+        Телефон добавит одну подписку, ключи и правила Happ в ней обновятся сами. На домене встанет сайт-заглушка. Ключи сервера сменятся, прежние на телефонах перестанут подключаться. Пока выходит сертификат на домен, до трёх минут, hysteria2 не пускает
+      </p>
+      <PoleDomena znachenie={domen} naVvod={zadatDomen} adres={server.adres} cel={{ id: server.id }} komanda={komanda} aktiven={aktiven} />
+      <div className="flex flex-wrap items-center gap-3">
+        <Knopka rang="glavnaya" testId="svoy-domen-podklyuchit" aktiven={aktivenDelo && domen.trim() !== ""} onClick={() => naPodklyuchit(domen.trim())}>Подключить</Knopka>
+        <Knopka rang="tekst" onClick={naOtmenu}>Отмена</Knopka>
+      </div>
+    </div>
+  );
+}
+
+/** Подписка сервера своего домена (ПД1). Её добавляют в Happ один раз:
+ *  ключи и правила в ней телефон обновляет сам. QR открывает в Happ
+ *  добавление подписки. */
+function PodpiskaServera({ ssylka, skopirovat, kodyQr }: {
+  ssylka: string;
+  skopirovat: (tekst: string) => Promise<void>;
+  kodyQr: (tekst: string) => Promise<string[]>;
+}) {
+  const [vidny, zadatVidny] = useState(false);
+  const [itogKopii, zadatItogKopii] = useState<string | null>(null);
+  return (
+    <>
+      <Ryad nazvanie="Подписка для телефона" poyasnenie="Добавь её в Happ один раз: новые ключи и правила телефон заберёт сам">
+        <Knopka rang="tekst" testId="svoy-podpiska-qr" aria-expanded={vidny} onClick={() => zadatVidny(!vidny)}>
+          {vidny ? "Скрыть QR" : "QR для Happ"}
+        </Knopka>
+        <Knopka rang="vtoraya" testId="svoy-podpiska-kopirovat" onClick={() => {
+          skopirovat(ssylka).then(
+            () => zadatItogKopii("Ссылка подписки скопирована"),
+            (e: unknown) => zadatItogKopii(`Ссылка не скопирована: ${tekstOshibki(e)}`),
+          );
+        }}>Скопировать</Knopka>
+      </Ryad>
+      {itogKopii && <p role="status" className="text-fg-secondary px-4 pb-3 text-xs">{itogKopii}</p>}
+      {vidny && (
+        <div className="border-border border-t px-4 py-4">
+          <KodPodpiski ssylka={ssylka} kodyQr={kodyQr} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function KodPodpiski({ ssylka, kodyQr }: { ssylka: string; kodyQr: (tekst: string) => Promise<string[]> }) {
+  const kod = useKodyQr(`happ://add/${ssylka}`, kodyQr);
+  return (
+    <div className="flex flex-col gap-2" data-testid="svoy-podpiska">
+      <span className="text-fg-muted text-xs">Отсканируй камерой телефона или в Happ. Ссылку не показывай чужим: по ней открываются все ключи сервера</span>
+      {!kod && <span role="status" className="text-fg-muted text-xs">рисую код</span>}
+      {kod?.kody && <KodyQr kody={kod.kody} imya="подписки" shirina="max-w-[360px]" testId="svoy-podpiska-kod" />}
+      {kod?.otkaz && <p role="status" className="text-warn text-xs">{kod.otkaz}</p>}
+      <span className="text-fg-secondary break-all text-xs" data-testid="svoy-podpiska-ssylka">{ssylka}</span>
+    </div>
+  );
+}
+
+/** QR правил Happ (РФ1): ставит профиль «российские сайты напрямую» или,
+ *  когда человек их выключил, под тем же именем профиль, где всё идёт через
+ *  VPN (не happ://routing/off: тот выключил бы и правила чужих подписок). */
+function KodPravilHapp({ cherezVpn, happ, kodyQr }: { cherezVpn: boolean; happ: PravilaHapp; kodyQr: (tekst: string) => Promise<string[]> }) {
+  const svezhiy = useKodyQr(cherezVpn ? happ.vyklyuchit : happ.vklyuchit, kodyQr);
   return (
     <div className="flex flex-col gap-2" data-testid="svoy-pravila-happ">
       <span className="text-foreground text-sm font-medium">{cherezVpn ? "Всё через VPN в Happ" : "Правила для Happ"}</span>
@@ -1556,9 +1796,10 @@ function KodPravilHapp({ cherezVpn, happ, kodyQr }: { cherezVpn: boolean; happ: 
 }
 
 /** Строка «Российские сайты напрямую» (РФ1) в карточке и в конце мастера.
- *  Сервер выбор не трогает: в простом режиме правила едут на телефон
+ *  В простом режиме сервер выбор не трогает: правила едут на телефон
  *  отдельным QR, и меняется только то, какой код показан. Код свёрнут: его
- *  сканируют после ключей. */
+ *  сканируют после ключей. На своём домене правила едут подпиской, и
+ *  переключатель пересобирает её на сервере. */
 function RyadRossii({ s, happ, aktiven, zhdyot, kodyQr, naSmenu }: {
   s: SvoyServer;
   happ: PravilaHapp;
@@ -1568,22 +1809,27 @@ function RyadRossii({ s, happ, aktiven, zhdyot, kodyQr, naSmenu }: {
   naSmenu: () => void;
 }) {
   const [vidny, zadatVidny] = useState(false);
+  const podpiskoy = s.domen !== undefined;
+  const poyasnenie = podpiskoy
+    ? (s.rf_cherez_vpn
+      ? "Выключено: в подписке правила, где всё идёт через VPN. Happ заберёт их при обновлении подписки"
+      : "Включено: правила в подписке пускают их мимо VPN, а YouTube и Telegram через VPN")
+    : (s.rf_cherez_vpn
+      ? "Выключено: код для Happ заменяет правила, и на телефоне всё идёт через VPN"
+      : "Включено: правила для Happ пускают их на телефоне мимо VPN, а YouTube и Telegram через VPN");
   return (
     <>
-      <Ryad
-        nazvanie="Российские сайты напрямую"
-        poyasnenie={s.rf_cherez_vpn
-          ? "Выключено: код для Happ заменяет правила, и на телефоне всё идёт через VPN"
-          : "Включено: правила для Happ пускают их на телефоне мимо VPN, а YouTube и Telegram через VPN"}
-      >
-        <Knopka rang="tekst" testId="svoy-pravila-qr" aria-expanded={vidny} onClick={() => zadatVidny(!vidny)}>
-          {vidny ? "Скрыть QR" : "QR для Happ"}
-        </Knopka>
+      <Ryad nazvanie="Российские сайты напрямую" poyasnenie={poyasnenie}>
+        {!podpiskoy && (
+          <Knopka rang="tekst" testId="svoy-pravila-qr" aria-expanded={vidny} onClick={() => zadatVidny(!vidny)}>
+            {vidny ? "Скрыть QR" : "QR для Happ"}
+          </Knopka>
+        )}
         <Knopka rang="vtoraya" aktiven={aktiven} zhdyot={zhdyot} testId="svoy-obhod-rf" onClick={naSmenu}>
           {s.rf_cherez_vpn ? "Включить" : "Выключить"}
         </Knopka>
       </Ryad>
-      {vidny && (
+      {vidny && !podpiskoy && (
         <div className="border-border border-t px-4 py-4">
           <KodPravilHapp cherezVpn={s.rf_cherez_vpn} happ={happ} kodyQr={kodyQr} />
         </div>
@@ -1592,7 +1838,7 @@ function RyadRossii({ s, happ, aktiven, zhdyot, kodyQr, naSmenu }: {
   );
 }
 
-type Vopros = { vid: "snesti" | "zabyt"; server: SvoyServer };
+type Vopros = { vid: "snesti" | "zabyt" | "ssylka" | "prostye"; server: SvoyServer };
 
 /** Вход с адресом, портом и пользователем из записи о сервере. */
 function formaIzZapisi(s: SvoyServer): Forma {
@@ -1602,7 +1848,10 @@ function formaIzZapisi(s: SvoyServer): Forma {
 /** Мастер поверх записи о сервере. Пароль выключен этим или другим
  *  компьютером: войти можно только ключом. */
 function formaPostavitZanovo(s: SvoyServer): Forma {
-  return { ...formaIzZapisi(s), poverhZapisi: s.adres, imya: s.imya, sposob: s.parol_vyklyuchen ? "klyuch" : "parol" };
+  return {
+    ...formaIzZapisi(s), poverhZapisi: s.adres, imya: s.imya, sposob: s.parol_vyklyuchen ? "klyuch" : "parol",
+    sDomenom: s.domen !== undefined, domen: s.domen ?? "",
+  };
 }
 
 function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, naDelo, naVzyat, naPostavitZanovo, naVopros, naSkryt, naOtchyot, komanda, skopirovat, kodyQr }: {
@@ -1628,6 +1877,7 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
   const [zadayu, zadatZadayu] = useState(false);
   const [imenuyu, zadatImenuyu] = useState(false);
   const [menyayuMasku, zadatMenyayuMasku] = useState(false);
+  const [podklyuchayuDomen, zadatPodklyuchayuDomen] = useState(false);
   const [vygruzka, zadatVygruzku] = useState<VygruzkaOtvet | null>(null);
   const [otkazVygruzki, zadatOtkazVygruzki] = useState<string | null>(null);
   const [zhdyotVygruzka, zadatZhdyotVygruzka] = useState(false);
@@ -1654,12 +1904,23 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
   // «Повторить» повторяет упавшее дело. Снос и снятие ключа снова через
   // вопрос. Подбор повторяется сам по сети: порты, заданные руками, снимок
   // хода не хранит, их задают заново через «Задать порты».
+  // Дело своего домена повторяется только по снимку, где названо, что
+  // просили: пустой домен значит возврат к простым ключам, без вопроса его
+  // не начать.
+  const prosilDomen = delo?.vid === "domen" ? delo.domen : undefined;
   const povtor: Partial<Record<string, () => void>> = {
     proverka: () => naDelo("svoyVpsProverit", { id: s.id }),
     podbor: () => naDelo("svoyVpsPodobratPorty", { id: s.id }),
     parol: () => naDelo("svoyVpsParol", { id: s.id, vyklyuchit: !s.parol_vyklyuchen }),
     obnovlenie: () => naDelo("svoyVpsObnovit", { id: s.id }),
     maska: () => naDelo("svoyVpsMaska", { id: s.id, svoya: delo?.maska?.svoya, brend_soglasen: delo?.maska?.brend_soglasen }),
+    ...(prosilDomen ? { domen: () => naDelo("svoyVpsDomen", { id: s.id, domen: prosilDomen.domen ?? "" }) } : {}),
+    podpiska: () => {
+      const d = delo?.domen;
+      if (d?.zachem === "rf" && d.vkl !== undefined) naDelo("svoyVpsObhodRf", { id: s.id, vkl: d.vkl });
+      else if (d?.zachem === "imya") naDelo("svoyVpsPereimenovat", { id: s.id, imya: s.imya });
+      else naDelo("svoyVpsPodpiska", { id: s.id });
+    },
     snos: () => naVopros({ vid: "snesti", server: s }),
     otpusk: () => naVopros({ vid: "zabyt", server: s }),
     vzyat: () => naVzyat(s),
@@ -1678,8 +1939,10 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
     : svoyaIzvestnaya
       ? <Knopka rang="vtoraya" testId="svoy-maska-vsyo-ravno" aktiven={mozhno} onClick={() => naDelo("svoyVpsMaska", { id: s.id, svoya: svoyaIzvestnaya, brend_soglasen: true })}>Всё равно поставить</Knopka>
       : undefined;
-  // Маска сменилась: старый ключ reality на телефоне мёртв, новый тут же.
-  const idsMaski = delo?.vid === "maska" && delo.faza === "gotovo" ? delo.ustanovlen?.ids ?? [] : [];
+  // Маска сменилась (и при возврате к простым ключам): старый ключ reality
+  // на телефоне мёртв, новый тут же.
+  const smenaMaski = delo?.vid === "maska" || (delo?.vid === "domen" && delo.domen !== undefined && !delo.domen.domen);
+  const idsMaski = smenaMaski && delo?.faza === "gotovo" ? delo.ustanovlen?.ids ?? [] : [];
   const knopkiItoga = idsMaski.length > 0
     ? (
       <Knopka rang="vtoraya" testId="svoy-klyuchi-telefona-maska" aktiven={aktiven} zhdyot={zhdyotVygruzka} onClick={() => void (async () => {
@@ -1715,6 +1978,12 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
             { podpis: "Переименовать", aktiven: mozhnoImya, naZhmyh: () => zadatImenuyu(true) },
             { podpis: "Подобрать порты заново", aktiven: mozhno, naZhmyh: () => naDelo("svoyVpsPodobratPorty", { id: s.id }) },
             { podpis: "Задать порты", aktiven: mozhno, naZhmyh: () => zadatZadayu(true) },
+            ...(!upravlyaem ? [] : s.domen ? [
+              { podpis: "Сменить ссылку подписки", aktiven: mozhno, naZhmyh: () => naVopros({ vid: "ssylka", server: s }) },
+              { podpis: "Вернуться к простым ключам", aktiven: mozhno, naZhmyh: () => naVopros({ vid: "prostye", server: s }) },
+            ] : [
+              { podpis: "Подключить свой домен", aktiven: mozhno, naZhmyh: () => zadatPodklyuchayuDomen(true) },
+            ]),
             { podpis: "Скопировать отчёт", naZhmyh: () => naOtchyot(s) },
             { podpis: "Снести с сервера", opasnyy: true, aktiven: mozhno, naZhmyh: () => naVopros({ vid: "snesti", server: s }) },
             { podpis: "Забыть сервер", opasnyy: true, aktiven: aktiven && !zanyato, naZhmyh: () => naVopros({ vid: "zabyt", server: s }) },
@@ -1815,6 +2084,19 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
           naOtmenu={() => zadatImenuyu(false)}
         />
       )}
+      {podklyuchayuDomen && !s.domen && (
+        <PodklyuchitDomen
+          server={s}
+          komanda={komanda}
+          aktiven={aktiven}
+          aktivenDelo={mozhno}
+          naPodklyuchit={(domen) => {
+            zadatPodklyuchayuDomen(false);
+            naDelo("svoyVpsDomen", { id: s.id, domen });
+          }}
+          naOtmenu={() => zadatPodklyuchayuDomen(false)}
+        />
+      )}
       {zadayu && (
         <ZadatPorty
           server={s}
@@ -1831,7 +2113,12 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
           <Ryad nazvanie={<span className="flex items-baseline gap-2">reality<span className="text-fg-muted text-[13px] font-normal tabular-nums">TCP {s.reality}</span></span>}
             poyasnenie={sostoyanieKlyucha(s, p, "reality-tcp")} />
         )}
-        {s.reality !== undefined && s.maska !== "" && (
+        {s.domen && (
+          <Ryad nazvanie="Свой домен" poyasnenie="Маска reality и сайт-заглушка на нём">
+            <span className="text-fg-secondary break-all text-[13px]" data-testid="svoy-domen-servera">{s.domen}</span>
+          </Ryad>
+        )}
+        {s.reality !== undefined && s.maska !== "" && !s.domen && (
           <Ryad nazvanie="Маска" poyasnenie={opisanieMaski(s)}>
             <span className="text-fg-secondary break-all text-[13px]" data-testid="svoy-maska">{s.maska}</span>
             {upravlyaem && (
@@ -1844,15 +2131,18 @@ function KartochkaServera({ s, happ, trevogi, hody, skryty, aktiven, zanyato, na
           <Ryad nazvanie={<span className="flex items-baseline gap-2">hysteria2<span className="text-fg-muted text-[13px] font-normal tabular-nums">UDP {s.hy2}</span></span>}
             poyasnenie={sostoyanieKlyucha(s, p, "hy2")} />
         )}
+        {s.podpiska && <PodpiskaServera ssylka={s.podpiska} skopirovat={skopirovat} kodyQr={kodyQr} />}
         {happ && (
-          <RyadRossii s={s} happ={happ} aktiven={aktiven} zhdyot={false} kodyQr={kodyQr}
+          // На своём домене выбор пересобирает подписку на сервере: это дело.
+          <RyadRossii s={s} happ={happ} aktiven={s.domen ? mozhno : aktiven}
+            zhdyot={delo?.vid === "podpiska" && delo.domen?.zachem === "rf" && delo.faza === "idyot"} kodyQr={kodyQr}
             naSmenu={() => naDelo("svoyVpsObhodRf", { id: s.id, vkl: s.rf_cherez_vpn })} />
         )}
         <Ryad
           nazvanie="Сертификат"
           poyasnenie={s.prodlenie === "net"
             ? "Не выпущен: у хостера закрыты порты 80 и 443, поэтому hysteria2 не стоит"
-            : `Let's Encrypt на адрес сервера, продлевается сам через порт ${s.prodlenie ?? "80"}`}
+            : `Let's Encrypt на ${s.domen ?? "адрес сервера"}, продлевается сам через порт ${s.prodlenie ?? "80"}`}
         >
           {s.sert_do !== undefined && <span className="text-fg-secondary text-[13px] tabular-nums">до {data(s.sert_do)}</span>}
         </Ryad>
@@ -1985,7 +2275,31 @@ export function SvoyVpn(p: SvoyVpnProps) {
     zadatMaster({ shag: "dostup", cel: "postavit", forma: formaPostavitZanovo(s) });
   };
 
-  const voprosOkno = vopros && (
+  const voprosDomena = vopros && (vopros.vid === "ssylka" || vopros.vid === "prostye") && (
+    <OknoPodtverzhdeniya
+      testId="svoy-vopros"
+      zagolovok={vopros.vid === "ssylka" ? "Выдать новую ссылку подписки?" : `Вернуть сервер ${vopros.server.adres} к простым ключам?`}
+      naOtmenu={() => zadatVopros(null)}
+      otvety={(
+        <Knopka rang="opasnaya" testId="svoy-vopros-da" onClick={() => {
+          const s = vopros.server;
+          zadatVopros(null);
+          void (vopros.vid === "ssylka" ? naDelo("svoyVpsPodpiska", { id: s.id }) : naDelo("svoyVpsDomen", { id: s.id, domen: "" }));
+        }}>{vopros.vid === "ssylka" ? "Сменить ссылку" : "Вернуться"}</Knopka>
+      )}
+    >
+      {vopros.vid === "ssylka" ? (
+        <p>Прежняя ссылка перестанет отвечать, и на каждом телефоне подписку придётся добавить заново. Ключи сервера не меняются: телефоны, где подписка уже есть, работают, пока она не обновится</p>
+      ) : (
+        <>
+          <p>Подписка перестанет отвечать, сайт на домене погаснет, маска reality сменится на сайт из сети сервера. Ключи на телефонах придётся добавить заново по одному</p>
+          <p>Пока выходит сертификат на адрес сервера, hysteria2 не пускает</p>
+        </>
+      )}
+    </OknoPodtverzhdeniya>
+  );
+
+  const voprosOkno = voprosDomena || (vopros && (vopros.vid === "snesti" || vopros.vid === "zabyt") && (
     <OknoPodtverzhdeniya
       testId="svoy-vopros"
       zagolovok={vopros.vid === "snesti" ? `Снести VPN с сервера ${vopros.server.adres}?` : `Забыть сервер ${vopros.server.adres}?`}
@@ -2028,7 +2342,7 @@ export function SvoyVpn(p: SvoyVpnProps) {
         </>
       )}
     </OknoPodtverzhdeniya>
-  );
+  ));
 
   if (master) {
     return (
@@ -2184,6 +2498,7 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
       reality: portIzPolya(forma.portReality),
       hy2: portIzPolya(forma.portHy2),
       poverh: forma.poverhZapisi || undefined,
+      domen: forma.sDomenom ? forma.domen.trim() : undefined,
     });
     zadatZhdyom(null);
     if ("otkaz" in r) {
@@ -2223,8 +2538,10 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
             idyot={zhdyom !== null}
             aktiven={aktiven}
             imyaPoUmolch={imyaPoUmolchaniyu(servery ?? [], m.forma.poverhZapisi)}
+            komanda={komanda}
             naPustoy={(v) => zadatMaster({ ...m, pustoy: v })}
             naImya={(v) => zadatMaster({ ...m, forma: { ...m.forma, imya: v } })}
+            naDomen={(sDomenom, domen) => zadatMaster({ ...m, forma: { ...m.forma, sDomenom, domen } })}
             naNazad={() => zadatMaster({ shag: "dostup", cel: "postavit", forma: m.forma })}
             naOtmenu={() => void otmenit()}
             naPostavit={(o) => void postavit(m.forma, o, m.id)}
@@ -2268,7 +2585,7 @@ function MasterSvoegoVpn(p: SvoyVpnProps & {
               server={server}
               happ={svoy.happ}
               aktivenObhod={aktiven && zhdyom === null}
-              zhdyotObhod={zhdyom === "svoyVpsObhodRf"}
+              zhdyotObhod={zhdyom === "svoyVpsObhodRf" || hody.some((x) => x.faza === "idyot" && x.vid === "podpiska" && x.server === id)}
               naObhodRf={() => {
                 if (server) void p.naDelo("svoyVpsObhodRf", { id: server.id, vkl: server.rf_cherez_vpn });
               }}

@@ -1,0 +1,10 @@
+{
+  "name": "zaglushka-kot",
+  "private": true,
+  "type": "module",
+  "description": "Сборка танцующего кота для пакета zaglushka: node sobrat.mjs",
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "three": "0.187.0"
+  }
+}

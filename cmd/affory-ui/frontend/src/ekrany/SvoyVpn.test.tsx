@@ -2,11 +2,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { useCallback, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, opisanieMaski, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov, programmaBezMaski,
-  punktyOsmotra, sostoyanieKlyucha, strokaPerehvata, teloDostupa, zanyatyeDlyaReality,
+  SvoyVpn, chistyyAdres, etapyUstanovki, itogDela, opisanieItogaDomena, opisanieMaski, oshibkaAdresa, oshibkaPorta, otchyotDela, probyPortov,
+  programmaBezMaski, punktyOsmotra, sostoyanieKlyucha, strokaPerehvata, teloDostupa, zanyatyeDlyaReality,
 } from "./SvoyVpn";
 import {
-  PUSTAYA_FORMA, type HodVps, type ItogKomandy, type Master, type OsmotrVps, type PravilaHapp, type SvoyServer, type SvoyVps,
+  PUSTAYA_FORMA, type HodVps, type ItogDomena, type ItogKomandy, type Master, type OsmotrVps, type PravilaHapp, type SvoyServer, type SvoyVps,
 } from "../svoyVps";
 import { razobratSoobshchenie } from "../soobshchenieHostera";
 
@@ -1122,5 +1122,156 @@ describe("проверки полей и тексты", () => {
     expect(itogDela(hod({ vid: "parol", parol: { vyklyuchen: false, snaruzhi: "vyklyuchen_chuzhim", fayly: ["/etc/ssh/sshd_config.d/50-cloud-init.conf"] } }), undefined))
       .toMatchObject({ ton: "warn", tekst: expect.stringContaining("50-cloud-init.conf") });
     expect(itogDela(hod({ vid: "proverka", faza: "idyot" }), undefined)).toBeNull();
+  });
+});
+
+describe("свой домен", () => {
+  const forma = { ...PUSTAYA_FORMA, adres: "203.0.113.10", parol: "primer-parolya" };
+  const NA_DOMENE: Partial<SvoyServer> = {
+    domen: "kot.example.net", podpiska: "https://kot.example.net:2087/0123456789abcdef0123456789abcdef", maska: "kot.example.net", maska_istochnik: "domen",
+  };
+
+  it("мастер: свой домен проверяется и уходит в установку", async () => {
+    const s = stend({
+      master: { shag: "proverka", forma, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+      otvety: {
+        svoyVpsDomenProverit: (t) => ({ telo: { domen: t.domen, kod: "cloudflare", adresa: ["104.21.3.4"] } }),
+        svoyVpsUstanovit: () => ({ hod: hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "zagruzka" }) }),
+      },
+    });
+    expect(screen.queryByTestId("svoy-domen")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Свой домен" }));
+    // Без домена ставить нечего.
+    expect(screen.getByTestId("svoy-postavit-vpn")).toBeDisabled();
+    expect(screen.getByText(/A-запись на 203\.0\.113\.10/)).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("svoy-domen"), { target: { value: "kot.example.net" } });
+    fireEvent.click(screen.getByTestId("svoy-domen-proverit"));
+    await waitFor(() => expect(screen.getByTestId("svoy-domen-itog")).toHaveTextContent("через прокси Cloudflare"));
+    expect(s.vyzovy[0]).toEqual(["svoyVpsDomenProverit", { adres: "203.0.113.10", domen: "kot.example.net" }]);
+    // Поле сменилось: итог был про другое имя и прячется.
+    fireEvent.change(screen.getByTestId("svoy-domen"), { target: { value: "pes.example.net" } });
+    expect(screen.queryByTestId("svoy-domen-itog")).toBeNull();
+    fireEvent.click(screen.getByTestId("svoy-postavit-vpn"));
+    await waitFor(() => expect(s.imena()).toContain("svoyVpsUstanovit"));
+    expect(s.vyzovy.find(([i]) => i === "svoyVpsUstanovit")?.[1]).toMatchObject({ domen: "pes.example.net" });
+  });
+
+  it("мастер: «Просто ключи» домена в установку не шлют", async () => {
+    const s = stend({
+      master: { shag: "proverka", forma: { ...forma, sDomenom: false, domen: "kot.example.net" }, id: 10, pustoy: true },
+      hody: [hod({ id: 10, vid: "osmotr", osmotr: osmotr() })],
+      otvety: { svoyVpsUstanovit: () => ({ hod: hod({ id: 11, vid: "ustanovka", faza: "idyot", shag: "zagruzka" }) }) },
+    });
+    fireEvent.click(screen.getByTestId("svoy-postavit-vpn"));
+    await waitFor(() => expect(s.imena()).toEqual(["svoyVpsUstanovit"]));
+    expect(s.vyzovy[0][1].domen).toBeUndefined();
+  });
+
+  it("итоги проверки домена словами", () => {
+    const it = (kod: ItogDomena["kod"], dop: Partial<ItogDomena> = {}) =>
+      opisanieItogaDomena({ domen: "kot.example.net", kod, adresa: [], aaaa: [], otstayut: [], podtverdili: [], ne_otvetili: [], ...dop }, "203.0.113.10");
+    expect(it("sovpadaet", { podtverdili: ["Google", "Cloudflare"] })).toEqual({ ton: "da", tekst: "Домен ведёт на сервер" });
+    expect(it("sovpadaet", { podtverdili: ["Cloudflare"], ne_otvetili: ["Google"] })).toEqual({ ton: "da", tekst: "Домен ведёт на сервер по ответу Cloudflare: Google не ответил" });
+    expect(it("sovpadaet", { aaaa: ["2001:db8::1"] })).toMatchObject({ ton: "warn", tekst: expect.stringContaining("2001:db8::1") });
+    expect(it("drugoy_adres", { adresa: ["198.51.100.7"] })).toMatchObject({ ton: "danger", tekst: expect.stringContaining("198.51.100.7") });
+    expect(it("net_zapisi").tekst).toContain("через несколько минут");
+    expect(it("ne_vezde", { otstayut: ["Google"] })).toMatchObject({ ton: "warn", tekst: expect.stringMatching(/^Google ещё не видит/) });
+    expect(it("net_svyazi").tekst).not.toMatch(/DNS/);
+  });
+
+  it("карточка на домене: подписка с QR для Happ, маску не сменить", async () => {
+    const kodyQr = vi.fn(kodyQrSoSsylkoy);
+    const s = stend({ servery: [server(NA_DOMENE)], kodyQr });
+    expect(screen.getByTestId("svoy-domen-servera")).toHaveTextContent("kot.example.net");
+    expect(screen.queryByTestId("svoy-smenit-masku")).toBeNull();
+    expect(screen.queryByTestId("svoy-pravila-qr")).toBeNull();
+    fireEvent.click(screen.getByTestId("svoy-podpiska-qr"));
+    await waitFor(() => expect(screen.getByTestId("svoy-podpiska-kod")).toBeInTheDocument());
+    expect(kodyQr).toHaveBeenCalledWith(`happ://add/${NA_DOMENE.podpiska}`);
+    fireEvent.click(screen.getByTestId("svoy-podpiska-kopirovat"));
+    await waitFor(() => expect(s.skopirovat).toHaveBeenCalledWith(NA_DOMENE.podpiska));
+  });
+
+  it("карточка на домене: новая ссылка и возврат к простым ключам только после вопроса", async () => {
+    const s = stend({ servery: [server(NA_DOMENE)], otvety: { svoyVpsPodpiska: () => ({ hod: hod({ id: 20, vid: "podpiska", faza: "idyot", server: "svoy-1", domen: { zachem: "put" } }) }) } });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    expect(screen.queryByRole("menuitem", { name: "Подключить свой домен" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Сменить ссылку подписки" }));
+    expect(s.vyzovy).toEqual([]);
+    fireEvent.click(screen.getByTestId("svoy-vopros-da"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsPodpiska", { id: "svoy-1" }]]));
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Меняю ссылку подписки");
+
+    s.prishyol(hod({ id: 20, vid: "podpiska", faza: "gotovo", server: "svoy-1", domen: { zachem: "put" } }));
+    await waitFor(() => expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Ссылка подписки сменилась"));
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Вернуться к простым ключам" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("hysteria2 не пускает");
+    fireEvent.click(screen.getByTestId("svoy-vopros-da"));
+    await waitFor(() => expect(s.vyzovy[1]).toEqual(["svoyVpsDomen", { id: "svoy-1", domen: "" }]));
+  });
+
+  it("карточка с простыми ключами подключает домен", async () => {
+    const s = stend({
+      servery: [server()],
+      otvety: {
+        svoyVpsDomenProverit: (t) => ({ telo: { domen: t.domen, kod: "sovpadaet", adresa: ["203.0.113.40"] } }),
+        svoyVpsDomen: () => ({ hod: hod({ id: 30, vid: "domen", faza: "idyot", shag: "sertifikat", server: "svoy-1", domen: { domen: "kot.example.net" } }) }),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Действия с сервером" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Подключить свой домен" }));
+    const blok = screen.getByTestId("svoy-podklyuchit-domen");
+    expect(within(blok).getByTestId("svoy-domen-podklyuchit")).toBeDisabled();
+    fireEvent.change(within(blok).getByTestId("svoy-domen"), { target: { value: " kot.example.net " } });
+    fireEvent.click(within(blok).getByTestId("svoy-domen-proverit"));
+    await waitFor(() => expect(within(blok).getByTestId("svoy-domen-itog")).toHaveTextContent("Домен ведёт на сервер"));
+    // Карточка сверяет с записью по id, а не с присланным адресом.
+    expect(s.vyzovy[0]).toEqual(["svoyVpsDomenProverit", { id: "svoy-1", domen: "kot.example.net" }]);
+    fireEvent.click(within(blok).getByTestId("svoy-domen-podklyuchit"));
+    await waitFor(() => expect(s.vyzovy[1]).toEqual(["svoyVpsDomen", { id: "svoy-1", domen: "kot.example.net" }]));
+    expect(screen.queryByTestId("svoy-podklyuchit-domen")).toBeNull();
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Перевожу сервер на домен kot.example.net");
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("выпускаю сертификат на kot.example.net");
+  });
+
+  it("российские сайты на домене: переключатель ждёт дела подписки", async () => {
+    const s = stend({
+      servery: [server(NA_DOMENE)],
+      otvety: { svoyVpsObhodRf: () => ({ telo: { id: "svoy-1", vkl: false, hod: {} } }) },
+    });
+    expect(screen.getByText(/правила в подписке/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("svoy-obhod-rf"));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsObhodRf", { id: "svoy-1", vkl: false }]]));
+    s.prishyol(hod({ id: 40, vid: "podpiska", faza: "idyot", server: "svoy-1", domen: { zachem: "rf", vkl: false } }));
+    await waitFor(() => expect(screen.getByTestId("svoy-obhod-rf")).toBeDisabled());
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("Меняю правила в подписке");
+  });
+
+  it("упавшее дело домена повторяет просьбу, а без неё не повторяется", async () => {
+    const otkaz = { kod: "vps-ports-failed", tekst: "сеть пропала" };
+    const s = stend({
+      servery: [server()],
+      hody: [hod({ id: 50, vid: "domen", faza: "oshibka", server: "svoy-1", domen: { domen: "kot.example.net" }, otkaz })],
+    });
+    fireEvent.click(within(screen.getByTestId("svoy-delo")).getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsDomen", { id: "svoy-1", domen: "kot.example.net" }]]));
+    cleanup();
+
+    // Снимок без просьбы: пустой домен вернул бы сервер к простым ключам
+    // без вопроса.
+    stend({ servery: [server(NA_DOMENE)], hody: [hod({ id: 51, vid: "domen", faza: "oshibka", server: "svoy-1", otkaz })] });
+    expect(screen.getByTestId("svoy-delo")).toHaveTextContent("не вышло");
+    expect(within(screen.getByTestId("svoy-delo")).queryByRole("button", { name: "Повторить" })).toBeNull();
+  });
+
+  it("итоги дел своего домена", () => {
+    expect(itogDela(hod({ vid: "domen", domen: { domen: "kot.example.net" } }), undefined)?.zagolovok).toBe("Сервер работает на домене kot.example.net");
+    expect(itogDela(hod({ vid: "domen", domen: {} }), undefined)?.zagolovok).toBe("Сервер снова выдаёт простые ключи");
+    expect(itogDela(hod({ vid: "podpiska", domen: { zachem: "rf", vkl: true } }), undefined)?.zagolovok).toBe("Российские сайты в подписке идут напрямую");
+    expect(itogDela(hod({ vid: "podpiska", domen: { zachem: "imya" } }), undefined)?.zagolovok).toBe("Название в подписке сменилось");
+    const e = etapyUstanovki(hod({ vid: "ustanovka", faza: "idyot", shag: "programma", domen: { domen: "kot.example.net" } }));
+    expect(e.find((x) => x.id === "sertifikat")?.podrobno).toBe("на kot.example.net");
   });
 });

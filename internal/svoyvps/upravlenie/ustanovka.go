@@ -66,6 +66,9 @@ type Hod struct {
 	// Otsev: кандидат подбора, выпавший до проверки.
 	Otsev *porty.Otsev
 	Krug  *blok.Krug
+	// BezDomena: установка на свой домен пошла с простыми ключами, сертификат
+	// на домен не вышел.
+	BezDomena bool
 }
 
 // Ustanovka это всё, что нужно установке.
@@ -84,7 +87,10 @@ type Ustanovka struct {
 	Programma   io.ReadSeeker
 	// Maski это список масок reality для проб; пусто - маску подбирает
 	// программа сервера у соседей.
-	Maski   []string
+	Maski []string
+	// Sayt: ставить сразу в режиме своего домена; маска тогда сам домен, а
+	// без сертификата на домен установка не идёт.
+	Sayt    *konfig.Sayt
 	Ruchnye porty.Ruchnye
 	Opcii   konfig.Opcii
 	// Proverka: адаптер, цели. Vyhody и Hod ставит установка.
@@ -116,6 +122,16 @@ const (
 	// PortyNeOtkryty: окончательный пакет принят, а правила ufw к его портам
 	// не приведены. Лечится подбором портов заново.
 	PortyNeOtkryty VidPreduprezhdeniya = "porty-ne-otkryty"
+	// DomenNeVyshel: установка шла на свой домен (Domen), а сертификат на
+	// него не вышел. Сервер поставлен с простыми ключами, Otkaz говорит,
+	// почему Let's Encrypt отказал.
+	DomenNeVyshel VidPreduprezhdeniya = "domen-ne-vyshel"
+	// SaytNeOtvetil: пакет с сайтом своего домена на сервере, а сайт не
+	// ответил. Otkaz говорит почему.
+	SaytNeOtvetil VidPreduprezhdeniya = "sayt-ne-otvetil"
+	// SaytNeProveren: пакет с сайтом на сервере, а спросить программу
+	// сервера о сайте не вышло. Otkaz это отказ вопроса.
+	SaytNeProveren VidPreduprezhdeniya = "sayt-ne-proveren"
 )
 
 // Preduprezhdenie это одно такое «не так».
@@ -132,6 +148,8 @@ type Preduprezhdenie struct {
 	Kandidaty []int
 	// Proba у NeVezyot: чем кончилась проверка ключа.
 	Proba proverka.Vid
+	// Domen у DomenNeVyshel: на что не вышел сертификат.
+	Domen string
 }
 
 // Itog это поставленный сервер.
@@ -246,48 +264,80 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	itog.Versiya = nomerVersii(ust.Versiya)
 
 	hod(Hod{Shag: ShagMaska})
+	sayt := u.Sayt
 	var mk Maska
-	if len(u.Maski) > 0 {
-		mk.Imya, err = vybratMasku(ctx, s, u.Maski)
-	} else {
-		mk, err = podobratMasku(ctx, s, adres, "")
-		// Программа сервера ставится этой же сборкой и подбор умеет; старая
-		// бывает только у сборки с прежней программой внутри.
-		if errors.Is(err, ErrStarayaProgramma) {
-			mk.Imya, err = vybratMasku(ctx, s, Maski)
-			mk.Istochnik = MaskaBrend
-		}
-	}
-	if err != nil {
+	if sayt != nil {
+		mk = Maska{Imya: sayt.Domen, Istochnik: MaskaDomen}
+	} else if mk, err = prostayaMaska(ctx, s, adres, u.Maski); err != nil {
 		return Itog{}, err
 	}
-	maska := mk.Imya
-	itog.MaskaIstochnik = mk.Istochnik
 
 	hod(Hod{Shag: ShagSertifikat})
-	paketSerta, err := konfig.PaketSerta(adres.String(), u.Opcii)
+	pr, otkazSerta, err := sertNaUstanovke(ctx, s, adres, sayt, u.Opcii, &itog.Sert)
 	if err != nil {
 		return Itog{}, err
 	}
-	pr, otkazSerta, err := vypustitSert(ctx, s, adres, paketSerta, &itog.Sert)
-	if err != nil {
-		return Itog{}, err
+	if pr == porty.BezSerta && sayt != nil {
+		// Без сертификата на домен сайту нечем ответить, а без сайта reality
+		// не пускает и своих. Сервер встаёт с простыми ключами, а домен
+		// подключается из карточки, когда его запись починят: так машина,
+		// поставленная заново поверх рабочей, не остаётся вовсе без VPN.
+		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: DomenNeVyshel, Domen: sayt.Domen, Otkaz: otkazSerta})
+		sayt = nil
+		hod(Hod{Shag: ShagSertifikat, BezDomena: true})
+		if mk, err = prostayaMaska(ctx, s, adres, u.Maski); err != nil {
+			return Itog{}, err
+		}
+		if pr, otkazSerta, err = sertNaUstanovke(ctx, s, adres, nil, u.Opcii, &itog.Sert); err != nil {
+			return Itog{}, err
+		}
 	}
-	itog.Prodlenie = pr
+	itog.Prodlenie, itog.MaskaIstochnik = pr, mk.Istochnik
 	if pr == porty.BezSerta {
 		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: NetSerta, Otkaz: otkazSerta})
 	}
 
-	sek, err := konfig.NovyeSekrety(maska)
+	sek, err := konfig.NovyeSekrety(mk.Imya)
 	if err != nil {
 		return Itog{}, err
 	}
 	pp := podborPortov{Adres: adres, Imya: u.Imya, PortSsh: u.Vhod.Port, Ruchnye: u.Ruchnye, Opcii: u.Opcii,
-		Proverka: u.Proverka, Zapusk: u.Zapusk, Pryamo: u.Pryamo, Hod: hod, Klyuchi: u.Klyuchi}
+		Proverka: u.Proverka, Zapusk: u.Zapusk, Pryamo: u.Pryamo, Hod: hod, Klyuchi: u.Klyuchi, Sayt: sayt}
 	if err := podobratIPostavit(ctx, s, o, sek, pr, pp, &itog); err != nil {
 		return Itog{}, err
 	}
 	return itog, nil
+}
+
+// prostayaMaska это маска простого режима при установке: из списка, если он
+// задан, иначе у соседей сервера.
+func prostayaMaska(ctx context.Context, s server.Mashina, adres netip.Addr, maski []string) (Maska, error) {
+	if len(maski) > 0 {
+		imya, err := vybratMasku(ctx, s, maski)
+		return Maska{Imya: imya}, err
+	}
+	mk, err := podobratMasku(ctx, s, adres, "")
+	// Программа сервера ставится этой же сборкой и подбор умеет; старая
+	// бывает только у сборки с прежней программой внутри.
+	if errors.Is(err, ErrStarayaProgramma) {
+		mk.Imya, err = vybratMasku(ctx, s, Maski)
+		mk.Istochnik = MaskaBrend
+	}
+	return mk, err
+}
+
+// sertNaUstanovke выпускает сертификат пакетом «только сертификат»: на домен
+// сайта или, без него, на адрес.
+func sertNaUstanovke(ctx context.Context, s server.Mashina, adres netip.Addr, sayt *konfig.Sayt, o konfig.Opcii, sert **server.SertUzla) (porty.Prodlenie, string, error) {
+	domen := ""
+	if sayt != nil {
+		domen = sayt.Domen
+	}
+	paket, err := konfig.PaketSerta(adres.String(), domen, o)
+	if err != nil {
+		return 0, "", err
+	}
+	return vypustitSert(ctx, s, adres, domen, paket, sert)
 }
 
 // podborPortov это то, что нужно подбору портов и окончательному пакету:
@@ -314,6 +364,9 @@ type podborPortov struct {
 	// останавливает дело так же, как отказ записи после него. nil - итог
 	// только в конце.
 	Klyuchi func(Itog) error
+	// Sayt это режим своего домена: он едет и в пробном пакете, потому что
+	// reality в нём ведёт на свой сайт.
+	Sayt *konfig.Sayt
 }
 
 // podobratIPostavit это шаги 2-6 §3.3 и проверка ключей: кандидаты по
@@ -348,7 +401,7 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 		}
 		*vid.zapasnoy = vid.rabochiy
 	}
-	v := konfig.Vhody{Imya: p.Imya, Adres: p.Adres.String(), Reality: spisok.Reality, Hy2: spisok.Hy2}
+	v := konfig.Vhody{Imya: p.Imya, Adres: p.Adres.String(), Reality: spisok.Reality, Hy2: spisok.Hy2, Sayt: p.Sayt}
 	if v, err = primenitProbu(ctx, s, sek, v, p.Opcii, hod); err != nil {
 		return err
 	}
@@ -362,7 +415,7 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 
 	// Не прошёл ни один кандидат вида: ставится рабочий порт, а без него
 	// первый свободный, и почему не прошёл, скажет детектор (§3.3, шаг 6).
-	final := konfig.Vhody{Imya: p.Imya, Adres: v.Adres}
+	final := konfig.Vhody{Imya: p.Imya, Adres: v.Adres, Sayt: p.Sayt}
 	var neProshli []string
 	for _, vid := range []struct {
 		transport string
@@ -411,6 +464,13 @@ func podobratIPostavit(ctx context.Context, s server.Mashina, o *server.Osmotr, 
 	hod(Hod{Shag: ShagPorty})
 	if itog.Porty, err = otkrytPorty(ctx, s, final.Reality, final.Hy2); err != nil {
 		itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, Preduprezhdenie{Vid: PortyNeOtkryty, Otkaz: err.Error()})
+	}
+	// Сайт своего домена поднимается с пакетом. Молчит он - не откроется и
+	// reality, и без этой строки человек искал бы причину в сети.
+	if p.Sayt != nil {
+		if pr := preduprezhdenieSayta(ctx, s, p.Sayt.Domen); pr != nil {
+			itog.Preduprezhdeniya = append(itog.Preduprezhdeniya, *pr)
+		}
 	}
 	itog.NeProshli = slices.Clone(neProshli)
 	if p.Klyuchi != nil {
@@ -500,13 +560,14 @@ func nashaOtmetka(s *server.Sostav, klyuch gossh.PublicKey) bool {
 	return s != nil && klyuch != nil && slices.Contains(s.Klyuchi, base64.StdEncoding.EncodeToString(klyuch.Marshal()))
 }
 
-// vypustitSert ставит пакет с выпуском сертификата на адрес и ждёт выпуска
-// (§3.8, шаг 7): при установке это пакет «только сертификат», при подборе
-// заново пробный с прежними входами. Сертификат уже есть (продолжение своей
-// установки, копия) - он и годится. Попытка программы сервера идёт обоими
-// путями проверки, поэтому её отказ значит, что закрыты оба: hy2 тогда не
-// ставится, а otkaz называет причину.
-func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, paket []byte, sert **server.SertUzla) (pr porty.Prodlenie, otkaz string, err error) {
+// vypustitSert ставит пакет с выпуском сертификата на адрес (или на домен,
+// если он не пуст) и ждёт выпуска (§3.8, шаг 7): при установке это пакет
+// «только сертификат», при подборе заново пробный с прежними входами, при
+// переходе в режим домена пакет прежних входов. Сертификат уже есть
+// (продолжение своей установки, копия) - он и годится. Попытка программы
+// сервера идёт обоими путями проверки, поэтому её отказ значит, что закрыты
+// оба: hy2 тогда не ставится, а otkaz называет причину.
+func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, domen string, paket []byte, sert **server.SertUzla) (pr porty.Prodlenie, otkaz string, err error) {
 	do, err := sostoyanie(ctx, m)
 	if err != nil {
 		return 0, "", err
@@ -532,7 +593,7 @@ func vypustitSert(ctx context.Context, m server.Mashina, adres netip.Addr, paket
 		if err != nil {
 			return 0, "", err
 		}
-		if c := st.Sert; c != nil && c.IP == adres.String() {
+		if c := st.Sert; c != nil && c.IP == adres.String() && c.Domen == domen {
 			*sert = c
 			videliPopytku = videliPopytku || c.Idyot
 			switch {

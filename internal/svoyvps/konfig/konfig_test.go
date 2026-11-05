@@ -1,6 +1,7 @@
 package konfig
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -97,11 +98,13 @@ type razobrannyy struct {
 	SertIP    *Sert `json:"sert_ip"`
 	SertIPSam *struct {
 		IP      string `json:"ip"`
+		Domen   string `json:"domen"`
 		Staging bool   `json:"staging"`
 	} `json:"sert_ip_sam"`
 	Proba *struct {
 		Srok int `json:"srok"`
 	} `json:"proba"`
+	Sayt *saytPaketa `json:"sayt"`
 }
 
 func razobrat(t *testing.T, b []byte) razobrannyy {
@@ -174,7 +177,7 @@ func TestPaketBezHy2(t *testing.T) {
 // прошлой установки, если она есть.
 func TestPaketSerta(t *testing.T) {
 	kopiya := &Sert{Cert: "C", Klyuch: "K"}
-	b, err := PaketSerta("::ffff:203.0.113.10", Opcii{Staging: true, Kopiya: kopiya})
+	b, err := PaketSerta("::ffff:203.0.113.10", "", Opcii{Staging: true, Kopiya: kopiya})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +193,7 @@ func TestPaketSerta(t *testing.T) {
 		adres string
 		o     Opcii
 	}{{"10.0.0.1", Opcii{}}, {"203.0.113.10%eth0", Opcii{}}, {"сервер", Opcii{}}, {"203.0.113.10", Opcii{Proba: 600}}} {
-		if _, err := PaketSerta(c.adres, c.o); !errors.Is(err, errNegodno) {
+		if _, err := PaketSerta(c.adres, "", c.o); !errors.Is(err, errNegodno) {
 			t.Errorf("%q %+v принят: %v", c.adres, c.o, err)
 		}
 	}
@@ -378,6 +381,142 @@ func TestIzPaketa(t *testing.T) {
 	}
 }
 
+// Режим домена: reality ведёт на свой сайт на петле, имя в приветствии и
+// сертификат hy2 это домен, сертификат выпускается на домен, а сайт везёт
+// подписку с ключами и правилами Happ.
+func TestPaketRezhimaDomena(t *testing.T) {
+	sayt, err := NovyySayt("kot.example.net", "happ://routing/onadd/abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NovyeSekrety(sayt.Domen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := Vhody{Imya: "Мой сервер", Adres: "203.0.113.10", Reality: []int{8443}, Hy2: []int{443}, Sayt: sayt}
+	b, err := Paket(s, v, Opcii{Staging: true, Kopiya: &Sert{Cert: "C", Klyuch: "K"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := razobrat(t, b)
+	reality, hy2 := p.Yadro.Inbounds[0], p.Yadro.Inbounds[1]
+	if reality.TLS.ServerName != "kot.example.net" || reality.TLS.Reality.Handshake.Server != "127.0.0.1" ||
+		reality.TLS.Reality.Handshake.Port != PortSayta {
+		t.Fatalf("reality не на свой сайт: %+v", reality.TLS)
+	}
+	if hy2.TLS.ServerName != "kot.example.net" || hy2.Masquerade.URL != "https://kot.example.net:8443" {
+		t.Fatalf("hy2 в режиме домена: %+v %+v", hy2.TLS, hy2.Masquerade)
+	}
+	if p.SertIPSam == nil || p.SertIPSam.Domen != "kot.example.net" || p.SertIPSam.IP != "203.0.113.10" || p.SertIP != nil {
+		t.Fatalf("выпуск в режиме домена: %+v, копия %v", p.SertIPSam, p.SertIP)
+	}
+	if p.Sayt == nil || p.Sayt.Domen != "kot.example.net" || p.Sayt.Port != 8443 || p.Sayt.Slushat != "127.0.0.1:10443" ||
+		p.Sayt.Zerno != sayt.Zerno || p.Sayt.Podpiska.Put != sayt.Put {
+		t.Fatalf("сайт: %+v", p.Sayt)
+	}
+	zag := p.Sayt.Podpiska.Zagolovki
+	if zag["routing"] != "happ://routing/onadd/abc" || zag["profile-update-interval"] != "12" ||
+		zag["profile-title"] != "base64:0JzQvtC5INGB0LXRgNCy0LXRgA==" {
+		t.Fatalf("заголовки подписки: %v", zag)
+	}
+	telo, err := base64.StdEncoding.DecodeString(p.Sayt.Podpiska.Telo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	klyuchi, err := Klyuchi(s, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(telo) != klyuchi[0].Ssylka+"\n"+klyuchi[1].Ssylka {
+		t.Fatalf("тело подписки не ключи:\n%s", telo)
+	}
+	if klyuchi[0].Server.Sni != "kot.example.net" || klyuchi[1].Server.Sni != "kot.example.net" || klyuchi[1].Server.Host != "203.0.113.10" {
+		t.Fatalf("ключи режима домена: %+v / %+v", klyuchi[0].Server, klyuchi[1].Server)
+	}
+	if u := v.SsylkaPodpiski(); u != "https://kot.example.net:8443/"+sayt.Put {
+		t.Fatalf("ссылка подписки %q", u)
+	}
+	v.Reality = []int{443}
+	if u := v.SsylkaPodpiski(); u != "https://kot.example.net/"+sayt.Put {
+		t.Fatalf("ссылка подписки на 443 %q", u)
+	}
+
+	// Круг пакет - секреты - пакет не теряет режим домена.
+	s2, v2, err := IzPaketa(b, v.Adres, v.Imya)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v2.Sayt == nil || *v2.Sayt != *sayt || s2.Maska != sayt.Domen {
+		t.Fatalf("после круга сайт %+v", v2.Sayt)
+	}
+
+	// Маска обязана быть доменом, порт сайта и 80 не для reality, без
+	// reality режима домена нет.
+	plohie := map[string]func() (Sekrety, Vhody){
+		"маска не домен": func() (Sekrety, Vhody) { s3 := s; s3.Maska = "dl.google.com"; return s3, v },
+		"reality на порту сайта": func() (Sekrety, Vhody) {
+			v3 := v
+			v3.Reality = []int{PortSayta}
+			return s, v3
+		},
+		"reality на 80": func() (Sekrety, Vhody) { v3 := v; v3.Reality = []int{80}; return s, v3 },
+		"без reality":   func() (Sekrety, Vhody) { v3 := v; v3.Reality = nil; return s, v3 },
+		"короткий путь": func() (Sekrety, Vhody) {
+			v3 := v
+			v3.Sayt = &Sayt{Domen: sayt.Domen, Put: "ab", Zerno: sayt.Zerno}
+			return s, v3
+		},
+		"перевод строки": func() (Sekrety, Vhody) {
+			v3 := v
+			v3.Sayt = &Sayt{Domen: sayt.Domen, Put: sayt.Put, Zerno: sayt.Zerno, Routing: "a\nb"}
+			return s, v3
+		},
+	}
+	for imya, f := range plohie {
+		s3, v3 := f()
+		if _, err := Paket(s3, v3, Opcii{}); !errors.Is(err, errNegodno) {
+			t.Errorf("%s: %v", imya, err)
+		}
+	}
+}
+
+// Первый шаг перехода в режим домена: входы прежние, сертификат уже на домен.
+func TestPaketPeredSmenoy(t *testing.T) {
+	s := sekrety(t)
+	v := Vhody{Imya: "x", Adres: "203.0.113.10", Reality: []int{443}}
+	b, err := PaketPeredSmenoy(s, v, "kot.example.net", Opcii{Kopiya: &Sert{Cert: "C", Klyuch: "K"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := razobrat(t, b)
+	if p.SertIPSam == nil || p.SertIPSam.Domen != "kot.example.net" || p.SertIP != nil || p.Sayt != nil ||
+		p.Yadro.Inbounds[0].TLS.Reality.Handshake.Server != "dl.google.com" {
+		t.Fatalf("пакет перед сменой: %s", b)
+	}
+	if _, err := PaketPeredSmenoy(s, v, "", Opcii{}); err == nil {
+		t.Fatal("переход без домена")
+	}
+	sayt, err := NovyySayt("kot.example.net", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Maska, v.Sayt = sayt.Domen, sayt
+	if _, err := PaketPeredSmenoy(s, v, "drugoy.example.net", Opcii{}); err == nil {
+		t.Fatal("переход из режима домена")
+	}
+	b, err = PaketSerta("203.0.113.10", "kot.example.net", Opcii{Kopiya: &Sert{Cert: "C", Klyuch: "K"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := razobrat(t, b); p.SertIPSam.Domen != "kot.example.net" || p.SertIP != nil {
+		t.Fatalf("пакет сертификата на домен: %s", b)
+	}
+	n, err := sayt.NovyyPut()
+	if err != nil || n.Put == sayt.Put || n.Zerno != sayt.Zerno || n.Domen != sayt.Domen {
+		t.Fatalf("новый путь: %+v %v", n, err)
+	}
+}
+
 func TestIzPaketaNegodnyy(t *testing.T) {
 	s := sekrety(t)
 	v := Vhody{Imya: "x", Adres: "203.0.113.10", Reality: []int{443, 8443}, Hy2: []int{8443}}
@@ -385,7 +524,7 @@ func TestIzPaketaNegodnyy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sert, err := PaketSerta("203.0.113.10", Opcii{})
+	sert, err := PaketSerta("203.0.113.10", "", Opcii{})
 	if err != nil {
 		t.Fatal(err)
 	}

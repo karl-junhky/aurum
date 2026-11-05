@@ -59,26 +59,37 @@ func TestRazobratBeryotAdresaZaCNAME(t *testing.T) {
 		zapisCNAME("vpn.example.net.", "edge.example.net."),
 		zapisA("edge.example.net.", [4]byte{198, 51, 100, 7}),
 		zapisA("edge.example.net.", [4]byte{198, 51, 100, 8}))
-	a, err := razobrat(telo, "vpn.example.net")
+	a, err := razobrat(telo, "vpn.example.net", dnsmessage.TypeA)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []netip.Addr{netip.MustParseAddr("198.51.100.7"), netip.MustParseAddr("198.51.100.8")}; !slices.Equal(a, want) {
 		t.Fatalf("адреса %v, ждали %v", a, want)
 	}
+	// Тот же ответ на вопрос AAAA: адресов IPv6 в нём нет.
+	if a, err := razobrat(telo, "vpn.example.net", dnsmessage.TypeAAAA); err != nil || len(a) != 0 {
+		t.Fatalf("AAAA из ответа с одними A: %v %v", a, err)
+	}
+	v6 := otvetDNS(t, dnsmessage.RCodeSuccess, func(b *dnsmessage.Builder) error {
+		return b.AAAAResource(dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName("vpn.example.net."), Class: dnsmessage.ClassINET, TTL: 60},
+			dnsmessage.AAAAResource{AAAA: netip.MustParseAddr("2001:db8::7").As16()})
+	})
+	if a, err := razobrat(v6, "vpn.example.net", dnsmessage.TypeAAAA); err != nil || len(a) != 1 || a[0] != netip.MustParseAddr("2001:db8::7") {
+		t.Fatalf("AAAA: %v %v", a, err)
+	}
 }
 
 func TestRazobratNazyvaetOtsutstvieImeni(t *testing.T) {
-	if _, err := razobrat(otvetDNS(t, dnsmessage.RCodeNameError), "vpn.example.net"); !errors.Is(err, ErrNetImeni) {
+	if _, err := razobrat(otvetDNS(t, dnsmessage.RCodeNameError), "vpn.example.net", dnsmessage.TypeA); !errors.Is(err, ErrNetImeni) {
 		t.Fatalf("NXDOMAIN дал %v, ждали ErrNetImeni", err)
 	}
-	if _, err := razobrat(otvetDNS(t, dnsmessage.RCodeServerFailure), "vpn.example.net"); err == nil || errors.Is(err, ErrNetImeni) {
+	if _, err := razobrat(otvetDNS(t, dnsmessage.RCodeServerFailure), "vpn.example.net", dnsmessage.TypeA); err == nil || errors.Is(err, ErrNetImeni) {
 		t.Fatalf("SERVFAIL дал %v, это отказ сервиса, а не отсутствие имени", err)
 	}
-	if _, err := razobrat(otvetDNS(t, dnsmessage.RCodeSuccess, zapisCNAME("vpn.example.net.", "edge.example.net.")), "vpn.example.net"); err == nil {
-		t.Fatal("ответ без единой записи A принят как адрес")
+	if a, err := razobrat(otvetDNS(t, dnsmessage.RCodeSuccess, zapisCNAME("vpn.example.net.", "edge.example.net.")), "vpn.example.net", dnsmessage.TypeA); err != nil || len(a) != 0 {
+		t.Fatalf("ответ без единой записи A: %v %v", a, err)
 	}
-	if _, err := razobrat([]byte("<html>"), "vpn.example.net"); err == nil {
+	if _, err := razobrat([]byte("<html>"), "vpn.example.net", dnsmessage.TypeA); err == nil {
 		t.Fatal("страница вместо сообщения DNS принята как ответ")
 	}
 }
@@ -115,6 +126,14 @@ func servis(t *testing.T, kod int, otvet []byte) (*httptest.Server, *atomic.Int3
 	}))
 	t.Cleanup(s.Close)
 	return s, &zaprosov
+}
+
+// Обход DNS ищет адрес для соединения: ответ без записей A это не адрес.
+func TestObhodBezZapiseyA(t *testing.T) {
+	pustoy, _ := servis(t, http.StatusOK, otvetDNS(t, dnsmessage.RCodeSuccess, zapisCNAME("vpn.example.net.", "edge.example.net.")))
+	if a, err := sprositVse(context.Background(), pustoy.Client(), []string{pustoy.URL + "/dns-query"}, "vpn.example.net"); err == nil {
+		t.Fatalf("ответ без записей A принят как адрес: %v", a)
+	}
 }
 
 // Закрытый у провайдера сервис не мешает ответу соседа.

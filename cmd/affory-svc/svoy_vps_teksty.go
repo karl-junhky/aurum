@@ -25,6 +25,11 @@ import (
 
 const dlinaSoServera = 200
 
+const (
+	tekstMaskaDomen  = "сервер работает на своём домене: маска reality это сам домен"
+	tekstNetPodpiski = "сервер выдаёт простые ключи: подписки у него нет"
+)
+
 // otkazVps переводит отказ задания в код и текст. Полная ошибка уходит в
 // журнал службы в zapustitVps.
 func otkazVps(err error) OtkazVps {
@@ -41,10 +46,21 @@ func otkazVps(err error) OtkazVps {
 		uzel    *oshibkaZagruzkiUzla
 		negodna *upravlenie.MaskaNegodna
 		brend   *upravlenie.MaskaIzvestnaya
+		sertDom *upravlenie.SertDomenaNeVyshel
+		drugoy  *upravlenie.ErrDrugoyDomen
+		saytNe  *upravlenie.SaytNeVstal
 	)
 	// Отказ после замены программы несёт внутри и отказ SSH, и отказ
 	// сервера: он разбирается раньше них.
 	if o, ok := otkazObnovleniya(err); ok {
+		return o
+	}
+	// Домен не подключился, и сервер не вернулся к ключам из записи:
+	// причину называет вложенный отказ, а что делать теперь - эта строка.
+	var otkat *upravlenie.OtkatNeVyshel
+	if errors.As(err, &otkat) {
+		o := otkazVps(otkat.Err)
+		o.Tekst += ". Вернуть сервер к прежним ключам не вышло (" + sboi.DlyaCheloveka(otkat.Otkat) + "): подключи домен ещё раз или поставь сервер заново"
 		return o
 	}
 	switch {
@@ -114,6 +130,25 @@ func otkazVps(err error) OtkazVps {
 			Tekst: "другой годной маски не нашлось ни рядом с сервером, ни в запасном списке: можно ввести свою. На сервере прежняя маска"}
 	case errors.Is(err, upravlenie.ErrStarayaProgramma):
 		return OtkazVps{Kod: protokol.KodVpsMaska, Tekst: "программа на сервере старая и маску не меняет: сначала обнови её"}
+	case errors.Is(err, upravlenie.ErrRezhimDomena):
+		return OtkazVps{Kod: protokol.KodVpsMaska, Tekst: tekstMaskaDomen}
+	case errors.As(err, &sertDom):
+		t := "Let's Encrypt не выдал сертификат на " + ssh.Obrezat(sertDom.Domen, 80)
+		if sertDom.Otkaz != "" {
+			t += " (" + ssh.Obrezat(sertDom.Otkaz, dlinaSoServera) + ")"
+		}
+		return OtkazVps{Kod: protokol.KodVpsDomen,
+			Tekst: t + ": проверь, что A-запись домена ведёт прямо на сервер, без проксирования, CDN и защиты сайта (в Cloudflare облачко у записи серое), а у хостера открыт порт 80"}
+	case errors.As(err, &saytNe):
+		return OtkazVps{Kod: protokol.KodVpsDomen,
+			Tekst: "сайт своего домена на сервере не поднялся (" + ssh.Obrezat(saytNe.Prichina, dlinaSoServera) + "), и домен не подключён"}
+	case errors.As(err, &drugoy):
+		return OtkazVps{Kod: protokol.KodVpsDomen,
+			Tekst: "сервер уже работает на домене " + ssh.Obrezat(drugoy.Domen, 80) + ": чтобы сменить домен, сначала вернись к простым ключам"}
+	case errors.Is(err, upravlenie.ErrStarayaProgrammaDomena):
+		return OtkazVps{Kod: protokol.KodVpsDomen, Tekst: "программа на сервере старая и своего домена не знает: сначала обнови её"}
+	case errors.Is(err, upravlenie.ErrProstoyRezhim):
+		return OtkazVps{Kod: protokol.KodVpsDomen, Tekst: tekstNetPodpiski}
 	case errors.As(err, &molch):
 		return otkazMolchaniya(molch)
 	case errors.As(err, &stop):
@@ -418,6 +453,27 @@ func preduprezhdenieVps(gruppa []upravlenie.Preduprezhdenie, pom pomehiKompyuter
 	case upravlenie.NetSerta:
 		return OtkazVps{Kod: protokol.KodVpsNetSerta,
 			Tekst: "сертификат на адрес не выпущен: у хостера закрыты порты 80 и 443. Поставлен только reality; открой у хостера порт 80 и подбери порты заново, тогда встанет hysteria2"}
+	case upravlenie.DomenNeVyshel:
+		t := "свой домен " + ssh.Obrezat(p.Domen, 80) + " не подключился: Let's Encrypt не выдал на него сертификат"
+		if p.Otkaz != "" {
+			t += " (" + ssh.Obrezat(p.Otkaz, dlinaSoServera) + ")"
+		}
+		return OtkazVps{Kod: protokol.KodVpsDomen,
+			Tekst: t + ". Сервер выдаёт простые ключи; проверь, что A-запись ведёт прямо на сервер, без проксирования, CDN и защиты сайта, а у хостера открыт порт 80, и подключи домен из карточки сервера"}
+	case upravlenie.SaytNeOtvetil:
+		t := "сайт своего домена на сервере не ответил"
+		if p.Otkaz != "" {
+			t += " (" + ssh.Obrezat(p.Otkaz, dlinaSoServera) + ")"
+		}
+		return OtkazVps{Kod: protokol.KodVpsSaytNeOtvechaet,
+			Tekst: t + ": пока он молчит, не открываются ни ключ reality, ни подписка. Если за пару минут не заработает, вернись к простым ключам или поставь сервер заново"}
+	case upravlenie.SaytNeProveren:
+		t := "спросить сервер, отвечает ли сайт своего домена, не вышло"
+		if prichina := sboi.ObrezatTehniku(p.Otkaz); prichina != "" {
+			t += " (" + ssh.Obrezat(prichina, dlinaSoServera) + ")"
+		}
+		return OtkazVps{Kod: protokol.KodVpsSaytNeProveren,
+			Tekst: t + ". Если подписка в Happ не откроется, вернись к простым ключам или поставь сервер заново"}
 	case upravlenie.NeVezyot:
 		if kto != "" {
 			return OtkazVps{Kod: protokol.KodVpsPorty, IzSeti: true, Tekst: tekstPerehvata(klyuch, neProshyol, kto)}

@@ -307,6 +307,15 @@ const OBNOVLENIE = parametr("obnovlenie", "net");
 // ?maska=mertva: сторож программы сервера не достаёт маску (МА3); 1-11 -
 // сервер 1.11.0 с прежней известной маской (МА4).
 const MASKA = parametr("maska", "zhiva");
+// ?domen=est: сервер на своём домене с подпиской (ДМ1-3, ПД1).
+const DOMEN = parametr("domen", "net");
+const DOMEN_STENDA = "kot.example.net";
+
+/** Ссылка подписки: путь у службы случайный, 32 знака hex. */
+function ssylkaPodpiski(domen: string, reality: number): string {
+  const put = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+  return `https://${domen}${reality === 443 ? "" : `:${reality}`}/${put}`;
+}
 
 /** Отказ команды тем же кадром, что у службы: полем oshibka, а не
  *  исключением моста. */
@@ -334,7 +343,42 @@ function svoyZapis(adres: string, reality: number, hy2: number, imya = "Мой �
     ...(OBNOVLENIE !== "net" ? { novaya_versiya: "0.7.0" } : {}),
     ...(MASKA === "mertva" ? { maska_ne_otvechaet: "сайт отвечает без h2" } : {}),
     ...(MASKA === "1-11" ? { maska: "dl.google.com", maska_istochnik: undefined, versiya: "0.7.0" } : {}),
+    ...(DOMEN === "est" ? naDomene(DOMEN_STENDA, reality) : {}),
   };
+}
+
+/** Поля записи сервера на своём домене. */
+function naDomene(domen: string, reality: number): Zapis {
+  return { domen, podpiska: ssylkaPodpiski(domen, reality), maska: domen, maska_istochnik: "domen", versiya: "0.7.0" };
+}
+
+/** Проверка домена по имени: cf - облако, drugoy - чужой адрес, net - нет
+ *  записи, pozzhe - Google помнит прежний адрес, odin - Cloudflare не
+ *  ответил, v6 - есть AAAA, остальное сходится. */
+function itogDomena(domen: string, adres: string): Zapis {
+  const pervoe = domen.split(".")[0];
+  switch (pervoe) {
+    case "cf":
+      return { domen, kod: "cloudflare", adresa: ["104.21.3.4", "172.67.1.2"] };
+    case "drugoy":
+      return { domen, kod: "drugoy_adres", adresa: ["198.51.100.7"] };
+    case "net":
+      return { domen, kod: "net_zapisi" };
+    case "pozzhe":
+      return { domen, kod: "ne_vezde", adresa: ["198.51.100.7", adres], otstayut: ["Google"] };
+    case "odin":
+      return { domen, kod: "sovpadaet", adresa: [adres], podtverdili: ["Google"], ne_otvetili: ["Cloudflare"] };
+    case "v6":
+      return { domen, kod: "sovpadaet", adresa: [adres], aaaa: ["2001:db8::1"] };
+  }
+  return { domen, kod: "sovpadaet", adresa: [adres] };
+}
+
+/** Домен, как его приведёт служба, или отказ. */
+function domenIz(v: unknown): string {
+  const d = stroka(v).trim().toLowerCase().replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "").replace(/\.$/, "");
+  if (!/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(d)) throw new OtkazStenda("request-invalid", "это не имя сайта");
+  return d;
 }
 
 /** Ключи группы в общем списке: имена и транспорты, как у konfig.go. */
@@ -413,6 +457,17 @@ function ustanovlen(): Zapis {
   };
 }
 
+/** Подписка на сервере пересобирается, posle правит запись. */
+function deloPodpiski(z: Zapis, zachem: string, vkl: boolean | undefined, posle: () => void): Zapis {
+  return nachatDelo("podpiska", stroka(z.id), [
+    (h) => { h.domen = { domen: z.domen, zachem, vkl }; h.shag = "paket"; },
+    (h) => {
+      zakonchit(h, "gotovo", { put: PUT_PRYAMO, ustanovlen: { ...ustanovlen(), klyuchi: [{ transport: "reality-tcp", port: z.reality }, { transport: "hy2", port: z.hy2 }] } });
+      posle();
+    },
+  ], 900);
+}
+
 function poId(v: Record<string, unknown>): Zapis {
   const z = svoi.find((x) => x.id === stroka(v.id));
   if (!z) throw new OtkazStenda("request-invalid", "свой сервер с таким id не найден");
@@ -426,8 +481,49 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
   svoyVpsObhodRf: (v) => {
     if (typeof v.vkl !== "boolean") throw new OtkazStenda("request-invalid", "тело команды не разобрано");
     const z = poId(v);
-    z.rf_cherez_vpn = !v.vkl;
-    return { id: z.id, vkl: v.vkl };
+    const vkl = v.vkl;
+    // На своём домене правила едут подпиской: дело, запись после него.
+    if (z.domen) {
+      const hod = deloPodpiski(z, "rf", vkl, () => { z.rf_cherez_vpn = !vkl; });
+      return { id: z.id, vkl, hod };
+    }
+    z.rf_cherez_vpn = !vkl;
+    return { id: z.id, vkl };
+  },
+  svoyVpsDomenProverit: (v) => {
+    const domen = domenIz(v.domen);
+    const adres = v.id !== undefined ? stroka(poId(v).adres) : stroka(v.adres).trim();
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(adres)) throw new OtkazStenda("request-invalid", "адрес сервера не IP");
+    return itogDomena(domen, adres);
+  },
+  // Свой домен: net-serta.* - Let's Encrypt не выдал сертификат, пусто -
+  // вернуться к простым ключам.
+  svoyVpsDomen: (v) => {
+    const domen = stroka(v.domen).trim() === "" ? "" : domenIz(v.domen);
+    const z = poId(v);
+    return nachatDelo("domen", stroka(z.id), [
+      (h) => { h.domen = { domen: domen || undefined }; h.shag = domen ? "sertifikat" : "maska"; },
+      (h) => {
+        if (domen.startsWith("net-serta.")) {
+          zakonchit(h, "oshibka", { otkaz: { kod: "vps-domain-failed",
+            tekst: `Let's Encrypt не выдал сертификат на ${domen} (проверка через порт 80 не дошла): проверь, что A-запись домена ведёт прямо на сервер, без проксирования, CDN и защиты сайта (в Cloudflare облачко у записи серое), а у хостера открыт порт 80` } });
+          return;
+        }
+        h.shag = "paket";
+      },
+      (h) => {
+        zakonchit(h, "gotovo", { put: PUT_PRYAMO,
+          ustanovlen: { ...ustanovlen(), klyuchi: [{ transport: "reality-tcp", port: z.reality }, { transport: "hy2", port: z.hy2 }] } });
+        if (domen) Object.assign(z, naDomene(domen, Number(z.reality)));
+        else Object.assign(z, { domen: undefined, podpiska: undefined, maska: "shop.example.org", maska_istochnik: "sosedi" });
+        z.proveren = new Date().toISOString();
+      },
+    ], 1500);
+  },
+  svoyVpsPodpiska: (v) => {
+    const z = poId(v);
+    if (!z.domen) throw new OtkazStenda("vps-domain-failed", "сервер выдаёт простые ключи: подписки у него нет");
+    return deloPodpiski(z, "put", undefined, () => { z.podpiska = ssylkaPodpiski(stroka(z.domen), Number(z.reality)); });
   },
   svoyVpsHod: () => (hodVps ? { ...hodVps } : { faza: "net" }),
   svoyVpsOtmenit: () => {
@@ -462,14 +558,16 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
   svoyVpsUstanovit: (v) => {
     const adres = stroka(v.adres);
     const imya = stroka(v.imya).trim() || "Мой сервер";
+    const domen = v.domen === undefined ? "" : domenIz(v.domen);
     const posle = (h: Zapis) => {
       zakonchit(h, "gotovo", { ustanovlen: ustanovlen() });
       ustanovkaEst = true;
-      svoi = [...svoi.filter((z) => z.id !== SVOY_ID), { ...svoyZapis(adres, 2087, 5443, imya), proveren: new Date().toISOString(), klyuch_upravleniya: true }];
+      const zapis = { ...svoyZapis(adres, 2087, 5443, imya), proveren: new Date().toISOString(), klyuch_upravleniya: true, ...(domen ? naDomene(domen, 2087) : {}) };
+      svoi = [...svoi.filter((z) => z.id !== SVOY_ID), zapis];
       servery = [...servery.filter((s) => !s.id.startsWith(`${SVOY_ID}-`)), ...klyuchiSvoego(adres, 2087, 5443, imya)];
     };
     const h = nachatDelo("ustanovka", SVOY_ID, [
-      (x) => { x.shag = "vhod"; x.adres = adres; },
+      (x) => { x.shag = "vhod"; x.adres = adres; if (domen) x.domen = { domen }; },
       (x) => { x.shag = "osmotr"; x.put = PUT_PRYAMO; },
       (x) => { x.shag = "klyuch"; },
       (x) => { x.shag = "programma"; },
@@ -580,6 +678,8 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
     if (imya === "") throw new OtkazStenda("request-invalid", "название пустое");
     z.imya = imya;
     servery = servery.map((s) => (s.id === `${z.id}-reality` ? { ...s, imya: `${imya}, reality` } : s.id === `${z.id}-hy2` ? { ...s, imya: `${imya}, hysteria2` } : s));
+    // На своём домене название едет и в подписку на сервере.
+    if (z.domen) return { id: z.id, imya, hod: deloPodpiski(z, "imya", undefined, () => undefined) };
     return { id: z.id, imya };
   },
   svoyVpsVzyat: (v) => {

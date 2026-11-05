@@ -112,8 +112,29 @@ func sprositVse(ctx context.Context, k *http.Client, adresa []string, host strin
 	return nil, fmt.Errorf("публичный DNS через HTTPS не ответил: %w", oshibki[0])
 }
 
+// SprositU задаёт один вопрос одному публичному DNS через HTTPS (adres из
+// Adresa): записи A или AAAA имени host. Записей этого типа нет - пустой
+// список без ошибки; имени нет вовсе - ErrNetImeni. Проверка своего домена
+// сверяет ответы Google и Cloudflare по отдельности.
+func SprositU(ctx context.Context, adres, host string, tip dnsmessage.Type) ([]netip.Addr, error) {
+	if tip != dnsmessage.TypeA && tip != dnsmessage.TypeAAAA {
+		return nil, fmt.Errorf("тип записи %v не адрес", tip)
+	}
+	ctx, otmena := context.WithTimeout(ctx, Taymaut)
+	defer otmena()
+	return sprositTip(ctx, klient, adres, host, tip)
+}
+
 // sprosit задаёт один вопрос по RFC 8484: тип A, сообщение DNS в теле POST.
 func sprosit(ctx context.Context, k *http.Client, adres, host string) ([]netip.Addr, error) {
+	a, err := sprositTip(ctx, k, adres, host, dnsmessage.TypeA)
+	if err == nil && len(a) == 0 {
+		return nil, fmt.Errorf("у имени %s нет адреса IPv4", host)
+	}
+	return a, err
+}
+
+func sprositTip(ctx context.Context, k *http.Client, adres, host string, tip dnsmessage.Type) ([]netip.Addr, error) {
 	imya, err := dnsmessage.NewName(strings.TrimSuffix(host, ".") + ".")
 	if err != nil {
 		return nil, fmt.Errorf("имя %q не годится для DNS: %w", host, err)
@@ -122,7 +143,7 @@ func sprosit(ctx context.Context, k *http.Client, adres, host string) ([]netip.A
 	if err := b.StartQuestions(); err != nil {
 		return nil, err
 	}
-	if err := b.Question(dnsmessage.Question{Name: imya, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}); err != nil {
+	if err := b.Question(dnsmessage.Question{Name: imya, Type: tip, Class: dnsmessage.ClassINET}); err != nil {
 		return nil, err
 	}
 	vopros, err := b.Finish()
@@ -148,12 +169,12 @@ func sprosit(ctx context.Context, k *http.Client, adres, host string) ([]netip.A
 	if err != nil {
 		return nil, fmt.Errorf("%s: ответ не дочитан: %w", adres, err)
 	}
-	return razobrat(telo, host)
+	return razobrat(telo, host, tip)
 }
 
-// razobrat достаёт адреса A из ответа. CNAME по дороге не мешает: рекурсивный
-// DNS кладёт в ответ всю цепочку вместе с конечными адресами.
-func razobrat(telo []byte, host string) ([]netip.Addr, error) {
+// razobrat достаёт адреса A или AAAA из ответа. CNAME по дороге не мешает:
+// рекурсивный DNS кладёт в ответ всю цепочку вместе с конечными адресами.
+func razobrat(telo []byte, host string, tip dnsmessage.Type) ([]netip.Addr, error) {
 	var p dnsmessage.Parser
 	h, err := p.Start(telo)
 	if err != nil {
@@ -178,10 +199,18 @@ func razobrat(telo []byte, host string) ([]netip.Addr, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ответ DNS не разобран: %w", err)
 		}
-		if zag.Type != dnsmessage.TypeA || zag.Class != dnsmessage.ClassINET {
+		if zag.Type != tip || zag.Class != dnsmessage.ClassINET {
 			if err := p.SkipAnswer(); err != nil {
 				return nil, fmt.Errorf("ответ DNS не разобран: %w", err)
 			}
+			continue
+		}
+		if tip == dnsmessage.TypeAAAA {
+			a, err := p.AAAAResource()
+			if err != nil {
+				return nil, fmt.Errorf("ответ DNS не разобран: %w", err)
+			}
+			adresa = append(adresa, netip.AddrFrom16(a.AAAA))
 			continue
 		}
 		a, err := p.AResource()
@@ -189,9 +218,6 @@ func razobrat(telo []byte, host string) ([]netip.Addr, error) {
 			return nil, fmt.Errorf("ответ DNS не разобран: %w", err)
 		}
 		adresa = append(adresa, netip.AddrFrom4(a.A))
-	}
-	if len(adresa) == 0 {
-		return nil, fmt.Errorf("у имени %s нет адреса IPv4", host)
 	}
 	return adresa, nil
 }
