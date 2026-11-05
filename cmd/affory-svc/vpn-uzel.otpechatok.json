@@ -6,6 +6,6 @@
   "patch_sha256": "2d26d5b39e4c42256a72b6964740d40338032d61b9df40efaa5fdb3527eedeb7",
   "tegi": "with_quic,with_utls,badlinkname,tfogo_checklinkname0",
   "go": "go version go1.26.8 windows/amd64",
-  "sha256": "6dab092fbf2e43b91d2e1a3d93cf12392b399f9b8bdbdbfd6c33872495c00035",
-  "sobrano": "2026-11-05T19:10:22Z"
+  "sha256": "15a44363f761c45a12ec4c99bf0318b80dc19e4ea9ae9d1b945db0ed91103b41",
+  "sobrano": "2026-11-05T20:46:44Z"
 }

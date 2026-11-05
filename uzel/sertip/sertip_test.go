@@ -5,8 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
@@ -38,13 +41,19 @@ type zapisBrandmauera struct {
 	mu      sync.Mutex
 	otkryto map[int]int
 	vsego   int
+	// priOtkrytii зовётся посреди попытки, когда открывается порт проверки.
+	priOtkrytii func()
 }
 
 func (z *zapisBrandmauera) Otkryt(_ net.IP, port int) (func() error, error) {
 	z.mu.Lock()
-	defer z.mu.Unlock()
 	z.otkryto[port]++
 	z.vsego++
+	pri := z.priOtkrytii
+	z.mu.Unlock()
+	if pri != nil {
+		pri()
+	}
 	return func() error {
 		z.mu.Lock()
 		defer z.mu.Unlock()
@@ -487,6 +496,249 @@ func TestSmenaIPNaDomen(t *testing.T) {
 	}
 }
 
+// pereyti задаёт настройку и делает круг выпуска; сертификат на неё обязан быть.
+func pereyti(t *testing.T, v *Vypusk, n Nastroyka) *tls.Certificate {
+	t.Helper()
+	if err := v.Nastroit(&n, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	c := v.Tekushchiy()
+	if c == nil {
+		t.Fatalf("на %+v нет сертификата: %+v", n, v.Sostoyanie())
+	}
+	return c
+}
+
+func tot(a, b *tls.Certificate) bool { return a.Leaf.SerialNumber.Cmp(b.Leaf.SerialNumber) == 0 }
+
+// Переходы IP - домен - IP тратят только два первых выпуска: прежний
+// сертификат откладывается и возвращается на место, и после перезапуска
+// программы тоже. Копия хуже отложенного не ложится.
+func TestOtlozhennyySertifikat(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	nIP, nDomen := Nastroyka{IP: ip}, Nastroyka{IP: ip, Domen: domen}
+	sertIP := pereyti(t, v, nIP)
+	sertDomena := pereyti(t, v, nDomen)
+	if v.otlozhennyy == nil || !tot(v.otlozhennyy, sertIP) || v.uchet.SposobOtlozhennogo != SposobHTTP {
+		t.Fatalf("сертификат на IP не отложен: %+v", v.uchet)
+	}
+	popytok := len(v.uchet.Popytki)
+	// Обе попытки часа потрачены, но возврату они не нужны, и состояние не
+	// обещает ждать час.
+	if err := v.Nastroit(&nIP, nil); err != nil {
+		t.Fatal(err)
+	}
+	if sled := v.Sostoyanie().Sleduyushchaya; sled > s.chasy.seychas().Unix() {
+		t.Fatalf("до возврата отложенного состояние ждёт попытки в %v", time.Unix(sled, 0))
+	}
+	v.mu.Lock()
+	v.uchet.OtkazS = s.chasy.seychas().Add(-time.Hour).Unix() // прошлый отказ на другом имени
+	v.mu.Unlock()
+	if v.Sostoyanie().Trevoga {
+		t.Fatal("до возврата отложенного тревога по прошлому отказу")
+	}
+	if c := pereyti(t, v, nIP); !tot(c, sertIP) || len(v.uchet.Popytki) != popytok {
+		t.Fatalf("возврат к IP выпустил новый: попыток %d, было %d", len(v.uchet.Popytki), popytok)
+	}
+	if sost := v.Sostoyanie(); !sost.Est || sost.Sposob != SposobHTTP || sost.Otkaz != "" || s.obnovleno.Load() != 3 {
+		t.Fatalf("после возврата: %+v, обновлений %d", sost, s.obnovleno.Load())
+	}
+
+	// После перезапуска отложенный читается с диска вместе со способом.
+	v2 := s.novyy(t)
+	if c := pereyti(t, v2, nDomen); !tot(c, sertDomena) || len(v2.uchet.Popytki) != popytok {
+		t.Fatalf("после перезапуска возврат к домену выпустил новый: попыток %d", len(v2.uchet.Popytki))
+	}
+	if sost := v2.Sostoyanie(); sost.Sposob != SposobHTTP {
+		t.Fatalf("способ не вернулся с отложенным: %+v", sost)
+	}
+
+	// Отложенный пора продлевать: он всё равно встаёт на место сразу, а
+	// продление идёт следующим кругом.
+	s.chasy.vperyod(81 * time.Hour)
+	if err := v2.Nastroit(&nIP, nil); err != nil {
+		t.Fatal(err)
+	}
+	<-v2.budit // Nastroit разбудил, этот сигнал тест забирает себе
+	v2.krug(context.Background())
+	if c := v2.Tekushchiy(); c == nil || !tot(c, sertIP) {
+		t.Fatalf("отложенный у порога продления не встал на место: %+v", v2.Sostoyanie())
+	}
+	select {
+	case <-v2.budit:
+	default:
+		t.Fatal("вернувшийся пора продлевать, а следующий круг не разбужен")
+	}
+	v2.krug(context.Background())
+	prodlyonnyy := v2.Tekushchiy()
+	if prodlyonnyy == nil || tot(prodlyonnyy, sertIP) {
+		t.Fatalf("вернувшийся не продлён: %+v", v2.Sostoyanie())
+	}
+	if v2.otlozhennyy == nil || !tot(v2.otlozhennyy, sertDomena) {
+		t.Fatal("продление выбросило отложенный сертификат домена")
+	}
+
+	// Сертификат домена снова на месте, на IP отложен продлённый. Копия
+	// короче отложенного не ложится, длиннее ложится и откладывает домен.
+	pereyti(t, v2, nDomen)
+	seychas := s.chasy.seychas()
+	korotkaya := pemNa(t, ip, seychas.Add(-time.Hour), seychas.Add(50*time.Hour))
+	obnovleniy := s.obnovleno.Load()
+	if err := v2.Nastroit(&nIP, &korotkaya); err != nil || s.obnovleno.Load() != obnovleniy {
+		t.Fatalf("копия хуже отложенного легла: %v", err)
+	}
+	v2.krug(context.Background())
+	if c := v2.Tekushchiy(); c == nil || !tot(c, prodlyonnyy) {
+		t.Fatalf("при копии хуже не вернулся отложенный: %+v", v2.Sostoyanie())
+	}
+	pereyti(t, v2, nDomen)
+	dolgaya := pemNa(t, ip, seychas.Add(-time.Hour), seychas.Add(300*time.Hour))
+	if err := v2.Nastroit(&nIP, &dolgaya); err != nil {
+		t.Fatal(err)
+	}
+	if sost := v2.Sostoyanie(); !sost.Est || sost.Sposob != SposobKopiya {
+		t.Fatalf("копия длиннее отложенного не легла: %+v", sost)
+	}
+	if v2.otlozhennyy == nil || !tot(v2.otlozhennyy, sertDomena) || v2.uchet.SposobOtlozhennogo != SposobHTTP {
+		t.Fatal("копия на место сертификата домена не отложила его")
+	}
+}
+
+// Истёкший отложенный удаляется и тогда, когда лежащий годен, а отложенный из
+// другого каталога на место не встаёт.
+func TestOtlozhennyyNegodnyy(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	nIP, nDomen := Nastroyka{IP: ip}, Nastroyka{IP: ip, Domen: domen}
+	pereyti(t, v, nIP)
+	sertDomena := pereyti(t, v, nDomen)
+	s.chasy.vperyod(161 * time.Hour)
+	v.krug(context.Background())
+	katalogOtl := filepath.Join(s.katalog, "acme", katalogOtlozhennogo)
+	if _, err := os.Stat(katalogOtl); v.otlozhennyy != nil || v.uchet.SposobOtlozhennogo != "" || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("истёкший отложенный не удалён: %v", err)
+	}
+	pereyti(t, v, nIP)
+	if v.otlozhennyy == nil || !tot(v.otlozhennyy, sertDomena) {
+		t.Fatal("сертификат домена не отложен")
+	}
+
+	// Отложенный настоящий, а настройка велит staging.
+	s.chasy.vperyod(time.Hour)
+	if err := v.Nastroit(&Nastroyka{IP: ip, Domen: domen, Staging: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	if c := v.Tekushchiy(); c == nil || tot(c, sertDomena) {
+		t.Fatalf("отложенный из другого каталога встал на место или выпуска не было: %+v", v.Sostoyanie())
+	}
+
+	// Тестовый сертификат живой настоящий в отложенных не сменяет.
+	seychas := s.chasy.seychas()
+	nastoyashchiy := pemNa(t, ip, seychas.Add(-time.Hour), seychas.Add(100*time.Hour))
+	n, err := tls.X509KeyPair([]byte(nastoyashchiy.Cert), []byte(nastoyashchiy.Klyuch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tst := testovyyNa(t, ip, seychas)
+	if !staging(tst.Leaf) {
+		t.Fatal("тестовый сертификат прибора не распознан тестовым")
+	}
+	v.mu.Lock()
+	v.otlozhennyy = &n
+	otlozhen := v.otlozhit(tst, SposobHTTP, seychas)
+	v.mu.Unlock()
+	if otlozhen || v.otlozhennyy != &n {
+		t.Fatal("тестовый сертификат сменил в отложенных настоящий")
+	}
+}
+
+// Пока шла попытка на домен, настройка вернулась на IP: выпущенный
+// сертификат домена не выбрасывается, а ждёт в отложенных.
+func TestOtlozhenVypushchennyyZrya(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	nIP, nDomen := Nastroyka{IP: ip}, Nastroyka{IP: ip, Domen: domen}
+	sertIP := pereyti(t, v, nIP)
+	s.brandmauer.priOtkrytii = func() {
+		if err := v.Nastroit(&nIP, nil); err != nil {
+			t.Error(err)
+		}
+	}
+	if err := v.Nastroit(&nDomen, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	s.brandmauer.priOtkrytii = nil
+	if c := v.Tekushchiy(); c == nil || !tot(c, sertIP) {
+		t.Fatalf("на месте не прежний на IP: %+v", v.Sostoyanie())
+	}
+	if v.otlozhennyy == nil || !slices.Contains(v.otlozhennyy.Leaf.DNSNames, domen) {
+		t.Fatal("выпущенный зря сертификат домена выброшен")
+	}
+	popytok := len(v.uchet.Popytki)
+	if c := pereyti(t, v, nDomen); !slices.Contains(c.Leaf.DNSNames, domen) || len(v.uchet.Popytki) != popytok {
+		t.Fatalf("переход на домен выпустил новый: попыток %d, было %d", len(v.uchet.Popytki), popytok)
+	}
+}
+
+// Отказ записи: неудачный возврат не теряет отложенный, а неудачное
+// откладывание не оставляет полупары. Учёт без каталога отложенного
+// способа его не помнит.
+func TestOtlozhennyyOtkazZapisi(t *testing.T) {
+	s := novyyStend(t)
+	v := s.novyy(t)
+	nIP, nDomen := Nastroyka{IP: ip}, Nastroyka{IP: ip, Domen: domen}
+	sertIP := pereyti(t, v, nIP)
+	pereyti(t, v, nDomen)
+
+	// Цепочку на место не положить: там каталог.
+	cepochka := filepath.Join(s.katalog, "sert-ip", imyaSerta)
+	pomeshat := func(put string) {
+		t.Helper()
+		if err := os.Remove(put); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(put, "zanyato"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pomeshat(cepochka)
+	if err := v.Nastroit(&nIP, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.krug(context.Background())
+	if v.Tekushchiy() != nil || v.otlozhennyy == nil || !tot(v.otlozhennyy, sertIP) {
+		t.Fatal("неудачный возврат выдан за удачный или потерял отложенный")
+	}
+	if err := os.RemoveAll(cepochka); err != nil {
+		t.Fatal(err)
+	}
+	if c := pereyti(t, v, nIP); !tot(c, sertIP) {
+		t.Fatal("после снятия помехи отложенный не вернулся")
+	}
+
+	// Отложить сертификат домена не выйдет: на месте цепочки отложенного каталог.
+	katalogOtl := filepath.Join(s.katalog, "acme", katalogOtlozhennogo)
+	pomeshat(filepath.Join(katalogOtl, imyaSerta))
+	if err := v.Nastroit(&nIP, nil); err != nil {
+		t.Fatal(err)
+	}
+	v.mu.Lock()
+	otlozhen := v.otlozhit(v.tekushchiy, SposobHTTP, s.chasy.seychas())
+	v.mu.Unlock()
+	if _, err := os.Stat(katalogOtl); otlozhen || v.otlozhennyy != nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("после неудачного откладывания остался отложенный или полупара: %v", err)
+	}
+
+	v2 := s.novyy(t)
+	if v2.otlozhennyy != nil || v2.uchet.SposobOtlozhennogo != "" {
+		t.Fatalf("без каталога отложенного учёт помнит способ %q", v2.uchet.SposobOtlozhennogo)
+	}
+}
+
 // 80/tcp держит сайт режима домена: свой слушатель выпуск не поднимает и
 // брандмауэр не трогает, ответ отдаёт сайт.
 func TestProverkaCherezSayt(t *testing.T) {
@@ -536,6 +788,32 @@ func TestNastroykaDomena(t *testing.T) {
 			t.Errorf("%s принят за имя сайта", d)
 		}
 	}
+}
+
+// testovyyNa выпускает самоподписанный сертификат на адрес, похожий на
+// выданный тестовым каталогом Let's Encrypt, на 100 часов.
+func testovyyNa(t *testing.T, adres string, seychas time.Time) *tls.Certificate {
+	t.Helper()
+	klyuch, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shablon := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "(STAGING) Pebble"},
+		IPAddresses:  []net.IP{net.ParseIP(adres)},
+		NotBefore:    seychas.Add(-time.Hour),
+		NotAfter:     seychas.Add(100 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, shablon, shablon, &klyuch.PublicKey, klyuch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: klyuch, Leaf: leaf}
 }
 
 // pemNa выпускает самоподписанный сертификат на адрес с заданным сроком.

@@ -12,6 +12,11 @@
 // такого правила однажды оставил сервер без продления на двое суток. Если
 // 80/tcp постоянно держит сайт режима домена (Derzhat80), проверка HTTP-01
 // идёт через него.
+//
+// Let's Encrypt даёт пять сертификатов в неделю на одно имя, а человек может
+// переходить на свой домен и обратно не раз. Поэтому живой сертификат, который
+// сменил выпуск на другое имя, не выбрасывается, а откладывается в сторону, и
+// возврат к его имени ставит его обратно без нового выпуска.
 package sertip
 
 import (
@@ -75,6 +80,9 @@ const (
 	imyaKlyucha = "privkey.pem"
 	imyaUcheta  = "uchet.json"
 	cnZaglushki = "vpn-uzel placeholder"
+	// katalogOtlozhennogo: каталог внутри katalog, где лежит прежний
+	// сертификат на другое имя, той же парой fullchain.pem и privkey.pem.
+	katalogOtlozhennogo = "otlozhen"
 )
 
 // reDomen это имя сайта в ASCII: метки из букв, цифр и дефиса, зона из букв
@@ -192,6 +200,9 @@ type uchet struct {
 	Sposob  string  `json:"sposob,omitempty"`
 	Otkaz   string  `json:"otkaz,omitempty"`
 	OtkazS  int64   `json:"otkaz_s,omitempty"`
+	// SposobOtlozhennogo: каким путём был получен отложенный сертификат,
+	// вернётся в Sposob вместе с ним.
+	SposobOtlozhennogo string `json:"sposob_otlozhennogo,omitempty"`
 }
 
 // Vypusk ведёт свой сертификат сервера.
@@ -212,6 +223,10 @@ type Vypusk struct {
 	gotovo     chan struct{} // закрывается, когда идущая попытка кончилась
 	pauza      int           // сколько держателей Zanyat не дают начать попытку
 	otlozheno  bool          // попытка не началась из-за паузы
+
+	// otlozhennyy: настоящий живой сертификат на прежнее имя, лежит в
+	// katalog/otlozhen; nil - его нет. Под замком mu.
+	otlozhennyy *tls.Certificate
 
 	// sayt80: 80/tcp держит сайт режима домена, и ответ на проверку HTTP-01
 	// кладётся в otvety80, а не в свой слушатель.
@@ -246,6 +261,13 @@ func Novyy(katalog, katalogSerta string, zhurnal *slog.Logger, obnovleno func(),
 	case err != nil && !errors.Is(err, os.ErrNotExist):
 		zhurnal.Warn("свой сертификат с диска не читается, будет выпущен заново", "oshibka", err)
 	}
+	otl, err := prochitatSert(filepath.Join(katalog, katalogOtlozhennogo))
+	switch {
+	case err == nil && !zaglushka(otl.Leaf):
+		v.otlozhennyy = otl
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		zhurnal.Warn("отложенный сертификат не читается, возврат к его имени выпустит новый", "oshibka", err)
+	}
 	if b, err := os.ReadFile(filepath.Join(katalog, imyaUcheta)); err == nil {
 		if err := json.Unmarshal(b, &v.uchet); err != nil {
 			zhurnal.Warn("учёт попыток выпуска не читается, начат заново", "oshibka", err)
@@ -254,13 +276,16 @@ func Novyy(katalog, katalogSerta string, zhurnal *slog.Logger, obnovleno func(),
 	} else if !errors.Is(err, os.ErrNotExist) {
 		zhurnal.Warn("учёт попыток выпуска не читается, начат заново", "oshibka", err)
 	}
+	if v.otlozhennyy == nil {
+		v.uchet.SposobOtlozhennogo = "" // самого отложенного нет или он не читается
+	}
 	return v
 }
 
 // Nastroit задаёт, на какой адрес выпускать; nil выключает выпуск (пакет
 // центра везёт сертификат сам). kopiya это сертификат, сохранённый клиентом
 // с прошлой установки: он ложится на диск, если годен для адреса и живёт
-// дольше лежащего. Новая настройка будит выпуск сразу.
+// дольше лежащего и отложенного. Новая настройка будит выпуск сразу.
 func (v *Vypusk) Nastroit(n *Nastroyka, kopiya *Pem) error {
 	if n != nil {
 		norm := Nastroyka{IP: net.ParseIP(n.IP).String(), Domen: strings.ToLower(strings.TrimSuffix(n.Domen, ".")),
@@ -298,12 +323,18 @@ func (v *Vypusk) prinyatKopiyu(n Nastroyka, k Pem) (bool, error) {
 		return false, nil // истекла: выпуск сделает новый
 	case v.tekushchiy != nil && dlya(v.tekushchiy.Leaf, n) && !para.Leaf.NotAfter.After(v.tekushchiy.Leaf.NotAfter):
 		return false, nil // на диске не хуже
+	case v.mozhnoVernut(n, seychas) && !para.Leaf.NotAfter.After(v.otlozhennyy.Leaf.NotAfter):
+		return false, nil // отложенный не хуже, его вернёт на место круг выпуска
 	}
+	prezhniy, sposob := v.tekushchiy, v.uchet.Sposob
 	if err := v.zapisat(Pem{Cert: k.Cert, Klyuch: k.Klyuch}); err != nil {
 		return false, err
 	}
 	v.tekushchiy = &para
 	v.uchet.Sposob = SposobKopiya
+	if !goden(prezhniy, n) {
+		v.otlozhit(prezhniy, sposob, seychas)
+	}
 	v.sohranitUchet()
 	return true, nil
 }
@@ -445,6 +476,10 @@ func (v *Vypusk) Rabotat(ctx context.Context) {
 func (v *Vypusk) krug(ctx context.Context) {
 	v.mu.Lock()
 	seychas := v.o.Chasy()
+	if o := v.otlozhennyy; o != nil && !seychas.Before(o.Leaf.NotAfter) {
+		v.ubratOtlozhennyy() // истёк: на место уже не вернётся
+		v.sohranitUchet()
+	}
 	n := v.nastroyka
 	if n == nil || v.idyot || !v.pora(*n, seychas) {
 		v.mu.Unlock()
@@ -453,6 +488,19 @@ func (v *Vypusk) krug(ctx context.Context) {
 	if v.pauza > 0 {
 		v.otlozheno = true
 		v.mu.Unlock()
+		return
+	}
+	if v.vernutOtlozhennyy(*n, seychas) {
+		// Вернулся без Let's Encrypt. Если и его пора продлевать, следующий
+		// круг сразу.
+		eshchyo := v.pora(*n, seychas)
+		v.mu.Unlock()
+		if v.obnovleno != nil {
+			v.obnovleno()
+		}
+		if eshchyo {
+			v.razbudit()
+		}
 		return
 	}
 	if !v.mozhno(seychas) {
@@ -478,7 +526,20 @@ func (v *Vypusk) krug(ctx context.Context) {
 		}
 		v.zhurnal.Error("свой сертификат не выпущен", "na", nastroyka.imya(), "oshibka", err)
 	case v.nastroyka == nil || *v.nastroyka != nastroyka:
-		// Пока шла попытка, пакет сменил адрес: выпущенное уже не нужно.
+		// Пока шла попытка, пакет сменил адрес: выпущенное сейчас не нужно,
+		// но выпуск потрачен, и оно ждёт возврата к своему имени в
+		// отложенных. Отложенный, которого ждёт новая настройка, не
+		// затирается.
+		otlozhen := false
+		para, errP := tls.X509KeyPair([]byte(vypushchen.Cert), []byte(vypushchen.Klyuch))
+		switch {
+		case errP != nil:
+			v.zhurnal.Warn("выпущенный сертификат не разбирается", "oshibka", errP)
+		case v.nastroyka == nil || (!goden(&para, *v.nastroyka) && !goden(v.otlozhennyy, *v.nastroyka)):
+			otlozhen = v.otlozhit(&para, sposob, v.o.Chasy())
+		}
+		v.zhurnal.Info("свой сертификат выпущен, но настройка за время попытки сменилась",
+			"na", nastroyka.imya(), "otlozhen", otlozhen)
 		v.razbudit()
 	default:
 		para, errP := tls.X509KeyPair([]byte(vypushchen.Cert), []byte(vypushchen.Klyuch))
@@ -493,8 +554,12 @@ func (v *Vypusk) krug(ctx context.Context) {
 			v.zhurnal.Error("свой сертификат выпущен, но не сохранён", "oshibka", errP)
 			break
 		}
+		prezhniy, prezhniySposob := v.tekushchiy, v.uchet.Sposob
 		v.tekushchiy, zamena = &para, true
 		v.uchet.Sposob, v.uchet.Otkaz, v.uchet.OtkazS = sposob, "", 0
+		if !goden(prezhniy, nastroyka) {
+			v.otlozhit(prezhniy, prezhniySposob, v.o.Chasy())
+		}
 		v.zhurnal.Info("свой сертификат выпущен", "na", nastroyka.imya(), "sposob", sposob,
 			"do", para.Leaf.NotAfter.UTC().Format(time.DateTime))
 	}
@@ -511,10 +576,79 @@ func (v *Vypusk) krug(ctx context.Context) {
 // настоящего) или прошла половина срока (у домена две трети).
 func (v *Vypusk) pora(n Nastroyka, seychas time.Time) bool {
 	t := v.tekushchiy
-	if t == nil || !dlya(t.Leaf, n) || staging(t.Leaf) != n.Staging {
+	if !goden(t, n) {
 		return true
 	}
 	return t.Leaf.NotAfter.Sub(seychas) < n.porogProdleniya(t.Leaf)
+}
+
+// mozhnoVernut: лежащий настройке не годится, а отложенный годится и ещё
+// жив, то есть встанет на место без попытки Let's Encrypt.
+func (v *Vypusk) mozhnoVernut(n Nastroyka, seychas time.Time) bool {
+	o := v.otlozhennyy
+	return !goden(v.tekushchiy, n) && goden(o, n) && seychas.Before(o.Leaf.NotAfter)
+}
+
+// vernutOtlozhennyy ставит отложенный сертификат на место, если можно
+// (mozhnoVernut). Продлевать ли его, решит обычный порядок. Зовётся под
+// замком.
+func (v *Vypusk) vernutOtlozhennyy(n Nastroyka, seychas time.Time) bool {
+	if !v.mozhnoVernut(n, seychas) {
+		return false
+	}
+	o := v.otlozhennyy
+	p, err := pemIz(o)
+	if err == nil {
+		err = v.zapisat(p)
+	}
+	if err != nil {
+		v.zhurnal.Warn("отложенный сертификат не вернулся на место, будет выпуск", "oshibka", err)
+		return false
+	}
+	prezhniy, sposob := v.tekushchiy, v.uchet.Sposob
+	v.tekushchiy, v.otlozhennyy = o, nil
+	v.uchet.Sposob, v.uchet.SposobOtlozhennogo = v.uchet.SposobOtlozhennogo, ""
+	v.uchet.Otkaz, v.uchet.OtkazS = "", 0
+	if !v.otlozhit(prezhniy, sposob, seychas) {
+		// В каталоге отложенного осталась копия того, что теперь лежит на месте.
+		v.ubratOtlozhennyy()
+	}
+	v.sohranitUchet()
+	v.zhurnal.Info("свой сертификат возвращён из отложенных, без выпуска", "na", n.imya(),
+		"do", o.Leaf.NotAfter.UTC().Format(time.DateTime))
+	return true
+}
+
+// otlozhit убирает в сторону живой настоящий сертификат, который сменил
+// сертификат на другое имя, вместо прежнего отложенного. false - не отложен:
+// нечего, истёк, тестовый на место живого настоящего или не записался.
+// Зовётся под замком.
+func (v *Vypusk) otlozhit(t *tls.Certificate, sposob string, seychas time.Time) bool {
+	if t == nil || !seychas.Before(t.Leaf.NotAfter) {
+		return false
+	}
+	if o := v.otlozhennyy; o != nil && staging(t.Leaf) && !staging(o.Leaf) && seychas.Before(o.Leaf.NotAfter) {
+		return false // выпуск настоящего лимитирован, тестового нет
+	}
+	p, err := pemIz(t)
+	if err == nil {
+		err = zapisatV(filepath.Join(v.katalog, katalogOtlozhennogo), p)
+	}
+	if err != nil {
+		v.zhurnal.Warn("прежний сертификат не отложен, возврат к его имени выпустит новый", "oshibka", err)
+		v.ubratOtlozhennyy() // пара в каталоге могла остаться наполовину новой
+		return false
+	}
+	v.otlozhennyy, v.uchet.SposobOtlozhennogo = t, sposob
+	return true
+}
+
+// ubratOtlozhennyy забывает отложенный сертификат и удаляет его с диска.
+func (v *Vypusk) ubratOtlozhennyy() {
+	v.otlozhennyy, v.uchet.SposobOtlozhennogo = nil, ""
+	if err := os.RemoveAll(filepath.Join(v.katalog, katalogOtlozhennogo)); err != nil {
+		v.zhurnal.Warn("отложенный сертификат не удалился с диска", "oshibka", err)
+	}
 }
 
 // mozhno: за последний час попыток меньше popytokVOkne. Старые попытки
@@ -548,11 +682,13 @@ func (v *Vypusk) Sostoyanie() *Sostoyanie {
 			s.Sleduyushchaya = t.Leaf.NotAfter.Add(-n.porogProdleniya(t.Leaf)).Unix()
 		}
 	} else {
-		s.Trevoga = s.OtkazS != 0
+		// Отложенный, который встанет ближайшим кругом, прошлым отказом не
+		// тревожит.
+		s.Trevoga = s.OtkazS != 0 && !v.mozhnoVernut(n, seychas)
 	}
 	if pora {
 		s.Sleduyushchaya = seychas.Unix()
-		if !v.mozhno(seychas) {
+		if !v.mozhno(seychas) && !v.mozhnoVernut(n, seychas) {
 			s.Sleduyushchaya = time.Unix(v.uchet.Popytki[0], 0).Add(oknoPopytok).Unix()
 		}
 	}
@@ -829,17 +965,32 @@ func klyuchAkkaunta(put string) (*ecdsa.PrivateKey, error) {
 // zapisat кладёт пару в каталог сертификата, ключ раньше цепочки: ядро
 // следит за файлами, и пока ключ уже новый, а цепочка старая, оно разок
 // напишет, что пара не сходится, и останется на прежней.
-func (v *Vypusk) zapisat(p Pem) error {
-	if err := os.MkdirAll(v.katalogSerta, 0o700); err != nil {
+func (v *Vypusk) zapisat(p Pem) error { return zapisatV(v.katalogSerta, p) }
+
+func zapisatV(katalog string, p Pem) error {
+	if err := os.MkdirAll(katalog, 0o700); err != nil {
 		return fmt.Errorf("каталог сертификата: %w", err)
 	}
-	if err := zapisatAtomarno(filepath.Join(v.katalogSerta, imyaKlyucha), []byte(p.Klyuch)); err != nil {
+	if err := zapisatAtomarno(filepath.Join(katalog, imyaKlyucha), []byte(p.Klyuch)); err != nil {
 		return fmt.Errorf("ключ сертификата не лёг на диск: %w", err)
 	}
-	if err := zapisatAtomarno(filepath.Join(v.katalogSerta, imyaSerta), []byte(p.Cert)); err != nil {
+	if err := zapisatAtomarno(filepath.Join(katalog, imyaSerta), []byte(p.Cert)); err != nil {
 		return fmt.Errorf("цепочка не легла на диск: %w", err)
 	}
 	return nil
+}
+
+// pemIz собирает пару обратно в PEM: цепочку как есть, ключ в PKCS #8.
+func pemIz(t *tls.Certificate) (Pem, error) {
+	var cert strings.Builder
+	for _, der := range t.Certificate {
+		cert.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	}
+	kDer, err := x509.MarshalPKCS8PrivateKey(t.PrivateKey)
+	if err != nil {
+		return Pem{}, fmt.Errorf("ключ сертификата не собирается: %w", err)
+	}
+	return Pem{Cert: cert.String(), Klyuch: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kDer}))}, nil
 }
 
 func (v *Vypusk) sohranitUchet() {
@@ -874,6 +1025,12 @@ func dlya(c *x509.Certificate, n Nastroyka) bool {
 	}
 	adres := net.ParseIP(n.IP)
 	return adres != nil && slices.ContainsFunc(c.IPAddresses, adres.Equal)
+}
+
+// goden: сертификат есть, выдан на имя настройки и тем каталогом, который
+// она велит (staging или настоящим).
+func goden(t *tls.Certificate, n Nastroyka) bool {
+	return t != nil && dlya(t.Leaf, n) && staging(t.Leaf) == n.Staging
 }
 
 // staging: сертификат выдан тестовым каталогом Let's Encrypt.
