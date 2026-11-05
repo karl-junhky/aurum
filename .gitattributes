@@ -5,6 +5,10 @@ go.sum text eol=lf
 *.ts   text eol=lf
 *.tsx  text eol=lf
 *.json text eol=lf
+# Скрипты заглушки вшиваются в vpn-uzel: CRLF после checkout на Windows
+# сменил бы бинарь и разошёлся с отпечатком сборки.
+*.js   text eol=lf
+*.mjs  text eol=lf
 *.css  text eol=lf
 *.md   text eol=lf
 # Скрипты и юнит своего VPN встраиваются в службу и исполняются на Linux:
