@@ -82,7 +82,8 @@ type Ustanovka struct {
 	Upravlenie  gossh.Signer
 	Kommentariy string
 	Programma   io.ReadSeeker
-	// Maski это список масок reality; пусто - Maski пакета.
+	// Maski это список масок reality для проб; пусто - маску подбирает
+	// программа сервера у соседей.
 	Maski   []string
 	Ruchnye porty.Ruchnye
 	Opcii   konfig.Opcii
@@ -142,8 +143,10 @@ type Itog struct {
 	Proverki  []proverka.Itog
 	Prodlenie porty.Prodlenie
 	Versiya   string
-	Vhod      Svedeniya
-	Porty     server.Porty
+	// MaskaIstochnik говорит, откуда маска (Maska.Istochnik).
+	MaskaIstochnik string
+	Vhod           Svedeniya
+	Porty          server.Porty
 	// Sert это выпуск сертификата глазами программы сервера на конце
 	// ожидания; nil - программа о нём ничего не сказала.
 	Sert             *server.SertUzla
@@ -243,14 +246,17 @@ func Ustanovit(ctx context.Context, u Ustanovka) (itog Itog, err error) {
 	itog.Versiya = nomerVersii(ust.Versiya)
 
 	hod(Hod{Shag: ShagMaska})
-	spisokMasok := u.Maski
-	if len(spisokMasok) == 0 {
-		spisokMasok = Maski
+	var mk Maska
+	if len(u.Maski) > 0 {
+		mk.Imya, err = vybratMasku(ctx, s, u.Maski)
+	} else {
+		mk, err = podobratMasku(ctx, s, adres)
 	}
-	maska, err := vybratMasku(ctx, s, spisokMasok)
 	if err != nil {
 		return Itog{}, err
 	}
+	maska := mk.Imya
+	itog.MaskaIstochnik = mk.Istochnik
 
 	hod(Hod{Shag: ShagSertifikat})
 	paketSerta, err := konfig.PaketSerta(adres.String(), u.Opcii)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/netip"
 	"slices"
 	"testing"
 
@@ -105,5 +106,59 @@ func TestVybratMasku(t *testing.T) {
 	proveritMasku = func(context.Context, server.Mashina, string) (bool, bool, error) { return false, false, sboy }
 	if _, err := vybratMasku(context.Background(), nil, spisok); !errors.Is(err, sboy) {
 		t.Fatal(err)
+	}
+}
+
+func TestPodobratMasku(t *testing.T) {
+	adres := netip.MustParseAddr("203.0.113.10")
+	for _, c := range []struct {
+		imya    string
+		it      ssh.Itog
+		maska   Maska
+		oshibka error
+	}{
+		{"соседи", ssh.Itog{Vyvod: []byte("maska\tsosed.example.net\r\nistochnik\tsosedi\nprosmotreno\t40\n")},
+			Maska{Imya: "sosed.example.net", Istochnik: MaskaSosedi}, nil},
+		{"запас", ssh.Itog{Vyvod: []byte("maska\tzapas.example.org\nistochnik\tzapas\n")},
+			Maska{Imya: "zapas.example.org", Istochnik: MaskaZapas}, nil},
+		{"неизвестный источник считается известной маской", ssh.Itog{Vyvod: []byte("maska\tx.example.org\nistochnik\tnovoe\n")},
+			Maska{Imya: "x.example.org", Istochnik: MaskaBrend}, nil},
+		{"не нашлось", ssh.Itog{Kod: 1, Oshibki: "ни один сайт не годится в маску\n"}, Maska{}, ErrNetMaski},
+	} {
+		t.Run(c.imya, func(t *testing.T) {
+			m := &skriptovaya{it: c.it}
+			mk, err := podobratMasku(context.Background(), m, adres)
+			if mk != c.maska || !errors.Is(err, c.oshibka) {
+				t.Fatalf("маска %+v, ошибка %v", mk, err)
+			}
+			if !slices.Equal(m.argumenty, []string{"203.0.113.10"}) || m.tekstOtvet != skriptPodbora {
+				t.Fatalf("аргументы %q", m.argumenty)
+			}
+		})
+	}
+	for imya, it := range map[string]ssh.Itog{
+		"негодное имя": {Vyvod: []byte("maska\tНе имя\nistochnik\tsosedi\n")},
+		"пусто":        {Vyvod: []byte("istochnik\tsosedi\n")},
+		"скрипт упал":  {Kod: 127, Oshibki: "vpn-uzel: not found\n"},
+		// Код 2 без «неизвестная команда» - отказ новой программы, а не
+		// старая программа: известная маска молча не ставится.
+		"негодный адрес": {Kod: 2, Oshibki: "адрес сервера: ParseAddr: unable to parse IP\n"},
+	} {
+		if _, err := podobratMasku(context.Background(), &skriptovaya{it: it}, adres); err == nil || errors.Is(err, ErrNetMaski) {
+			t.Errorf("%s: %v", imya, err)
+		}
+	}
+}
+
+// Программа сервера без подбора (старше 0.7.0) отвечает кодом 2: маска из
+// прежнего списка, помеченная как известная.
+func TestPodobratMaskuStarayaProgramma(t *testing.T) {
+	bylo := proveritMasku
+	t.Cleanup(func() { proveritMasku = bylo })
+	proveritMasku = func(context.Context, server.Mashina, string) (bool, bool, error) { return true, true, nil }
+	mk, err := podobratMasku(context.Background(), &skriptovaya{it: ssh.Itog{Kod: 2, Oshibki: "неизвестная команда \"maska\"\n"}},
+		netip.MustParseAddr("203.0.113.10"))
+	if err != nil || !slices.Contains(Maski, mk.Imya) || mk.Istochnik != MaskaBrend {
+		t.Fatalf("%+v, %v", mk, err)
 	}
 }

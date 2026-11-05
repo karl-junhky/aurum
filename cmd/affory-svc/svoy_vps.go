@@ -62,9 +62,12 @@ type SvoyServer struct {
 	ParolVyklyuchen     bool   `json:"parol_vyklyuchen,omitempty"`
 	Versiya             string `json:"versiya,omitempty"`
 	Maska               string `json:"maska"`
-	Reality             int    `json:"reality,omitempty"`
-	Hy2                 int    `json:"hy2,omitempty"`
-	PortyRuchnye        bool   `json:"porty_ruchnye,omitempty"`
+	// MaskaIstochnik: откуда маска, upravlenie.MaskaSosedi, MaskaZapas или
+	// MaskaBrend; пусто у серверов 1.11.0 (их маски из известных).
+	MaskaIstochnik string `json:"maska_istochnik,omitempty"`
+	Reality        int    `json:"reality,omitempty"`
+	Hy2            int    `json:"hy2,omitempty"`
+	PortyRuchnye   bool   `json:"porty_ruchnye,omitempty"`
 	// Prodlenie: чем программа сервера продлевает сертификат: 80, 443 или
 	// net (сертификата нет, hy2 не стоит).
 	Prodlenie string `json:"prodlenie,omitempty"`
@@ -953,7 +956,7 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 	zapis := SvoyServer{
 		Id: id, Imya: osn.Imya, Adres: it.Adres, PortSsh: port, Polzovatel: osn.Polzovatel,
 		KlyuchHostaTip: it.Vhod.KlyuchHosta.Tip, KlyuchHosta: it.Vhod.KlyuchHosta.TeloBase64(),
-		Versiya: it.Versiya, Maska: it.Sekrety.Maska, PortyRuchnye: osn.PortyRuchnye,
+		Versiya: it.Versiya, Maska: it.Sekrety.Maska, MaskaIstochnik: it.MaskaIstochnik, PortyRuchnye: osn.PortyRuchnye,
 		Prodlenie: prodlenieDlyaZapisi(it.Prodlenie), Postavlen: osn.Postavlen, ParolVyklyuchen: it.ParolVyklyuchen,
 		NeIzSeti: slices.Clone(it.NeProshli),
 	}
@@ -994,6 +997,11 @@ func (s *Sluzhba) zapisatSvoy(id string, osn osnovaZapisi, it upravlenie.Itog) (
 			return errSvoyZabyt
 		}
 		if i >= 0 {
+			// Подбор портов заново и захват маску не подбирают: откуда она,
+			// знает прежняя запись.
+			if bylo := n.SvoiServery[i]; it.MaskaIstochnik == "" && bylo.Maska == zapis.Maska {
+				zapis.MaskaIstochnik = bylo.MaskaIstochnik
+			}
 			uhodyat := slices.DeleteFunc(slices.Clone(n.SvoiServery[i].Servery), func(x string) bool {
 				return slices.Contains(ids, x)
 			})

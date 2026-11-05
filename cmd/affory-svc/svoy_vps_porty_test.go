@@ -27,8 +27,9 @@ func postavitDlyaPodbora(t *testing.T, s *Sluzhba, kh ssh.KlyuchHosta) (string, 
 		t.Fatal(err)
 	}
 	id := idSvoego(netip.MustParseAddr(adresSvoego))
-	ids, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "admin", Postavlen: postavlenDlyaTesta},
-		itogSoSekretami(t, sek, kh, 443, 8443))
+	it := itogSoSekretami(t, sek, kh, 443, 8443)
+	it.MaskaIstochnik = upravlenie.MaskaSosedi
+	ids, err := s.zapisatSvoy(id, osnovaZapisi{Imya: "Дача", Port: 2222, Polzovatel: "admin", Postavlen: postavlenDlyaTesta}, it)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +108,10 @@ func TestSvoyVpsPodobratPorty(t *testing.T) {
 	if zap.Hy2 != 11444 || zap.Reality != 443 || !zap.Postavlen.Equal(postavlenDlyaTesta) || zap.PortyRuchnye || !zap.ParolVyklyuchen ||
 		zap.Polzovatel != "admin" || zap.PortSsh != 2222 || !slices.Equal(zap.Servery, novye) || len(zap.NeIzSeti) != 0 {
 		t.Fatalf("запись: %+v", zap)
+	}
+	// Подбор портов маску не подбирал: откуда она, помнит прежняя запись.
+	if zap.Maska != "dl.google.com" || zap.MaskaIstochnik != upravlenie.MaskaSosedi {
+		t.Fatalf("маска %q из %q", zap.Maska, zap.MaskaIstochnik)
 	}
 }
 

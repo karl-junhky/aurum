@@ -114,6 +114,14 @@ var (
 	reMaska = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 )
 
+// ProveritMasku отвергает маску, которую не примут reality и ссылки.
+func ProveritMasku(m string) error {
+	if !reMaska.MatchString(m) {
+		return fmt.Errorf("%w: маска %q", errNegodno, m)
+	}
+	return nil
+}
+
 // Proverit отвергает секреты, с которыми вход не поднимется или ссылка
 // разъедется с сервером. Секреты приходят из хранилища службы, а не только
 // из NovyeSekrety.
@@ -127,8 +135,9 @@ func (s Sekrety) Proverit() error {
 		return fmt.Errorf("%w: пароль hy2", errNegodno)
 	case !reParol.MatchString(s.ObfsParol):
 		return fmt.Errorf("%w: пароль obfs", errNegodno)
-	case !reMaska.MatchString(s.Maska):
-		return fmt.Errorf("%w: маска %q", errNegodno, s.Maska)
+	}
+	if err := ProveritMasku(s.Maska); err != nil {
+		return err
 	}
 	zakr, err := base64.RawURLEncoding.DecodeString(s.RealityZakr)
 	if err != nil {

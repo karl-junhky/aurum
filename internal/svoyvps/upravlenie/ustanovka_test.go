@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -71,12 +72,19 @@ func novayaMashina(t *testing.T) *mashina {
 		return m.osm, nil
 	})
 	bD, bU, bP, bS, bO, bL := dozhdatsya, ustanovit, primenit, sostoyanie, otkrytPorty, lovit
-	bPd, bPv, bDt, bSr, bSh, bM := podobrat, proverit, detektor, srokSerta, shagSerta, proveritMasku
+	bPd, bPv, bDt, bSr, bSh, bM, bPm := podobrat, proverit, detektor, srokSerta, shagSerta, proveritMasku, podobratMasku
 	t.Cleanup(func() {
 		dozhdatsya, ustanovit, primenit, sostoyanie, otkrytPorty, lovit = bD, bU, bP, bS, bO, bL
-		podobrat, proverit, detektor, srokSerta, shagSerta, proveritMasku = bPd, bPv, bDt, bSr, bSh, bM
+		podobrat, proverit, detektor, srokSerta, shagSerta, proveritMasku, podobratMasku = bPd, bPv, bDt, bSr, bSh, bM, bPm
 	})
 	shagSerta = time.Millisecond
+	podobratMasku = func(_ context.Context, x server.Mashina, adres netip.Addr) (Maska, error) {
+		if x != m.root {
+			t.Fatal("маска подбирается не входом root")
+		}
+		m.maski = append(m.maski, "подбор "+adres.String())
+		return Maska{Imya: "sosed.example.net", Istochnik: MaskaSosedi}, nil
+	}
 	proveritMasku = func(_ context.Context, x server.Mashina, maska string) (bool, bool, error) {
 		if x != m.root {
 			t.Fatal("маска проверяется не входом root")
@@ -193,6 +201,22 @@ func paket(t *testing.T, p []byte) (reality, hy2 []int, proba int, sert bool) {
 		proba = v.Proba.Srok
 	}
 	return reality, hy2, proba, v.SertIPSam != nil
+}
+
+// Без списка масок маску подбирает программа сервера у соседей адреса
+// сервера, и итог знает, откуда она.
+func TestUstanovitPodborMaski(t *testing.T) {
+	m := novayaMashina(t)
+	u := m.ustanovka()
+	u.Maski = nil
+	itog, err := Ustanovit(context.Background(), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if itog.Sekrety.Maska != "sosed.example.net" || itog.MaskaIstochnik != MaskaSosedi ||
+		!slices.Equal(m.maski, []string{"подбор 203.0.113.10"}) {
+		t.Fatalf("маска %q из %q, вызовы %q", itog.Sekrety.Maska, itog.MaskaIstochnik, m.maski)
+	}
 }
 
 func TestUstanovit(t *testing.T) {

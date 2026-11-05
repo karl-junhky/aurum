@@ -5,6 +5,10 @@
 //	vpn-uzel rabotat            служба (systemd)
 //	vpn-uzel pult [команда]     принудительная команда ssh-ключа центра
 //	vpn-uzel proverit <пакет>   проверить пакет, ничего не запуская и не записывая
+//	vpn-uzel maska podobrat -adres <IPv4 сервера>
+//	                            подобрать маску reality у соседей сервера
+//	vpn-uzel maska proverit <имя>
+//	                            проверить маску теми же условиями
 //	vpn-uzel versiya
 package main
 
@@ -39,7 +43,7 @@ const (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "команды: rabotat, pult, proverit, versiya")
+		fmt.Fprintln(os.Stderr, "команды: rabotat, pult, proverit, maska, versiya")
 		os.Exit(2)
 	}
 	komanda, argumenty := os.Args[1], os.Args[2:]
@@ -50,6 +54,8 @@ func main() {
 		os.Exit(pultKomanda(argumenty))
 	case "proverit":
 		os.Exit(proverit(argumenty))
+	case "maska":
+		os.Exit(maskaKomanda(argumenty))
 	case "versiya":
 		fmt.Printf("vpn-uzel %s, sing-box %s\n", Versiya, C.Version)
 	default:
