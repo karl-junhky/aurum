@@ -304,7 +304,7 @@ export function Servery({ status, spisok, spisokOtkaz = null, obnovitSpisok, naK
   // Меню правой кнопки: id строки и место, где его открыли. Место именно
   // курсора, а не строки: меню, появляющееся в стороне от нажатия, читается как
   // чужое.
-  const [menyu, zadatMenyu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [menyu, zadatMenyu] = useState<{ id: string; x: number; y: number; yVverh?: number } | null>(null);
   // Ключ одного сервера из меню (02.10.2026). Окно открывается сразу, а
   // ключ доезжает ответом службы.
   const [oknoKlyucha, zadatOknoKlyucha] = useState<{ id: string; imya: string; klyuch: KlyuchServera | null; otkaz: string | null } | null>(null);
@@ -841,13 +841,15 @@ export function Servery({ status, spisok, spisokOtkaz = null, obnovitSpisok, naK
                     if (aktiven) zadatMenyu({ id: s.id, x: e.clientX, y: e.clientY });
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && aktiven) naKomandu("setServer", { id: s.id });
+                    // Enter с корзины внутри строки всплывает сюда же: он жмёт
+                    // корзину, а сервер не выбирает.
+                    if (e.key === "Enter" && e.target === e.currentTarget && aktiven) naKomandu("setServer", { id: s.id });
                     // Тот же путь без мыши. Меню, доступное только правой
                     // кнопкой, это функция, которой для половины людей нет.
                     if ((e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) && aktiven) {
                       e.preventDefault();
-                      const r = (e.target as HTMLElement).getBoundingClientRect();
-                      zadatMenyu({ id: s.id, x: r.left + 24, y: r.bottom });
+                      const r = e.currentTarget.getBoundingClientRect();
+                      zadatMenyu({ id: s.id, x: r.left + 24, y: r.bottom, yVverh: r.top });
                     }
                   }}
                   className={
@@ -913,6 +915,7 @@ export function Servery({ status, spisok, spisokOtkaz = null, obnovitSpisok, naK
           <MenyuUKursora
             x={menyu.x}
             y={menyu.y}
+            yVverh={menyu.yVverh}
             testId="menyu-servera"
             podpis={`Что сделать с сервером ${s.imya}`}
             naZakrytie={() => zadatMenyu(null)}

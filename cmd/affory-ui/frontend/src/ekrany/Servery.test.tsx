@@ -777,6 +777,23 @@ describe("серверы: выгрузка", () => {
   });
 });
 
+describe("серверы: клавиши строки", () => {
+  it("Enter на корзине внутри строки не выбирает сервер", () => {
+    const na = vi.fn();
+    render(<Servery status={VYKL} spisok={spisok([server(1), server(2)])} naKomandu={na} />);
+    fireEvent.keyDown(screen.getByTestId("udalit-id2"), { key: "Enter" });
+    expect(na).not.toHaveBeenCalledWith("setServer", expect.anything());
+    fireEvent.keyDown(screen.getAllByRole("option")[1], { key: "Enter" });
+    expect(na).toHaveBeenCalledWith("setServer", { id: "id2" });
+  });
+
+  it("Shift+F10 на корзине открывает меню строки", () => {
+    render(<Servery status={VYKL} spisok={spisok([server(1), server(2)])} naKomandu={vi.fn()} />);
+    fireEvent.keyDown(screen.getByTestId("udalit-id2"), { key: "F10", shiftKey: true });
+    expect(screen.getByRole("menu", { name: "Что сделать с сервером Сервер 2" })).toBeTruthy();
+  });
+});
+
 // Ключ одного сервера из меню правой кнопки (02.10.2026, просьба владельца).
 describe("серверы: ключ из меню", () => {
   const KLYUCH = { id: "id2", imya: "Сервер 2", transport: "reality-tcp", adres: "s2.example.net:443", ssylka: "vless://u@s2.example.net:443#s2" };

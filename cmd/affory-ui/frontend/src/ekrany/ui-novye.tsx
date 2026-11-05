@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as SobytieKlavishi, ReactNode, Ref } from "react";
 import { IkPoisk, IkStrelkaVniz, IkTochki, IkTreugolnik } from "../ikonki";
 
@@ -394,9 +394,15 @@ export function SegmentStolbik<T extends string>({ znacheniya, vybrano, naVybor,
  *  открывают его у самой строки. Меню, доступное только мышью, это функция,
  *  которой для половины людей нет вовсе.
  */
-export function MenyuUKursora({ x, y, punkty, podpis, naZakrytie, testId }: {
+/** Зазор меню у курсора от края окна. */
+const KRAY_MENYU = 8;
+
+export function MenyuUKursora({ x, y, yVverh = y, punkty, podpis, naZakrytie, testId }: {
   x: number;
   y: number;
+  /** Откуда открываться вверх, если вниз не помещается. У меню с клавиатуры
+   *  y это низ строки, а это её верх: иначе меню закроет саму строку. */
+  yVverh?: number;
   punkty: { podpis: string; opasnyy?: boolean; aktiven?: boolean; naZhmyh: () => void }[];
   podpis: string;
   naZakrytie: () => void;
@@ -416,6 +422,23 @@ export function MenyuUKursora({ x, y, punkty, podpis, naZakrytie, testId }: {
       window.removeEventListener("scroll", naZakrytie, true);
     };
   }, [naZakrytie]);
+  // Не помещается вниз - открывается вверх от курсора, у правого края влево,
+  // как родное меню Windows. Мерится до отрисовки: в точке клика меню не
+  // мелькает.
+  const [mesto, zadatMesto] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = koren.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const shirina = window.innerWidth;
+    const vysota = window.innerHeight;
+    const top = y + height + KRAY_MENYU > vysota ? yVverh - height : y;
+    const left = x + width + KRAY_MENYU > shirina ? x - width : x;
+    zadatMesto({
+      top: Math.max(KRAY_MENYU, Math.min(top, vysota - height - KRAY_MENYU)),
+      left: Math.max(KRAY_MENYU, Math.min(left, shirina - width - KRAY_MENYU)),
+    });
+  }, [x, y, yVverh]);
   // Фокус уезжает в меню сразу: иначе открытое с клавиатуры меню невозможно
   // ни пройти стрелками, ни закрыть иначе как Escape вслепую.
   useEffect(() => {
@@ -427,7 +450,7 @@ export function MenyuUKursora({ x, y, punkty, podpis, naZakrytie, testId }: {
       role="menu"
       aria-label={podpis}
       data-testid={testId}
-      style={{ left: x, top: y }}
+      style={mesto}
       className="border-border bg-elevated fixed z-30 w-56 overflow-hidden rounded-lg border py-1 shadow-[0_12px_32px_rgba(0,0,0,0.6)]"
     >
       {punkty.map((p) => (

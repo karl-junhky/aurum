@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Karta, Knopka, Ryad, Segment, Shapka, Teg, Tumbler } from "./ui";
+import { Karta, Knopka, MenyuUKursora, Ryad, Segment, Shapka, Teg, Tumbler } from "./ui";
 
 afterEach(cleanup);
 
@@ -146,5 +146,41 @@ describe("стрелки в группе переключателей", () => {
     rerender(<Segment znacheniya={znacheniya} vybrano="vpn" naVybor={na} aria-label="Куда идёт трафик" />);
     fireEvent.keyDown(screen.getByRole("radiogroup"), { key: "Home" });
     expect(na).not.toHaveBeenCalled();
+  });
+});
+
+describe("меню у курсора", () => {
+  // jsdom не раскладывает страницу: размер меню задаётся руками.
+  const razmer = (width: number, height: number) =>
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width, height } as DOMRect);
+  afterEach(() => vi.restoreAllMocks());
+  const punkty = [{ podpis: "Скопировать ключ", naZhmyh: () => {} }];
+
+  it("открывается в точке клика, если помещается", () => {
+    razmer(224, 120);
+    render(<MenyuUKursora x={100} y={100} punkty={punkty} podpis="Меню" naZakrytie={() => {}} />);
+    expect(screen.getByRole("menu").style).toMatchObject({ left: "100px", top: "100px" });
+  });
+
+  it("у нижнего края открывается вверх, у правого влево", () => {
+    razmer(224, 120);
+    render(<MenyuUKursora x={window.innerWidth - 20} y={window.innerHeight - 30} punkty={punkty} podpis="Меню" naZakrytie={() => {}} />);
+    expect(screen.getByRole("menu").style).toMatchObject({
+      left: `${window.innerWidth - 20 - 224}px`,
+      top: `${window.innerHeight - 30 - 120}px`,
+    });
+  });
+
+  it("с клавиатуры у нижнего края встаёт над строкой, а не на неё", () => {
+    razmer(224, 120);
+    const niz = window.innerHeight - 10;
+    render(<MenyuUKursora x={100} y={niz} yVverh={niz - 44} punkty={punkty} podpis="Меню" naZakrytie={() => {}} />);
+    expect(screen.getByRole("menu").style.top).toBe(`${niz - 44 - 120}px`);
+  });
+
+  it("выше окна не уходит: прижимается к краю с зазором", () => {
+    razmer(224, window.innerHeight);
+    render(<MenyuUKursora x={10} y={50} punkty={punkty} podpis="Меню" naZakrytie={() => {}} />);
+    expect(screen.getByRole("menu").style.top).toBe("8px");
   });
 });
