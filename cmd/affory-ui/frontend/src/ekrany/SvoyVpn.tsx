@@ -811,6 +811,7 @@ const CHTO_IDYOT: Record<string, string> = {
   osmotr: "осматриваю сервер",
   klyuch: "кладу ключ управления этого компьютера",
   programma: "ставлю программу",
+  perezapusk: "перезапускаю программу и жду, пока она поднимется",
   maska: "выбираю сайт, под который маскируется reality",
   sertifikat: "выпускаю сертификат на адрес сервера",
   podbor: "пробую порты по одному из твоей сети",
@@ -1181,6 +1182,7 @@ const DELO_IDYOT: Record<string, string> = {
   vzyat: "Беру сервер под управление",
   otpusk: "Снимаю ключ этого компьютера с сервера",
   parol: "Меняю вход по паролю",
+  obnovlenie: "Обновляю программу на сервере",
   osmotr: "Осматриваю сервер",
   ustanovka: "Ставлю VPN",
 };
@@ -1193,6 +1195,7 @@ const DELO_ITOG: Record<string, string> = {
   vzyat: "Перенос управления сюда",
   otpusk: "Снятие ключа этого компьютера",
   parol: "Смена входа по паролю",
+  obnovlenie: "Обновление программы сервера",
   osmotr: "Осмотр сервера",
   ustanovka: "Установка VPN",
 };
@@ -1227,6 +1230,19 @@ export function itogDela(h: HodVps, adres: string | undefined): { ton?: TonPlash
       }
       if (p.snaruzhi === "neizvestno") return { ton: "warn", zagolovok: "Вход по паролю включён, а проверить настройку сервера не вышло" };
       return { zagolovok: "Вход по паролю включён" };
+    }
+    case "obnovlenie": {
+      const o = h.obnovlenie;
+      if (!o) return null;
+      if (o.uzhe) return { zagolovok: `На сервере уже программа ${o.versiya}` };
+      // Повтор неподтверждённого обновления: до и после одна и та же.
+      const zagolovok = o.bylo && o.bylo !== o.versiya ? `Программа сервера обновлена с ${o.bylo} до ${o.versiya}` : `Программа сервера обновлена до ${o.versiya}`;
+      if (o.ne_proshli.length === 0) return { zagolovok };
+      return {
+        ton: "warn",
+        zagolovok,
+        tekst: `Из твоей сети с ней не провёз ${o.ne_proshli.map((t) => vidKlyucha(t).imya).join(" и ")}. Остальные ключи работают`,
+      };
     }
   }
   return null;
@@ -1422,6 +1438,7 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
     proverka: () => naDelo("svoyVpsProverit", { id: s.id }),
     podbor: () => naDelo("svoyVpsPodobratPorty", { id: s.id }),
     parol: () => naDelo("svoyVpsParol", { id: s.id, vyklyuchit: !s.parol_vyklyuchen }),
+    obnovlenie: () => naDelo("svoyVpsObnovit", { id: s.id }),
     snos: () => naVopros({ vid: "snesti", server: s }),
     otpusk: () => naVopros({ vid: "zabyt", server: s }),
     vzyat: () => naVzyat(s),
@@ -1548,6 +1565,10 @@ function KartochkaServera({ s, trevogi, hody, skryty, aktiven, zanyato, naDelo, 
         {upravlyaem && <RyadVhoda vkl={!s.parol_vyklyuchen} idyot={delo?.vid === "parol" && delo.faza === "idyot"} aktiven={mozhno} naSmenu={() => naDelo("svoyVpsParol", { id: s.id, vyklyuchit: !s.parol_vyklyuchen })} />}
         <Ryad nazvanie="Программа на сервере" poyasnenie={p?.programma_otkaz ? `не ответила: ${p.programma_otkaz}` : undefined}>
           <span className="text-fg-secondary text-[13px] tabular-nums">{p?.versiya ?? s.versiya ?? "версия неизвестна"}</span>
+          {upravlyaem && s.novaya_versiya && (
+            <Knopka rang="vtoraya" aktiven={mozhno} zhdyot={delo?.vid === "obnovlenie" && delo.faza === "idyot"} testId="svoy-obnovit"
+              onClick={() => naDelo("svoyVpsObnovit", { id: s.id })}>Обновить до {s.novaya_versiya}</Knopka>
+          )}
         </Ryad>
         {p && (p.pamyat_mb >= 0 || p.disk_mb >= 0) && (
           <Ryad nazvanie="Свободно на сервере">

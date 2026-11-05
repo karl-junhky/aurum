@@ -40,10 +40,21 @@ func otkazVps(err error) OtkazVps {
 		klyuch  *upravlenie.KlyuchNePustil
 		uzel    *oshibkaZagruzkiUzla
 	)
+	// Отказ после замены программы несёт внутри и отказ SSH, и отказ
+	// сервера: он разбирается раньше них.
+	if o, ok := otkazObnovleniya(err); ok {
+		return o
+	}
 	switch {
 	case errors.As(err, &uzel):
 		return OtkazVps{Kod: protokol.KodVpsUstanovka,
 			Tekst: "программа для сервера не скачалась с GitHub (" + sboi.DlyaCheloveka(uzel.err) + "): проверь, открывается ли github.com, и повтори. На сервер ничего не ставилось"}
+	case errors.As(err, &osh) && osh.Shag == "obnovlenie":
+		t := "программа сервера не обновилась"
+		if osh.Tekst != "" {
+			t += ": " + ssh.Obrezat(osh.Tekst, dlinaSoServera)
+		}
+		return OtkazVps{Kod: protokol.KodVpsObnovlenie, Tekst: t + ". На сервере работает прежняя"}
 	case errors.As(err, &chuzhoy):
 		t := "пароль не выключен: вход по паролю держит включённым другая настройка SSH на сервере"
 		if len(chuzhoy.Fayly) > 0 {

@@ -96,12 +96,31 @@ func est(put string) bool {
 // (ответ напечатан, а код отказа), SSHD_RELOAD_SBOY, SSHD_RELOAD_BEZ_FAYLA
 // (перечитать не выходит, пока файла $SSHD_T_FAYL нет), SYSTEMD_RUN_SBOY,
 // PASSWD_SBOY, SYSCTL_SBOY (имя ключа, запись которого падает) и TC_SBOY
-// (replace или del).
+// (replace или del). Таймер отката обновления живёт файлом $OTKAT:
+// systemd-run его заводит, stop снимает (если не задана OTKAT_NE_SNIMAETSYA),
+// is-active и show смотрят на файл; OTKAT_SRABOTAL - таймер сработал и
+// числится active, но подсостояние elapsed. Перезапуск --no-block отказывает при
+// RESTART_SBOY. flock пишет себя в журнал и пускает сразу, а при
+// FLOCK_ZANYAT отказывает, как по сроку.
 const podstavaSistemy = `id() { echo 0; }
 uname() { if [ "$1" = -m ]; then echo x86_64; else echo 6.8.0-test; fi; }
 chown() { :; }
+flock() { echo "flock $*" >> "$LOG"; [ -z "${FLOCK_ZANYAT:-}" ]; }
 systemctl() {
     echo "systemctl $*" >> "$LOG"
+    case "$*" in
+    *affory-obnovlenie-otkat*)
+        case "$1" in
+        is-active) [ -n "${OTKAT:-}" ] && [ -e "$OTKAT" ] ;;
+        show)
+            if [ -z "${OTKAT:-}" ] || [ ! -e "$OTKAT" ]; then echo SubState=dead
+            elif [ -n "${OTKAT_SRABOTAL:-}" ]; then echo SubState=elapsed
+            else echo SubState=waiting; fi ;;
+        stop) [ -z "${OTKAT:-}" ] || [ -n "${OTKAT_NE_SNIMAETSYA:-}" ] || rm -f "$OTKAT" ;;
+        esac
+        return ;;
+    "--no-block restart"*) [ -z "${RESTART_SBOY:-}" ]; return ;;
+    esac
     case "$1" in
     is-active) [ -n "${AKTIVNA:-}" ] ;;
     try-reload-or-restart)
@@ -154,7 +173,8 @@ sshd() {
 }
 systemd-run() {
     echo "systemd-run $*" >> "$LOG"
-    [ -z "${SYSTEMD_RUN_SBOY:-}" ]
+    [ -z "${SYSTEMD_RUN_SBOY:-}" ] || return 1
+    case "$*" in *--unit=affory-obnovlenie-otkat*) [ -z "${OTKAT:-}" ] || : > "$OTKAT" ;; esac
 }
 passwd() {
     echo "passwd $*" >> "$LOG"
@@ -323,6 +343,29 @@ func TestSnosSkript(t *testing.T) {
 			t.Fatalf("повтор: код %d %q", kod, vyvod)
 		}
 		sneseno(t, k)
+	})
+
+	// Снос посреди неподтверждённого обновления: таймер отката вернул бы
+	// программу на диск уже после него.
+	t.Run("посреди обновления", func(t *testing.T) {
+		k := novyyKoren(t)
+		otkat := k.put + "/otkat-taymer"
+		zapisat(t, otkat)
+		zapisat(t, k.f("/usr/local/sbin/vpn-uzel.prezhnyaya"), "ELF")
+		if vyvod, kod := prognatSnos(t, k, "OTKAT="+otkat); kod != 0 || !slices.Equal(vyvod, gotovo) {
+			t.Fatalf("код %d %q", kod, vyvod)
+		}
+		sneseno(t, k)
+		if est(otkat) || est(k.f("/usr/local/sbin/vpn-uzel.prezhnyaya")) {
+			t.Errorf("таймер %v, копия %v", est(otkat), est(k.f("/usr/local/sbin/vpn-uzel.prezhnyaya")))
+		}
+		// Таймер, что не снимается, это отказ, а не тихий успех.
+		k = novyyKoren(t)
+		zapisat(t, otkat)
+		if vyvod, kod := prognatSnos(t, k, "OTKAT="+otkat, "OTKAT_NE_SNIMAETSYA=1"); kod != 1 ||
+			!slices.Contains(vyvod, "ne_vyshlo таймер отката обновления не снялся") {
+			t.Errorf("код %d %q", kod, vyvod)
+		}
 	})
 
 	t.Run("sshd не перечитал", func(t *testing.T) {

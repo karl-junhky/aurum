@@ -43,6 +43,14 @@ if [ -e /usr/local/sbin/vpn-nablyudenie ] || grep -qs vpn-centr "$ak"; then
     exit 1
 fi
 
+# Таймер отката неподтверждённого обновления вернул бы программу на диск
+# уже после сноса. Его может не быть: судит итог.
+systemctl stop affory-obnovlenie-otkat.timer affory-obnovlenie-otkat.service >/dev/null 2>&1
+systemctl reset-failed affory-obnovlenie-otkat.timer affory-obnovlenie-otkat.service >/dev/null 2>&1
+if systemctl is-active --quiet affory-obnovlenie-otkat.timer; then
+    ne_vyshlo "таймер отката обновления не снялся"
+fi
+
 # Служба и программа.
 systemctl disable --now vpn-uzel.service >/dev/null 2>&1
 if systemctl is-active --quiet vpn-uzel.service; then
@@ -52,7 +60,7 @@ else
         ne_vyshlo "юнит vpn-uzel"
     systemctl daemon-reload || ne_vyshlo "daemon-reload"
     systemctl reset-failed vpn-uzel.service >/dev/null 2>&1
-    rm -f -- "$prog" "$prog.novyy" || ne_vyshlo "программа vpn-uzel"
+    rm -f -- "$prog" "$prog.novyy" "$prog.prezhnyaya" "$prog.prezhnyaya.chast" || ne_vyshlo "программа vpn-uzel"
     rm -rf -- /var/lib/vpn-uzel /var/lib/affory || ne_vyshlo "каталоги программы"
 fi
 

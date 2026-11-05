@@ -218,18 +218,19 @@ type HodVps struct {
 	Sleduyushchiy int          `json:"sleduyushchiy,omitempty"`
 	// Povtory и KrugTekst: круг детектора кончился плохо, а повторы ещё
 	// будут. KrugTekst говорит, что показал круг, Povtory - когда повторы.
-	Povtory          []time.Time   `json:"povtory,omitempty"`
-	KrugTekst        string        `json:"krug_tekst,omitempty"`
-	Osmotr           *OsmotrVps    `json:"osmotr,omitempty"`
-	Ustanovlen       *UstanovkaVps `json:"ustanovlen,omitempty"`
-	Snyat            *SnosVps      `json:"snyat,omitempty"`
-	Otpushchen       *OtpuskVps    `json:"otpushchen,omitempty"`
-	Parol            *ParolVps     `json:"parol,omitempty"`
-	Proverka         *ProverkaVps  `json:"proverka,omitempty"`
-	Otkaz            *OtkazVps     `json:"otkaz,omitempty"`
-	Preduprezhdeniya []OtkazVps    `json:"preduprezhdeniya,omitempty"`
-	Nachalo          time.Time     `json:"nachalo"`
-	Konec            *time.Time    `json:"konec,omitempty"`
+	Povtory          []time.Time    `json:"povtory,omitempty"`
+	KrugTekst        string         `json:"krug_tekst,omitempty"`
+	Osmotr           *OsmotrVps     `json:"osmotr,omitempty"`
+	Ustanovlen       *UstanovkaVps  `json:"ustanovlen,omitempty"`
+	Snyat            *SnosVps       `json:"snyat,omitempty"`
+	Otpushchen       *OtpuskVps     `json:"otpushchen,omitempty"`
+	Parol            *ParolVps      `json:"parol,omitempty"`
+	Proverka         *ProverkaVps   `json:"proverka,omitempty"`
+	Obnovlenie       *ObnovlenieVps `json:"obnovlenie,omitempty"`
+	Otkaz            *OtkazVps      `json:"otkaz,omitempty"`
+	Preduprezhdeniya []OtkazVps     `json:"preduprezhdeniya,omitempty"`
+	Nachalo          time.Time      `json:"nachalo"`
+	Konec            *time.Time     `json:"konec,omitempty"`
 }
 
 const (
@@ -1058,6 +1059,9 @@ type SvoyServerDlyaEkrana struct {
 	// NovyyOtpechatok: сервер предъявил другой ключ хоста, карточка
 	// показывает его отпечаток рядом с «Систему переустановили».
 	NovyyOtpechatok string `json:"novyy_otpechatok,omitempty"`
+	// NovayaVersiya: эта сборка ставит программу сервера новее той, что на
+	// нём по последней проверке (З2); пусто - обновлять нечем.
+	NovayaVersiya string `json:"novaya_versiya,omitempty"`
 }
 
 func (s *Sluzhba) svoyVpsSpisok(k protokol.Kadr) protokol.Kadr {
@@ -1084,6 +1088,7 @@ func (s *Sluzhba) svoyVpsSpisok(k protokol.Kadr) protokol.Kadr {
 			}
 		}
 		e.KlyuchHosta, e.NovyyKlyuchHostaTip, e.NovyyKlyuchHosta = "", "", ""
+		e.NovayaVersiya = s.noveeNaServere(x.Versiya)
 		spisok = append(spisok, e)
 	}
 	return otvet(k.Id, k.Imya, map[string]any{"servery": spisok})

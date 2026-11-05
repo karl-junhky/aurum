@@ -372,23 +372,26 @@ type sertSvoego struct {
 	svezh         time.Time
 	otkazProverki string
 	klyuch        bool
+	// bezSerta: у сервера нет hy2, и сертификата нет. versiya это программа
+	// сервера по последней проверке: старая небезопасная тоже тревога (З2).
+	bezSerta bool
+	versiya  string
 }
 
 // svezhestSvedeniy: сведения старше этого о сроке не судят. Плановая
 // проверка обновляет их раз в сутки, двое суток - это проверки не проходят.
 const svezhestSvedeniy = 2 * svezhestProverki
 
-// sertySvoih выбирает из набора серверы с сертификатом: без hy2
-// сертификата нет. estKlyuch говорит, есть ли ключ управления на этом
-// компьютере: запись с отказом проверки могла прийти импортом с другого.
+// sertySvoih выбирает из набора то, по чему статус судит о своих серверах:
+// сертификат (без hy2 его нет) и версию программы. estKlyuch говорит, есть
+// ли ключ управления на этом компьютере: запись с отказом проверки могла
+// прийти импортом с другого.
 func sertySvoih(n Nabor, estKlyuch func(id string) bool) []sertSvoego {
 	var serty []sertSvoego
 	for _, z := range n.SvoiServery {
-		if z.Prodlenie == "net" {
-			continue
-		}
 		serty = append(serty, sertSvoego{id: z.Id, imya: z.Imya, otkaz: z.SertOtkaz, do: z.SertDo, trevoga: z.SertTrevoga,
-			svezh: z.SertProveren, otkazProverki: z.ProverkaOtkaz, klyuch: estKlyuch(z.Id)})
+			svezh: z.SertProveren, otkazProverki: z.ProverkaOtkaz, klyuch: estKlyuch(z.Id),
+			bezSerta: z.Prodlenie == "net", versiya: z.Versiya})
 	}
 	return serty
 }
@@ -423,6 +426,9 @@ func (s *Sluzhba) svoiTrevogiDlyaStatusa() []protokol.SvoyaTrevoga {
 func trevogiSvoih(serty []sertSvoego, seychas time.Time) []protokol.SvoyaTrevoga {
 	var trevogi []protokol.SvoyaTrevoga
 	for _, x := range serty {
+		if x.bezSerta {
+			continue
+		}
 		ostalos := time.Unix(x.do, 0).Sub(seychas)
 		staroe := seychas.Sub(x.svezh) > svezhestSvedeniy
 		var tekst string
@@ -451,6 +457,15 @@ func trevogiSvoih(serty []sertSvoego, seychas time.Time) []protokol.SvoyaTrevoga
 		}
 		trevogi = append(trevogi, protokol.SvoyaTrevoga{Id: x.id, Imya: x.imya,
 			Tekst: tekst + ". Проверь сервер в разделе «Свой VPN»"})
+	}
+	// Тревоги о старой программе идут после тревог о сертификате: карточка
+	// показывает первую тревогу сервера, а вышедший срок ломает hy2 уже сейчас.
+	for _, x := range serty {
+		// Обновить программу может только компьютер с ключом управления.
+		if x.klyuch && x.versiya != "" && novee(bezopasnayaVersiyaUzla, x.versiya) {
+			trevogi = append(trevogi, protokol.SvoyaTrevoga{Id: x.id, Imya: x.imya,
+				Tekst: "на сервере программа " + x.versiya + " с уязвимостью, исправленной в новой. Обнови её в разделе «Свой VPN»"})
+		}
 	}
 	return trevogi
 }

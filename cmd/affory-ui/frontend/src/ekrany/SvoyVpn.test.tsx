@@ -719,6 +719,50 @@ describe("карточка сервера", () => {
     await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsZabyt", { id: "svoy-1" }]]));
   });
 
+  it("программа на сервере старее сборки: «Обновить до …», ход и итог с обоими номерами", async () => {
+    const s = stend({
+      servery: [server({ versiya: "0.6.0", novaya_versiya: "0.7.0" })],
+      otvety: { svoyVpsObnovit: () => ({ hod: hod({ id: 9, vid: "obnovlenie", faza: "idyot", shag: "perezapusk", server: "svoy-1" }) }) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Обновить до 0.7.0" }));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsObnovit", { id: "svoy-1" }]]));
+    const delo = await screen.findByTestId("svoy-delo");
+    expect(delo).toHaveTextContent("Обновляю программу на сервере");
+    expect(delo).toHaveTextContent("перезапускаю программу и жду, пока она поднимется");
+    // Пока идёт дело, второе служба не начнёт.
+    expect(screen.getByTestId("svoy-obnovit")).toBeDisabled();
+    s.prishyol(hod({ id: 9, vid: "obnovlenie", faza: "gotovo", server: "svoy-1", obnovlenie: { bylo: "0.6.0", versiya: "0.7.0", uzhe: false, ne_proshli: [] } }));
+    expect(screen.getByText("Программа сервера обновлена с 0.6.0 до 0.7.0")).toBeInTheDocument();
+  });
+
+  it("итог обновления называет вид, что перестал провозить из сети", () => {
+    expect(itogDela(hod({ vid: "obnovlenie", obnovlenie: { bylo: "0.6.0", versiya: "0.7.0", uzhe: false, ne_proshli: ["hy2"] } }), undefined))
+      .toEqual({ ton: "warn", zagolovok: "Программа сервера обновлена с 0.6.0 до 0.7.0", tekst: "Из твоей сети с ней не провёз hysteria2. Остальные ключи работают" });
+    expect(itogDela(hod({ vid: "obnovlenie", obnovlenie: { versiya: "0.7.0", uzhe: true, ne_proshli: [] } }), undefined))
+      .toEqual({ zagolovok: "На сервере уже программа 0.7.0" });
+    // Повтор неподтверждённого: до и после одна версия.
+    expect(itogDela(hod({ vid: "obnovlenie", obnovlenie: { bylo: "0.7.0", versiya: "0.7.0", uzhe: false, ne_proshli: [] } }), undefined))
+      .toEqual({ zagolovok: "Программа сервера обновлена до 0.7.0" });
+  });
+
+  it("обновить нечем или нечем войти: кнопки обновления нет", () => {
+    stend({ servery: [server({ versiya: "0.7.0" }), server({ id: "svoy-2", adres: "203.0.113.41", novaya_versiya: "0.7.0", klyuch_upravleniya: false })] });
+    expect(screen.queryByTestId("svoy-obnovit")).toBeNull();
+  });
+
+  it("упавшее обновление: «Повторить» обновляет снова", async () => {
+    const s = stend({
+      servery: [server({ versiya: "0.6.0", novaya_versiya: "0.7.0" })],
+      hody: [hod({ id: 5, vid: "obnovlenie", faza: "oshibka", server: "svoy-1",
+        otkaz: { kod: "vps-update-failed", tekst: "программа сервера не обновилась: с ней ни один ключ не провёз из твоей сети. Прежняя программа возвращена" } })],
+    });
+    const delo = screen.getByTestId("svoy-delo");
+    expect(delo).toHaveTextContent("Обновление программы сервера: не вышло");
+    expect(delo).toHaveTextContent("Прежняя программа возвращена");
+    fireEvent.click(within(delo).getByRole("button", { name: "Повторить" }));
+    await waitFor(() => expect(s.vyzovy).toEqual([["svoyVpsObnovit", { id: "svoy-1" }]]));
+  });
+
   it("итог сноса виден и после ухода сервера из списка", () => {
     stend({ servery: [], hody: [hod({ id: 4, vid: "snos", server: "svoy-1", snyat: { parol_vernulsya: true } })] });
     expect(screen.getByText("VPN снесён с сервера 203.0.113.40")).toBeInTheDocument();

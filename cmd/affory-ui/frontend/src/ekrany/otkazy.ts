@@ -96,6 +96,7 @@ export const tekstOtkaza: Record<string, ZapisOtkaza> = {
   "vps-last-login": { deystvie: "nichego", tekst: "ключ не снят, чтобы не остаться без входа на сервер" },
   "vps-password-failed": { deystvie: "povtorit", tekst: "вход по паролю не переключился" },
   "vps-password-other": { deystvie: "nichego", tekst: "пароль включён другой настройкой сервера" },
+  "vps-update-failed": { deystvie: "povtorit", tekst: "программа сервера не обновилась" },
 };
 
 /** Button label per action; null means the screen only informs. */

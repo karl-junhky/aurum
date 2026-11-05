@@ -301,6 +301,9 @@ const SVOY = parametr("svoy", "pusto");
 const SVOY_ID = "svoy-5f1c0e2a9b7d4c31";
 const SVOY_ADRES = "203.0.113.40";
 const CHAS_MS = 3600 * 1000;
+// ?obnovlenie=est: окно ставит программу сервера новее, чем на нём;
+// otkaz - и обновление не выходит.
+const OBNOVLENIE = parametr("obnovlenie", "net");
 
 /** Отказ команды тем же кадром, что у службы: полем oshibka, а не
  *  исключением моста. */
@@ -325,6 +328,7 @@ function svoyZapis(adres: string, reality: number, hy2: number, imya = "Мой �
     klyuch_upravleniya: SVOY !== "bez-klyucha",
     otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDE",
     ...(SVOY === "klyuch-hosta" ? { novyy_otpechatok: "SHA256:c3RlbmQtaG9zdC1rZXktMDI" } : {}),
+    ...(OBNOVLENIE !== "net" ? { novaya_versiya: "0.7.0" } : {}),
   };
 }
 
@@ -557,6 +561,28 @@ const SVOY_OTVETY: Record<string, (vhod: Record<string, unknown>) => unknown> = 
         zakonchit(h, "gotovo", { put: PUT_PRYAMO, parol: vyklyuchit ? { vyklyuchen: true } : { vyklyuchen: false, snaruzhi: "vklyuchen" } });
         z.parol_vyklyuchen = vyklyuchit;
       },
+    ], 900);
+  },
+  svoyVpsObnovit: (v) => {
+    const z = poId(v);
+    const novaya = stroka(z.novaya_versiya);
+    if (!novaya) throw new OtkazStenda("request-invalid", `на сервере уже программа ${stroka(z.versiya)}, новее в этой версии Affory нет`);
+    return nachatDelo("obnovlenie", stroka(z.id), [
+      (h) => { h.shag = "osmotr"; },
+      (h) => { h.shag = "programma"; },
+      (h) => { h.shag = "perezapusk"; },
+      (h) => { h.shag = "proverka"; h.klyuch = { transport: "reality-tcp", port: 2087 }; },
+      OBNOVLENIE === "otkaz"
+        ? (h) => {
+            zakonchit(h, "oshibka", { otkaz: { kod: "vps-update-failed",
+              tekst: "программа сервера не обновилась: с ней ни один ключ не провёз из твоей сети. Прежняя программа возвращена" } });
+          }
+        : (h) => {
+            zakonchit(h, "gotovo", { put: PUT_PRYAMO, obnovlenie: { bylo: stroka(z.versiya), versiya: novaya, ne_proshli: [] } });
+            Object.assign(z, { versiya: novaya, proveren: new Date().toISOString() });
+            delete z.novaya_versiya;
+            delete z.proverka_otkaz;
+          },
     ], 900);
   },
   svoyVpsPrinyatKlyuchHosta: (v) => {

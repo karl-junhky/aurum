@@ -60,6 +60,15 @@ describe("разбор ответов службы", () => {
     expect(spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40" }] })?.[0].ne_iz_seti).toEqual([]);
   });
 
+  it("обновление программы: номер новой в записи и итог в ходе, без номера итога нет", () => {
+    expect(spisokIz({ servery: [{ id: "svoy-1", adres: "203.0.113.40", novaya_versiya: "0.7.0" }] })?.[0].novaya_versiya).toBe("0.7.0");
+    expect(hodIz({ id: 1, vid: "obnovlenie", faza: "gotovo", obnovlenie: { bylo: "0.6.0", versiya: "0.7.0", ne_proshli: ["hy2", 5] } })?.obnovlenie)
+      .toEqual({ bylo: "0.6.0", versiya: "0.7.0", uzhe: false, ne_proshli: ["hy2"] });
+    expect(hodIz({ id: 1, vid: "obnovlenie", faza: "gotovo", obnovlenie: { versiya: "0.7.0", uzhe: true } })?.obnovlenie)
+      .toEqual({ bylo: undefined, versiya: "0.7.0", uzhe: true, ne_proshli: [] });
+    expect(hodIz({ id: 1, vid: "obnovlenie", faza: "gotovo", obnovlenie: { bylo: "0.6.0" } })?.obnovlenie).toBeUndefined();
+  });
+
   it("«заданий не было» и чужая фаза дают null", () => {
     expect(hodIz({ faza: "net" })).toBeNull();
     expect(hodIz({ id: 1, vid: "osmotr", faza: "zhdyot" })).toBeNull();
@@ -149,6 +158,9 @@ describe("оценка сервера", () => {
   it("тревога статуса без хвоста про раздел", () => {
     const o = ocenitServer(server(), [{ id: "svoy-1", imya: "Мой сервер", tekst: "сертификат истекает через 5 дней. Проверь сервер в разделе «Свой VPN»" }], []);
     expect(o).toEqual({ sostoyanie: "vnimanie", prichina: "Сертификат истекает через 5 дней" });
+    const st = ocenitServer(server(), [{ id: "svoy-1", imya: "Мой сервер",
+      tekst: "на сервере программа 0.5.0 с уязвимостью, исправленной в новой. Обнови её в разделе «Свой VPN»" }], []);
+    expect(st).toEqual({ sostoyanie: "vnimanie", prichina: "На сервере программа 0.5.0 с уязвимостью, исправленной в новой" });
   });
 
   it("отказ последней проверки и новый ключ хоста: нужно внимание", () => {

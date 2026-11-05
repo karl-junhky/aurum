@@ -97,6 +97,16 @@ export interface ParolVps {
   fayly?: string[];
 }
 
+/** Итог обновления программы сервера: номера до и после. uzhe - эта
+ *  программа уже стояла. ne_proshli - виды ключей, что провозили из сети до
+ *  обновления, а после него нет. */
+export interface ObnovlenieVps {
+  bylo?: string;
+  versiya: string;
+  uzhe: boolean;
+  ne_proshli: string[];
+}
+
 /** Снимок задания своего сервера (HodVps службы). */
 export interface HodVps {
   id: number;
@@ -122,6 +132,7 @@ export interface HodVps {
   snyat?: { parol_vernulsya: boolean };
   otpushchen?: { klyucha_ne_bylo: boolean };
   parol?: ParolVps;
+  obnovlenie?: ObnovlenieVps;
   proverka?: ProverkaVps;
   otkaz?: OtkazVps;
   preduprezhdeniya: OtkazVps[];
@@ -162,6 +173,8 @@ export interface SvoyServer {
   klyuch_ne_chitaetsya?: string;
   otpechatok?: string;
   novyy_otpechatok?: string;
+  /** Эта сборка ставит программу сервера новее той, что на нём: её номер. */
+  novaya_versiya?: string;
 }
 
 // Разбор. Тело приезжает с провода, и служба старее окна может прислать
@@ -306,6 +319,8 @@ export function hodIz(v: unknown): HodVps | null {
   const snyat = obekt(o.snyat);
   const otpushchen = obekt(o.otpushchen);
   const parol = obekt(o.parol);
+  const obnovlenie = obekt(o.obnovlenie);
+  const novaya = stroka(obnovlenie?.versiya);
   return {
     id,
     vid,
@@ -331,6 +346,12 @@ export function hodIz(v: unknown): HodVps | null {
       snaruzhi: stroka(parol.snaruzhi),
       fayly: spisok(parol.fayly, (x) => stroka(x) ?? null),
     } : undefined,
+    obnovlenie: obnovlenie && novaya !== undefined
+      ? {
+        bylo: stroka(obnovlenie.bylo), versiya: novaya, uzhe: obnovlenie.uzhe === true,
+        ne_proshli: spisok(obnovlenie.ne_proshli, (x) => stroka(x) ?? null),
+      }
+      : undefined,
     proverka: proverkaIz(o.proverka) ?? undefined,
     otkaz: otkazVpsIz(o.otkaz) ?? undefined,
     preduprezhdeniya: spisok(o.preduprezhdeniya, otkazVpsIz),
@@ -381,6 +402,7 @@ function serverIz(v: unknown): SvoyServer | null {
     klyuch_ne_chitaetsya: stroka(o.klyuch_ne_chitaetsya),
     otpechatok: stroka(o.otpechatok),
     novyy_otpechatok: stroka(o.novyy_otpechatok),
+    novaya_versiya: stroka(o.novaya_versiya),
   };
 }
 
@@ -406,7 +428,7 @@ export interface OcenkaServera {
 }
 
 // Хвост тревоги ведёт в этот самый раздел, а в карточке он лишний.
-const HVOST_TREVOGI = ". Проверь сервер в разделе «Свой VPN»";
+const HVOSTY_TREVOGI = [". Проверь сервер в разделе «Свой VPN»", ". Обнови её в разделе «Свой VPN»"];
 
 /** Последнее законченное дело вида `vid` над сервером. */
 export function posledneeDelo(hody: HodVps[], server: string, vid: string): HodVps | undefined {
@@ -470,7 +492,8 @@ export function ocenitServer(s: SvoyServer, trevogi: SvoyaTrevoga[], hody: HodVp
   }
   const trevoga = trevogi.find((t) => t.id === s.id);
   if (trevoga) {
-    const tekst = trevoga.tekst.endsWith(HVOST_TREVOGI) ? trevoga.tekst.slice(0, -HVOST_TREVOGI.length) : trevoga.tekst;
+    const hvost = HVOSTY_TREVOGI.find((x) => trevoga.tekst.endsWith(x));
+    const tekst = hvost ? trevoga.tekst.slice(0, -hvost.length) : trevoga.tekst;
     return { sostoyanie: "vnimanie", prichina: tekst.charAt(0).toUpperCase() + tekst.slice(1) };
   }
   if (s.novyy_otpechatok) return { sostoyanie: "vnimanie" };

@@ -25,7 +25,9 @@ type podstavnaya struct {
 	// vhod это что пришло в stdin последней команды.
 	vhod    []byte
 	oshibka error
-	panika  bool
+	// oshibkaNa: обрыв входа только на просьбах с этим началом.
+	oshibkaNa map[string]error
+	panika    bool
 }
 
 func novaya() *podstavnaya {
@@ -46,6 +48,8 @@ func imyaSkripta(tekst string) string {
 		return "otpusk"
 	case skriptParolya:
 		return "parol"
+	case skriptObnovleniya:
+		return "obnovlenie"
 	}
 	return "?"
 }
@@ -57,6 +61,11 @@ func (p *podstavnaya) otvet(chto string) (ssh.Itog, error) {
 	}
 	if p.oshibka != nil {
 		return ssh.Itog{Kod: -1}, p.oshibka
+	}
+	for k, err := range p.oshibkaNa {
+		if strings.HasPrefix(chto, k) {
+			return ssh.Itog{Kod: -1}, err
+		}
 	}
 	// Ответ по самому длинному ключу, с которого начинается просьба:
 	// «ustanovka nachalo» раньше «ustanovka».
