@@ -14,6 +14,7 @@ export const CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
+  "media-src 'self' blob:", // AURUM: свой фон-видео из файла (object URL)
   "font-src 'self' data:",
   "connect-src 'self'",
   "base-uri 'none'",
