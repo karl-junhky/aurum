@@ -1,0 +1,102 @@
+name: Sync upstream Affory
+
+# Каждые 6 часов подтягивает новые версии zxczxczxczxczxczxc1111/affory.
+# Оформление AURUM живёт в cmd/affory-ui/frontend/src/skin/ (файлов с такими
+# именами у апстрима нет), поэтому слияние идёт без конфликтов. Перед тем как
+# вливать в main, проверяются типы, тесты апстрима, тесты моста и сборка.
+# Если что-то не прошло, изменения уходят в ветку upstream-sync и в Pull Request,
+# а main остаётся рабочим.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/zxczxczxczxczxczxc1111/affory.git
+  FRONT: cmd/affory-ui/frontend
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        id: up
+        run: |
+          git remote add upstream "$UPSTREAM" 2>/dev/null || true
+          git fetch upstream main --tags
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "Нового в апстриме нет."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "version=$(git show upstream/main:VERSIYA | tr -d '\r\n ')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge
+        id: merge
+        if: steps.up.outputs.new == 'true'
+        run: |
+          git config user.name "aurum-sync[bot]"
+          git config user.email "aurum-sync@users.noreply.github.com"
+          if git merge --no-edit -m "Синхронизация с Affory ${{ steps.up.outputs.version }}" upstream/main; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.merge.outputs.ok == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ env.FRONT }}/package-lock.json
+
+      - name: Check (types, tests, build)
+        id: check
+        if: steps.merge.outputs.ok == 'true'
+        working-directory: ${{ env.FRONT }}
+        continue-on-error: true
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npx vitest run
+          npm run build
+
+      - name: Push to main
+        if: steps.merge.outputs.ok == 'true' && steps.check.outcome == 'success'
+        run: git push origin HEAD:main
+
+      - name: Open PR when checks failed
+        if: steps.merge.outputs.ok == 'true' && steps.check.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push -f origin HEAD:refs/heads/upstream-sync
+          gh pr create --base main --head upstream-sync \
+            --title "Affory ${{ steps.up.outputs.version }}: нужна проверка оформления" \
+            --body "Слияние прошло, но тесты или сборка упали. Чаще всего апстрим переименовал якорь, на который опирается пилюля (src/skin/dom.ts, сторож: src/skin/most-s-affory.test.ts). Подправь dom.ts и влей PR." \
+            || echo "PR уже открыт"
+
+      - name: Open issue on merge conflict
+        if: steps.merge.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Конфликт при синхронизации с Affory ${{ steps.up.outputs.version }}" \
+            --body "Апстрим изменил файл, который правил и этот форк. Локально: git fetch upstream && git merge upstream/main, разреши конфликт (обычно это одна строка import в main.tsx) и запушь."

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { zapisatVZhurnal } from "./most";
 import "./tokeny.css";
+import "./skin"; // AURUM: оформление поверх Affory (src/skin/, см. README.aurum)
 
 // Ошибка страницы до 1.10.0 жила только в консоли WebView2, которой у
 // человека нет: белое окно разбирать было не по чему. Теперь она в журнале
