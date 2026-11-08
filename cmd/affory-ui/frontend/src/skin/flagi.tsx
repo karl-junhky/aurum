@@ -2,6 +2,9 @@
 // буквы), поэтому флаг это CSS-градиент: ноль файлов и ноль сети (CSP запрещает
 // внешние картинки).
 import type { CSSProperties } from "react";
+import { stranaPoImeni } from "./geo";
+
+export { stranaPoImeni };
 
 const H = (...c: string[]) => {
   const n = c.length;
@@ -46,51 +49,6 @@ const FLAGI: Record<string, string> = {
   AM: H("#d90012", "#0033a0", "#f2a800"),
   CA: V("#d52b1e", "#fff", "#fff", "#d52b1e"),
 };
-
-/** Страна из названия сервера: «Estonia 1», «Нидерланды · Амстердам», «NL-02».
- *  Основы слов совпадают с начала слова, двухбуквенные коды только целиком:
- *  `\\b` в JS не знает кириллицы, поэтому границы слов считаются по \\p{L}. */
-const STRANY: [string, string[], string[]][] = [
-  ["EE", ["estonia", "эстони", "tallinn", "таллин"], ["ee"]],
-  ["RU", ["russia", "росси", "moscow", "москв"], ["ru"]],
-  ["DE", ["german", "герман", "frankfurt", "франкфурт", "berlin", "берлин"], ["de"]],
-  ["NL", ["netherland", "holland", "нидерланд", "голланд", "amsterdam", "амстердам"], ["nl"]],
-  ["FR", ["france", "франци", "paris", "париж"], ["fr"]],
-  ["IT", ["italy", "итали", "milan", "милан"], ["it"]],
-  ["PL", ["poland", "польш", "warsaw", "варшав"], ["pl"]],
-  ["UA", ["ukrain", "украин", "kyiv", "киев"], ["ua"]],
-  ["AT", ["austria", "австри", "vienna", "вена"], ["at"]],
-  ["LT", ["lithuania", "литв", "vilnius", "вильн"], ["lt"]],
-  ["LV", ["latvia", "латви", "riga", "рига"], ["lv"]],
-  ["BG", ["bulgaria", "болгар", "sofia", "софи"], ["bg"]],
-  ["HU", ["hungary", "венгри", "budapest", "будапешт"], ["hu"]],
-  ["ES", ["spain", "испани", "madrid", "мадрид"], ["es"]],
-  ["SE", ["sweden", "швеци", "stockholm", "стокгольм"], ["se"]],
-  ["FI", ["finland", "финлянд", "helsinki", "хельсинки"], ["fi"]],
-  ["NO", ["norway", "норвег", "oslo", "осло"], ["no"]],
-  ["DK", ["denmark", "дани", "copenhagen", "копенгаген"], ["dk"]],
-  ["CH", ["switzerland", "швейцар", "zurich", "цюрих"], ["ch"]],
-  ["KZ", ["kazakh", "казахстан", "almaty", "алма"], ["kz"]],
-  ["TR", ["turkey", "турци", "istanbul", "стамбул"], ["tr"]],
-  ["JP", ["japan", "япони", "tokyo", "токио"], ["jp"]],
-  ["US", ["united states", "america", "сша", "америк", "new york", "нью-йорк", "los angeles", "miami"], ["us", "usa"]],
-  ["GB", ["britain", "england", "london", "великобритан", "англи", "лондон", "united kingdom"], ["uk", "gb"]],
-  ["CZ", ["czech", "чехи", "prague", "прага"], ["cz"]],
-  ["RO", ["romania", "румын", "bucharest", "бухарест"], ["ro"]],
-  ["MD", ["moldova", "молдав"], ["md"]],
-  ["GE", ["georgia", "грузи", "tbilisi", "тбилиси"], ["ge"]],
-  ["AM", ["armenia", "армени", "yerevan", "ереван"], ["am"]],
-  ["CA", ["canada", "канад", "toronto", "торонто"], ["ca"]],
-];
-
-export function stranaPoImeni(imya: string): string | null {
-  const t = imya.toLowerCase();
-  for (const [kod, osnovy, kody] of STRANY) {
-    if (osnovy.some((o) => new RegExp(`(?<![\\p{L}])${o.replace(/[-\s]/g, "[-\\s]")}`, "u").test(t))) return kod;
-    if (kody.some((c) => new RegExp(`(?<![\\p{L}])${c}(?![\\p{L}])`, "u").test(t))) return kod;
-  }
-  return null;
-}
 
 /** Круглый значок: флаг, а если страну не узнали, монограмма на градиенте. */
 export function Flag({ imya, razmer = 32 }: { imya: string; razmer?: number }) {
