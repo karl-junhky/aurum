@@ -37,7 +37,7 @@ jobs:
       - name: Собрать ядро sing-box (с патчами из ustanovka/patches)
         shell: pwsh
         run: |
-          & "${{ github.workspace }}\ustanovka\sobrat-yadro.ps1" -Proba
+          & "${{ github.workspace }}\ustanovka\sobrat-yadro.ps1"
           if (-not (Test-Path "ustanovka\yadro\sing-box.exe")) { throw "ядро не собралось" }
 
       - name: Собрать пробный выпуск
