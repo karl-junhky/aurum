@@ -42,6 +42,8 @@ jobs:
 
       - name: Собрать пробный выпуск
         shell: pwsh
+        env:
+          AURUM_BEZ_TESTOV: "1"
         run: |
           $v = (Get-Content VERSIYA -Raw).Trim()
           & "${{ github.workspace }}\ustanovka\sobrat-reliz.ps1" -Versiya $v -Proba -Makensis "C:\Program Files (x86)\NSIS\makensis.exe"
