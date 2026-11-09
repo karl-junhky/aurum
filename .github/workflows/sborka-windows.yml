@@ -6,7 +6,7 @@ name: Сборка Windows (пробная)
 #
 # ВАЖНО: это ПРОБНАЯ сборка (-Proba). Ворота выпуска и подпись кода здесь не
 # проходят, поэтому установщик без подписи: Windows SmartScreen предупредит.
-# Он выкладывается в Releases с пометкой «пробная» (pre-release).
+# Он выкладывается в Releases под именем AURUM-<версия>-setup.exe.
 # Подписанный выпуск делается на твоём ПК сертификатом (ustanovka/podpisat.ps1).
 
 on:
@@ -71,21 +71,30 @@ jobs:
         run: |
           $v = (Get-Content VERSIYA -Raw).Trim()
           $tag = "aurum-$v"
-          $exe = "ustanovka\vypusk\Affory-$v-setup.exe"
+          $src = "ustanovka\vypusk\Affory-$v-setup.exe"
+          if (-not (Test-Path $src)) { throw "нет установщика $src" }
+          # В Releases файл называется AURUM. Внутри установщика всё как у Affory
+          # (служба, пути), чтобы ядро и обновления остались совместимы с апстримом.
+          $exe = "ustanovka\vypusk\AURUM-$v-setup.exe"
+          Copy-Item $src $exe -Force
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
           $sha = "$exe.sha256"
-          if (-not (Test-Path $exe)) { throw "нет установщика $exe" }
+          [System.IO.File]::WriteAllText((Join-Path $PWD $sha), "$hash  AURUM-$v-setup.exe`n")
           $notes = @"
-          AURUM: форк Affory $v с новым оформлением.
+          ## AURUM $v
 
-          **Пробная сборка без цифровой подписи.** Windows SmartScreen может показать предупреждение: «Подробнее» → «Выполнить в любом случае».
+          Стеклянный клиент для Windows на ядре Affory $v.
 
-          Установщик: ``Affory-$v-setup.exe`` (имя файла и служба остались как у Affory, чтобы ядро и обновления были совместимы).
-          Контрольная сумма SHA-256 лежит рядом в ``.sha256``.
+          **Установка.** Скачай ``AURUM-$v-setup.exe`` и запусти.
+
+          **Windows может предупредить.** Эта сборка пока без цифровой подписи. Нажми «Подробнее», затем «Выполнить в любом случае».
+
+          **Проверка файла.** Контрольная сумма SHA-256 лежит рядом, в ``AURUM-$v-setup.exe.sha256``.
+
+          Служба и ядро называются Affory, как в оригинале: так обновления остаются совместимыми.
           "@
           # перевыпуск с тем же тегом заменяет прежний релиз
           gh release delete $tag --yes --cleanup-tag 2>$null
           $global:LASTEXITCODE = 0
-          $files = @($exe)
-          if (Test-Path $sha) { $files += $sha }
-          gh release create $tag @files --title "AURUM $v (пробная сборка)" --notes $notes --prerelease --target ${{ github.sha }}
+          gh release create $tag $exe $sha --title "AURUM $v" --notes $notes --target ${{ github.sha }}
           if ($LASTEXITCODE -ne 0) { throw "не удалось создать релиз" }
