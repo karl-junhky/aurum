@@ -5,14 +5,15 @@ name: Сборка Windows (пробная)
 # (ссылка на скачивание в правом нижнем углу запуска, живёт 14 дней).
 #
 # ВАЖНО: это ПРОБНАЯ сборка (-Proba). Ворота выпуска и подпись кода здесь не
-# проходят, поэтому её нельзя выкладывать как релиз и раздавать людям.
+# проходят, поэтому установщик без подписи: Windows SmartScreen предупредит.
+# Он выкладывается в Releases с пометкой «пробная» (pre-release).
 # Подписанный выпуск делается на твоём ПК сертификатом (ustanovka/podpisat.ps1).
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -62,3 +63,29 @@ jobs:
             ustanovka/vypusk/NE-DLYA-VYKLADKI.txt
           retention-days: 14
           if-no-files-found: error
+
+      - name: Опубликовать релиз
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = (Get-Content VERSIYA -Raw).Trim()
+          $tag = "aurum-$v"
+          $exe = "ustanovka\vypusk\Affory-$v-setup.exe"
+          $sha = "$exe.sha256"
+          if (-not (Test-Path $exe)) { throw "нет установщика $exe" }
+          $notes = @"
+          AURUM: форк Affory $v с новым оформлением.
+
+          **Пробная сборка без цифровой подписи.** Windows SmartScreen может показать предупреждение: «Подробнее» → «Выполнить в любом случае».
+
+          Установщик: ``Affory-$v-setup.exe`` (имя файла и служба остались как у Affory, чтобы ядро и обновления были совместимы).
+          Контрольная сумма SHA-256 лежит рядом в ``.sha256``.
+          "@
+          # перевыпуск с тем же тегом заменяет прежний релиз
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
+          $files = @($exe)
+          if (Test-Path $sha) { $files += $sha }
+          gh release create $tag @files --title "AURUM $v (пробная сборка)" --notes $notes --prerelease --target ${{ github.sha }}
+          if ($LASTEXITCODE -ne 0) { throw "не удалось создать релиз" }
