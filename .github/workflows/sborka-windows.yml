@@ -1,0 +1,58 @@
+name: Сборка Windows (пробная)
+
+# Ручной запуск: Actions → «Сборка Windows (пробная)» → Run workflow.
+# Собирает установщик AURUM на машине GitHub. Результат идёт как artifact
+# (ссылка на скачивание в правом нижнем углу запуска, живёт 14 дней).
+#
+# ВАЖНО: это ПРОБНАЯ сборка (-Proba). Ворота выпуска и подпись кода здесь не
+# проходят, поэтому её нельзя выкладывать как релиз и раздавать людям.
+# Подписанный выпуск делается на твоём ПК сертификатом (ustanovka/podpisat.ps1).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cmd/affory-ui/frontend/package-lock.json
+
+      - name: Установить NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Собрать ядро sing-box (с патчами из ustanovka/patches)
+        shell: pwsh
+        run: |
+          & "${{ github.workspace }}\ustanovka\sobrat-yadro.ps1" -Proba
+          if (-not (Test-Path "ustanovka\yadro\sing-box.exe")) { throw "ядро не собралось" }
+
+      - name: Собрать пробный выпуск
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSIYA -Raw).Trim()
+          & "${{ github.workspace }}\ustanovka\sobrat-reliz.ps1" -Versiya $v -Proba -Makensis "C:\Program Files (x86)\NSIS\makensis.exe"
+
+      - name: Выложить установщик
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURUM-proba-${{ github.sha }}
+          path: |
+            ustanovka/vypusk/*-setup.exe
+            ustanovka/vypusk/affory-*.zip
+            ustanovka/vypusk/NE-DLYA-VYKLADKI.txt
+          retention-days: 14
+          if-no-files-found: error
