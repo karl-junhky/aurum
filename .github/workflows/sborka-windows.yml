@@ -47,6 +47,10 @@ jobs:
         run: |
           $v = (Get-Content VERSIYA -Raw).Trim()
           & "${{ github.workspace }}\ustanovka\sobrat-reliz.ps1" -Versiya $v -Proba -Makensis "C:\Program Files (x86)\NSIS\makensis.exe"
+          # Скрипт выпуска заканчивается проверкой, которая в пробной сборке отдаёт код 1
+          # («тега ещё нет»). Само по себе это не поломка: смотрим, появился ли установщик.
+          if (-not (Test-Path "ustanovka\vypusk\Affory-$v-setup.exe")) { throw "установщик не собрался" }
+          exit 0
 
       - name: Выложить установщик
         uses: actions/upload-artifact@v4
